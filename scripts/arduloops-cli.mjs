@@ -1,14 +1,14 @@
 #!/usr/bin/env node
 /**
- * CLI against a running ArduLoops bridge (http://127.0.0.1:8767).
- * Same MAVLink as the UI — does not start a second SITL port.
+ * CLI against a running ArduLoops (http://127.0.0.1:8767).
+ * Same MAVLink as the UI — not a second SITL port.
  *
  *   npm run cli -- state
  *   npm run cli -- param get ATC_RAT_RLL_P
  */
 const BASE = process.env.ARDULOOPS_HTTP || "http://127.0.0.1:8767";
 
-const HELP = `ArduLoops CLI — talks to a running bridge (npm run dev), not a second MAVLink.
+const HELP = `ArduLoops CLI — HTTP to the running app (npm run dev or the exe), not a second MAVLink.
 
 npm run cli -- state
 npm run cli -- statustext [N]
@@ -35,7 +35,7 @@ async function post(body) {
     body: JSON.stringify(body),
   });
   if (!r.ok && r.status !== 204) {
-    throw new Error("bridge HTTP " + r.status);
+    throw new Error("HTTP " + r.status);
   }
   return "ok\n";
 }
@@ -107,7 +107,7 @@ main(process.argv.slice(2)).catch((err) => {
     err && err.cause && (err.cause.code === "ECONNREFUSED" || err.cause.code === "UND_ERR_SOCKET");
   if (refused) {
     process.stderr.write(
-      "no bridge at " + BASE + " — start ArduLoops (npm run dev)\n",
+      "no ArduLoops at " + BASE + " — start npm run dev or the desktop app\n",
     );
   } else {
     process.stderr.write(String(err.message || err) + "\n");

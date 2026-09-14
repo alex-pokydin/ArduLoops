@@ -1098,29 +1098,62 @@ fn msg_name(msg: &MavMessage) -> &'static str {
     }
 }
 
-fn try_open(url: &str) -> Option<Box<dyn MavConnection<MavMessage> + Send + Sync>> {
-    let mut conn = mavlink::connect::<MavMessage>(url).ok()?;
+/// SITL extra GCS ports (5760 is often MAVProxy; 5762/5763 are the extras).
+fn sitl_alt_urls(url: &str) -> Vec<String> {
+    let Some(rest) = strip_prefix_ci(url, "tcpout:") else {
+        return Vec::new();
+    };
+    let Some((host, port)) = rest.rsplit_once(':') else {
+        return Vec::new();
+    };
+    if !matches!(host, "127.0.0.1" | "localhost" | "::1") {
+        return Vec::new();
+    }
+    ["5763", "5762"]
+        .into_iter()
+        .filter(|p| *p != port)
+        .map(|p| format!("tcpout:{host}:{p}"))
+        .collect()
+}
+
+enum OpenErr {
+    Connect,
+    NoHeartbeat,
+}
+
+fn try_open(url: &str) -> Result<Box<dyn MavConnection<MavMessage> + Send + Sync>, OpenErr> {
+    let mut conn = mavlink::connect::<MavMessage>(url).map_err(|_| OpenErr::Connect)?;
     conn.set_protocol_version(mavlink::MavlinkVersion::V2);
     let deadline = Instant::now() + Duration::from_millis(2500);
     while Instant::now() < deadline {
         let _ = conn.send(&header(), &gcs_heartbeat());
         match conn.recv() {
-            Ok((hdr, MavMessage::HEARTBEAT(hb))) => {
+            Ok((_hdr, MavMessage::HEARTBEAT(hb))) => {
                 if hb.mavtype != MavType::MAV_TYPE_GCS
                     && hb.autopilot == MavAutopilot::MAV_AUTOPILOT_ARDUPILOTMEGA
                 {
-                    let _ = hdr;
-                    return Some(conn);
+                    return Ok(conn);
                 }
             }
             Ok(_) => {}
             Err(mavlink::error::MessageReadError::Io(err))
                 if err.kind() == std::io::ErrorKind::TimedOut
                     || err.kind() == std::io::ErrorKind::WouldBlock => {}
-            Err(_) => return None,
+            Err(_) => return Err(OpenErr::Connect),
         }
     }
-    Some(conn)
+    Err(OpenErr::NoHeartbeat)
+}
+
+fn open_link(url: &str) -> Result<(Box<dyn MavConnection<MavMessage> + Send + Sync>, String), OpenErr> {
+    let mut last = OpenErr::Connect;
+    for candidate in std::iter::once(url.to_string()).chain(sitl_alt_urls(url)) {
+        match try_open(&candidate) {
+            Ok(conn) => return Ok((conn, candidate)),
+            Err(err) => last = err,
+        }
+    }
+    Err(last)
 }
 
 pub type OnSample = Arc<dyn Fn(&Sample) + Send + Sync>;
@@ -1157,9 +1190,6 @@ fn drain_cmds(
             Ok(Cmd::Connect { url: u }) => {
                 let n = normalize_link(&u);
                 let mut g = url.lock().unwrap();
-                if *g == n {
-                    continue;
-                }
                 *g = n;
                 return Drain::Reconnect;
             }
@@ -1205,14 +1235,24 @@ pub fn run_loop(
             }
             continue;
         }
-        let conn = match try_open(&target) {
-            Some(c) => {
-                st.sample.detail = target;
+        let conn = match open_link(&target) {
+            Ok((c, actual)) => {
+                if actual != target {
+                    if let Ok(mut g) = url.lock() {
+                        *g = actual.clone();
+                    }
+                }
+                st.sample.detail = actual;
                 st.sample.rx = "heartbeat".into();
                 st.sample.ok = true;
                 Some(c)
             }
-            None => {
+            Err(OpenErr::NoHeartbeat) => {
+                st.sample.ok = false;
+                st.sample.detail = format!("немає HEARTBEAT ({target})");
+                None
+            }
+            Err(OpenErr::Connect) => {
                 st.sample.ok = false;
                 st.sample.detail = format!("немає MAVLink ({target})");
                 None

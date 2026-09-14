@@ -16,6 +16,12 @@ export const uk: Record<string, string> = {
     "Застосувати стенд SITL для цього апарата і ребутнути автопілот (MAVLink). Лінк коротко впаде.",
   "Export current parameters as a .parm file":
     "Експортувати поточні параметри у файл .parm",
+  MCP: "MCP",
+  Copy: "Копіювати",
+  Copied: "Скопійовано",
+  "Cursor uses the same MAVLink as this window. Start ArduLoops, then paste the config.":
+    "Cursor ходить тим самим MAVLink, що й це вікно. Запустіть ArduLoops, потім вставте конфіг.",
+  "Copy Cursor MCP config": "Копіювати MCP-конфіг для Cursor",
 
   Link: "лінк",
   Stop: "стоп",
@@ -53,6 +59,8 @@ export const uk: Record<string, string> = {
   "Rebooting…": "Ребут…",
   "No MAVLink ({url})": "Немає MAVLink ({url})",
   "No ATTITUDE, reconnect": "Немає ATTITUDE, reconnect",
+  "No HEARTBEAT on {url}. Another GCS may already hold this port.":
+    "Немає HEARTBEAT на {url}. Порт уже зайнятий іншим GCS.",
 
   copter: "коптер",
   plane: "крило",
@@ -77,9 +85,9 @@ export const uk: Record<string, string> = {
   "−{n} s": "−{n} с",
 
   "Where we want to be. Target is heading; actual should catch it. Yaw stick is rate, not angle — that is below.":
-    "куди хочемо бути. Ціль — курс; факт має її спіймати. Стік рискання — rate, не кут; він унизу.",
+    "де хочемо бути. Ціль — курс; факт має її спіймати. Стік рискання — rate, не кут; він унизу.",
   "Where we want to be. Target is not the stick — actual should catch the target.":
-    "куди хочемо бути. Ціль — не стік; факт має спіймати ціль.",
+    "де хочемо бути. Ціль — не стік; факт має спіймати ціль.",
   Stick: "стик",
   "FC target": "ціль FC",
   "Actual {name}": "{name} Act",

@@ -1,5 +1,6 @@
-import { useEffect, type ReactNode } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 import { type Lang, useT, useLang, setLang } from "../i18n/i18n";
+import { APP_HTTP } from "../mav/link";
 
 export function LabDialog({
   open,
@@ -19,6 +20,32 @@ export function LabDialog({
   const t = useT();
   const lang = useLang();
   const vehicle = frame === "plane" ? "plane" : "copter";
+  const [mcpCopied, setMcpCopied] = useState(false);
+
+  async function copyMcp() {
+    let text = JSON.stringify(
+      {
+        mcpServers: {
+          arduloops: { command: "arduloops.exe", args: ["--mcp"] },
+        },
+      },
+      null,
+      2,
+    );
+    try {
+      const r = await fetch(`${APP_HTTP}/mcp.json`, { cache: "no-store" });
+      if (r.ok) text = await r.text();
+    } catch {
+      /* use fallback */
+    }
+    try {
+      await navigator.clipboard.writeText(text.trim());
+      setMcpCopied(true);
+      window.setTimeout(() => setMcpCopied(false), 1600);
+    } catch {
+      /* ignore */
+    }
+  }
 
   useEffect(() => {
     if (!open) return;
@@ -59,6 +86,21 @@ export function LabDialog({
               <option value="uk">Українська</option>
               <option value="en">English</option>
             </select>
+          </li>
+          <li className="opt">
+            <div className="opt-body">
+              <b>{t("MCP")}</b>
+              <span>
+                {t("Cursor uses the same MAVLink as this window. Start ArduLoops, then paste the config.")}
+              </span>
+            </div>
+            <button
+              type="button"
+              onClick={() => void copyMcp()}
+              title={t("Copy Cursor MCP config")}
+            >
+              {mcpCopied ? t("Copied") : t("Copy")}
+            </button>
           </li>
           {linked ? (
             <>

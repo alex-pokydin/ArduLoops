@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 /**
- * Cursor MCP over the running ArduLoops bridge (http://127.0.0.1:8767).
- * Same MAVLink as the UI — not a second SITL port.
+ * Cursor MCP over the running ArduLoops HTTP API (http://127.0.0.1:8767).
+ * Dev helper. The shipped feature is `arduloops.exe --mcp` (same tools).
  */
 import readline from "node:readline";
 
@@ -11,7 +11,7 @@ const TOOLS = [
   {
     name: "ardupilot_connect",
     description:
-      "Point the ArduLoops bridge at a MAVLink URL. Default tcpout:127.0.0.1:5763.",
+      "Point ArduLoops at a MAVLink URL. Default tcpout:127.0.0.1:5763.",
     inputSchema: {
       type: "object",
       properties: { conn_str: { type: "string" } },
@@ -59,7 +59,7 @@ const TOOLS = [
   },
   {
     name: "ardupilot_arm",
-    description: "ARM. Requires the ArduLoops bridge to be linked.",
+    description: "ARM. Requires ArduLoops to be linked.",
     inputSchema: { type: "object", properties: {} },
   },
   {
@@ -98,7 +98,7 @@ async function postCmd(body) {
     body: JSON.stringify(body),
   });
   if (!r.ok && r.status !== 204) {
-    throw new Error("bridge HTTP " + r.status);
+    throw new Error("HTTP " + r.status);
   }
   return { ok: true };
 }
@@ -200,7 +200,7 @@ rl.on("line", async (line) => {
   } catch (err) {
     const text =
       err && err.cause && err.cause.code === "ECONNREFUSED"
-        ? "ArduLoops bridge is not running (http://127.0.0.1:8767). Start npm run dev in 5.1/live/web."
+        ? "ArduLoops is not running (http://127.0.0.1:8767). Start npm run dev or the desktop app."
         : String(err.message || err);
     if (id != null) fail(id, text);
   }

@@ -18,7 +18,7 @@ function readLang(): Lang {
   } catch {
     /* ignore */
   }
-  return "uk";
+  return "en";
 }
 
 let lang: Lang = readLang();
@@ -101,6 +101,10 @@ export function tDetail(detail: string | undefined): string {
   if (mapped) return t(mapped);
   const mav = detail.match(/^немає MAVLink \((.+)\)$/i) || detail.match(/^No MAVLink \((.+)\)$/i);
   if (mav) return mav[1];
+  const hb = detail.match(/HEARTBEAT \((.+)\)$/i);
+  if (hb) {
+    return t("No HEARTBEAT on {url}. Another GCS may already hold this port.", { url: hb[1] });
+  }
   if (detail.includes("ATTITUDE")) return t("No ATTITUDE, reconnect");
   return detail;
 }

@@ -1,4 +1,4 @@
-//! Local HTTP API so the Vite/browser UI, CLI and MCP share one MAVLink loop.
+//! Local HTTP so the UI, `npm run cli`, and `--mcp` share one MAVLink loop.
 use std::collections::HashMap;
 use std::io::{BufRead, BufReader, Read, Write};
 use std::net::{TcpListener, TcpStream};
@@ -104,6 +104,10 @@ fn handle(stream: TcpStream, latest: Arc<Mutex<Sample>>, tx: Sender<Cmd>) -> std
         )?;
         return Ok(());
     }
+    if method == "GET" && path == "/mcp.json" {
+        reply(&mut socket, 200, "application/json", &mcp_cursor_config())?;
+        return Ok(());
+    }
     if method == "GET" && path == "/state" {
         let json = {
             let g = latest.lock().map_err(|_| {
@@ -203,6 +207,25 @@ fn reply(socket: &mut TcpStream, code: u16, ctype: &str, body: &[u8]) -> std::io
     )?;
     socket.write_all(body)?;
     Ok(())
+}
+
+fn mcp_cursor_config() -> Vec<u8> {
+    let mut command = std::env::current_exe()
+        .ok()
+        .map(|p| p.display().to_string())
+        .unwrap_or_else(|| "arduloops.exe".into());
+    if let Some(rest) = command.strip_prefix(r"\\?\") {
+        command = rest.to_string();
+    }
+    serde_json::to_vec_pretty(&serde_json::json!({
+        "mcpServers": {
+            "arduloops": {
+                "command": command,
+                "args": ["--mcp"]
+            }
+        }
+    }))
+    .unwrap_or_else(|_| b"{}".to_vec())
 }
 
 fn param_json(latest: &Mutex<Sample>, name: &str) -> Option<Vec<u8>> {

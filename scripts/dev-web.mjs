@@ -1,4 +1,4 @@
-import { spawn } from "node:child_process";
+import { execSync, spawn } from "node:child_process";
 import { existsSync, readFileSync, watch } from "node:fs";
 import { homedir } from "node:os";
 import { delimiter, dirname, join } from "node:path";
@@ -44,6 +44,26 @@ function killTree(child) {
   }
 }
 
+function listeningPid(port) {
+  try {
+    const out = execSync("netstat -ano", { encoding: "utf8", windowsHide: true });
+    const re = new RegExp(`[:\\[]${port}(?:\\]|\\s)\\s+\\S+\\s+LISTENING\\s+(\\d+)`, "i");
+    const m = out.match(re);
+    return m ? m[1] : null;
+  } catch {
+    return null;
+  }
+}
+
+function assertPortFree(port, label) {
+  const pid = listeningPid(port);
+  if (!pid) return;
+  const kill = process.platform === "win32" ? `taskkill /PID ${pid} /F` : `kill ${pid}`;
+  console.error(`${label} :${port} is already in use (PID ${pid}).`);
+  console.error(`  ${kill}`);
+  process.exit(1);
+}
+
 function startVite() {
   viteProc = spawn(process.execPath, [join(root, "node_modules", "vite", "bin", "vite.js")], {
     stdio: "inherit",
@@ -60,7 +80,7 @@ function startVite() {
 
 function startBridge() {
   const gen = ++bridgeGen;
-  console.log("bridge: cargo run (watch src-tauri)");
+  console.log("headless MAVLink: cargo run (watch src-tauri)");
   const child = spawn(cargoExe, bridgeArgs(), {
     stdio: "inherit",
     cwd: root,
@@ -71,7 +91,7 @@ function startBridge() {
     if (stopping || gen !== bridgeGen) return;
     bridgeProc = null;
     if (code) {
-      console.log(`bridge exited (${code}). waiting for src-tauri change…`);
+      console.log(`headless MAVLink exited (${code}). waiting for src-tauri change…`);
     }
   });
 }
@@ -124,6 +144,8 @@ if (!existsSync(cargoExe)) {
 }
 
 console.log("ArduLoops  http://127.0.0.1:5173  (Vite HMR + Rust watch)");
+assertPortFree(5173, "Vite");
+assertPortFree(8767, "MAVLink HTTP");
 startBridge();
 startVite();
 

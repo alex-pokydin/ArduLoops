@@ -1,4 +1,0 @@
-[[permission]]
-identifier = "allow-mav-cmd"
-description = "Allow the UI to send MAVLink commands."
-commands.allow = ["mav_cmd"]

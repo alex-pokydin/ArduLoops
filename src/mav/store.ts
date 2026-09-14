@@ -1,7 +1,5 @@
-import { isTauri } from "@tauri-apps/api/core";
-import { listen } from "@tauri-apps/api/event";
-import { send, waitBridge } from "./cmd";
-import { BRIDGE_HTTP, loadLink } from "./link";
+import { send, waitHttp } from "./cmd";
+import { APP_HTTP, loadLink } from "./link";
 import { EMPTY, type Sample } from "./types";
 
 export const MAX_T = 8;
@@ -66,24 +64,13 @@ function ingest(s: Sample): void {
 }
 
 export function startStream(): () => void {
-  if (isTauri()) {
-    send({ op: "connect", url: loadLink() });
-    let unlisten: (() => void) | undefined;
-    void listen<Sample>("sample", (ev) => ingest(ev.payload)).then((fn) => {
-      unlisten = fn;
-    });
-    return () => {
-      unlisten?.();
-    };
-  }
-
   const ac = new AbortController();
   let es: EventSource | undefined;
   void (async () => {
-    if (!(await waitBridge(ac.signal))) return;
+    if (!(await waitHttp(ac.signal))) return;
     if (ac.signal.aborted) return;
     send({ op: "connect", url: loadLink() });
-    es = new EventSource(`${BRIDGE_HTTP}/stream`);
+    es = new EventSource(`${APP_HTTP}/stream`);
     es.onmessage = (ev) => {
       try {
         ingest(JSON.parse(ev.data) as Sample);

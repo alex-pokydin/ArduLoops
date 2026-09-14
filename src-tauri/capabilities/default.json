@@ -6,8 +6,6 @@
     "main"
   ],
   "permissions": [
-    "core:default",
-    "core:event:default",
-    "allow-mav-cmd"
+    "core:default"
   ]
 }
