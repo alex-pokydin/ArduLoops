@@ -1,4 +1,5 @@
 import { useEffect, useRef, useSyncExternalStore } from "react";
+import { useT } from "../i18n/i18n";
 import { axisTar, axisView, type Axis } from "../mav/axis";
 import { drawScope } from "../plot";
 import { getBuffer, getSnapshot, isPaused, subscribe } from "../mav/store";
@@ -15,6 +16,7 @@ export function Scope({
   axis: Axis;
   onPause: () => void;
 }) {
+  const t = useT();
   const s = useSyncExternalStore(subscribe, getSnapshot, getSnapshot);
   const c1 = useRef<HTMLCanvasElement>(null);
   const c2 = useRef<HTMLCanvasElement>(null);
@@ -24,6 +26,7 @@ export function Scope({
   const v = axisView(s, axis);
   const tar = axisTar(v);
   const yaw = axis === "yaw";
+  const unit = v.cmdUnit === "°/s" ? t("°/s") : v.cmdUnit;
 
   useEffect(() => {
     const a = c1.current;
@@ -49,12 +52,15 @@ export function Scope({
   return (
     <>
       <div className="plot-head">
-        <b>{v.title}, °</b>
+        <b>{t("want · angle, °")}</b>
         <span>
           {yaw
-            ? "біла — ціль курсу, синя — факт. Стік рискання — це rate, не кут; він на нижньому графіку."
-            : "сірий — стик, біла — ціль автопілота, синя — факт. Синя їде до білої."}
+            ? t("Where we want to be. Target is heading; actual should catch it. Yaw stick is rate, not angle — that is below.")
+            : t("Where we want to be. Target is not the stick — actual should catch the target.")}
         </span>
+        <button type="button" className={paused ? "pause-btn on" : "pause-btn"} onClick={onPause} title={t("Space")}>
+          {paused ? t("Resume") : t("Pause")}
+        </button>
       </div>
       <div className={paused ? "plot paused" : "plot"}>
         <canvas ref={c1} />
@@ -62,43 +68,26 @@ export function Scope({
       <div className="caption">
         <div className="legend">
           {yaw ? null : (
-            <span><i className="g" />стик</span>
+            <span><i className="g" />{t("Stick")}</span>
           )}
-          <span><i className="w" />ціль FC</span>
-          <span><i className="c" />{v.name} Act</span>
+          <span><i className="w" />{t("FC target")}</span>
+          <span><i className="c" />{t("Actual {name}", { name: t(v.name) })}</span>
         </div>
-        <button type="button" className={paused ? "pause-btn on" : "pause-btn"} onClick={onPause} title="Пробіл">
-          {paused ? "далі" : "пауза"}
-        </button>
         <div className="readout">
-          факт {fmt(v.ang, 2)}°   ціль {fmt(tar, 1)}°   стик {fmt(v.cmd, 1)}{v.cmdUnit}
-        </div>
-      </div>
-      <div className="cascade">
-        <div className="step">
-          <span className="lab">хочемо бути</span>
-          <b>
-            {fmt(tar, 1)}°<em>стик {fmt(v.cmd, 1)}{v.cmdUnit}</em>
-          </b>
-          <span className="sub">{yaw ? "ціль курсу · стік = rate" : "ціль FC · не стик"}</span>
-        </div>
-        <div className="step amber">
-          <span className="lab">тому крутимо</span>
-          <b>{fmt(v.des || 0, 1)} °/с</b>
-          <span className="sub">завдання rate · ATC_ANG_{v.tag}_P</span>
-        </div>
-        <div className="step">
-          <span className="lab">виходить</span>
-          <b>{fmt(v.rate, 1)} °/с</b>
-          <span className="sub">факт rate · ATC_RAT_{v.tag}_*</span>
+          {t("actual {ang}°   target {tar}°   stick {cmd}{unit}", {
+            ang: fmt(v.ang, 2),
+            tar: fmt(tar, 1),
+            cmd: fmt(v.cmd, 1),
+            unit,
+          })}
         </div>
       </div>
       <div className="plot-head">
-        <b>{v.rateName}, °/с</b>
+        <b>{t("command · rate, °/s")}</b>
         <span>
           {yaw
-            ? "сірий — стік (°/с). Жовта — завдання rate від ATC. У Stabilize стік рискання йде сюди, не в кут."
-            : "чим туди їдемо. Жовта — не позиція, а команда «крутись ось так швидко»."}
+            ? t("Stick here is rate, not angle. Target is the ATC rate command. In Stabilize the yaw stick goes here.")
+            : t("How we get there. Rate command is not position — it is “rotate this fast”.")}
         </span>
       </div>
       <div className={paused ? "plot paused" : "plot"}>
@@ -106,13 +95,13 @@ export function Scope({
       </div>
       <div className="caption">
         <div className="legend">
-          {yaw ? <span><i className="g" />стик</span> : null}
-          <span><i className="a" />tar rate</span>
-          <span><i className="c" />rate Act</span>
+          {yaw ? <span><i className="g" />{t("Stick")}</span> : null}
+          <span><i className="a" />{t("tar rate")}</span>
+          <span><i className="c" />{t("rate Act")}</span>
         </div>
         <div className="readout">
-          rate {fmt(v.rate, 2)} °/s   tar {fmt(v.des || 0, 2)} °/s
-          {yaw ? `   стик ${fmt(v.cmd, 1)} °/s` : ""}
+          {t("rate {v}°/s", { v: fmt(v.rate, 2) })}   {t("tar {v}°/s", { v: fmt(v.des || 0, 2) })}
+          {yaw ? `   ${t("stick {cmd} °/s", { cmd: fmt(v.cmd, 1) })}` : ""}
         </div>
       </div>
     </>

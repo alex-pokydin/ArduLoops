@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState, useSyncExternalStore, type ReactNode } from "react";
 import { NODES } from "../cascade";
+import { tDetail, useT } from "../i18n/i18n";
 import { addLog } from "../log";
 import { axisView, type Axis } from "../mav/axis";
 import { send } from "../mav/cmd";
@@ -7,6 +8,8 @@ import { getBuffer, getSnapshot, subscribe } from "../mav/store";
 import type { Sample } from "../mav/types";
 import { GainRow } from "./GainRow";
 import { Craft } from "./Craft";
+
+type Feel = { kind: string; title: string; hint: string; axis?: Axis };
 
 const PRESET = {
   wool: { p: 0.027, i: 0.015, d: 0.0036 },
@@ -40,6 +43,7 @@ export function Aside({
   axis: Axis;
   live3d: boolean;
 }) {
+  const t = useT();
   const s = useSyncExternalStore(subscribe, getSnapshot, getSnapshot);
   const [p, setP] = useState(0.135);
   const [, setI] = useState(0.135);
@@ -47,7 +51,11 @@ export function Aside({
   const [, setTc] = useState(0.1);
   const [, setAcc] = useState(1100);
   const [, setRmax] = useState(0);
-  const [feel, setFeel] = useState({ kind: "ok", title: "—", hint: "Пресет ставить P I D. Газ — лівий стик, крен — правий." });
+  const [feel, setFeel] = useState<Feel>({
+    kind: "ok",
+    title: "—",
+    hint: "Preset sets P I D. Throttle is left stick, roll is right.",
+  });
   const dragging = useRef(false);
   const holdUntil = useRef(0);
   const stickTimer = useRef(0);
@@ -85,11 +93,14 @@ export function Aside({
       }
     }
     if (prev.current.ok !== s.ok) {
-      addLog(s.ok ? "лінк " + (s.detail || "") : "немає лінку · " + (s.detail || ""), s.ok ? "ok" : "bad");
+      addLog(
+        s.ok ? t("Link {url}", { url: s.detail || "" }) : t("No link · {detail}", { detail: tDetail(s.detail) }),
+        s.ok ? "ok" : "bad",
+      );
       prev.current.ok = s.ok;
     }
     if (s.mode && s.mode !== prev.current.mode) {
-      addLog("режим " + (prev.current.mode ? prev.current.mode + " → " : "") + s.mode);
+      addLog(t("Mode {mode}", { mode: (prev.current.mode ? prev.current.mode + " → " : "") + s.mode }));
       prev.current.mode = s.mode;
     }
     if (prev.current.armed !== null && prev.current.armed !== !!s.armed) {
@@ -103,7 +114,12 @@ export function Aside({
     prev.current.att = attOk;
     const grounded = s.alt != null && !Number.isNaN(s.alt) && s.alt < 2;
     if (prev.current.grounded !== null && prev.current.grounded !== grounded) {
-      addLog(grounded ? "на землі · AGL < 2 м, стики майже не крутять" : "у повітрі", grounded ? "bad" : "ok");
+      addLog(
+        grounded
+          ? t("On the ground · AGL < 2 m, sticks barely rotate the craft")
+          : t("Airborne"),
+        grounded ? "bad" : "ok",
+      );
     }
     prev.current.grounded = grounded;
     classify(s, axis);
@@ -115,12 +131,11 @@ export function Aside({
   }, [log]);
 
   function classify(_s: Sample, ax: Axis) {
-    const v = axisView(_s, ax);
     if (_s.alt != null && !Number.isNaN(_s.alt) && _s.alt < 2) {
       setFeel({
         kind: "gnd",
-        title: "на землі",
-        hint: "SITL лежить. Підніміть газ — інакше стик не зрушить апарат.",
+        title: "On the ground",
+        hint: "SITL is sitting. Raise throttle — otherwise the stick will not move the craft.",
       });
       return;
     }
@@ -140,47 +155,49 @@ export function Aside({
         ? Math.max(...rates.map(Math.abs), ...cmds.map(Math.abs), 0) > 8
         : meanAbs > 4 || Math.max(...cmds.map(Math.abs), 0) > 2;
     const ringing = rstd > 8 || (zcHz > 4 && rstd > 1.5);
-    const stick = v.name;
     if (!Number.isNaN(g) && g < 0.1) {
       setFeel({
         kind: "wool",
-        title: "вата",
+        title: "Wool",
+        axis: ax,
         hint: moving
-          ? "Act відстає від Tar. P і I малі: помилка є, швидкості мало."
+          ? "Act lags Tar. P and I are small: there is error, little rate."
           : ax === "yaw"
-            ? "P рискання малий. Лівий стік — повільний розворот."
-            : `P×0.2 і I зрізані. На висінні тихо; ${stick} стиком — повільне повернення (вата).`,
+            ? "Yaw P is small. Left stick — a slow turn."
+            : "P×0.2 and I are cut. Quiet in hover; {stick} stick — slow return (wool).",
       });
       return;
     }
     if (!Number.isNaN(g) && g >= 0.4) {
       setFeel({
         kind: "hot",
-        title: ringing ? "різкість / дзвін" : "гостро",
+        title: ringing ? "Harsh / ringing" : "Sharp",
+        axis: ax,
         hint: ringing || moving
-          ? "Act ганяється за Tar. P великий — очікуйте переліт або дзвін."
-          : `P завищений. ${stick.charAt(0).toUpperCase() + stick.slice(1)} стиком покаже переліт або дзвін.`,
+          ? "Act chases Tar. P is large — expect overshoot or ringing."
+          : "P is high. {Stick} stick will show overshoot or ringing.",
       });
       return;
     }
     if (moving) {
       setFeel({
         kind: "ok",
-        title: "маневр",
+        title: "Maneuver",
         hint:
           ax === "yaw"
-            ? "Стік рискання — це rate. Дивіться, чи жовта і синя на нижньому графіку збігаються."
-            : "Дивіться, чи збігається блакитна лінія з білою після відпускання стика.",
+            ? "Yaw stick is rate. Watch whether amber and cyan match on the lower plot."
+            : "Watch whether cyan meets white after you release the stick.",
       });
       return;
     }
     setFeel({
       kind: "ok",
-      title: Number.isNaN(g) ? "—" : "сток",
+      title: Number.isNaN(g) ? "—" : "Stock",
+      axis: ax,
       hint:
         ax === "yaw"
-          ? "Yaw окремо: I менший, D часто 0. Лівий стік — еталон, чи rate ловить завдання."
-          : `Типове P. ${stick.charAt(0).toUpperCase() + stick.slice(1)} стиком — еталон повернення на горизонт.`,
+          ? "Yaw is separate: I is smaller, D is often 0. Left stick is the reference — does rate catch the command."
+          : "Typical P. {Stick} stick is the horizon-return reference.",
     });
   }
 
@@ -293,24 +310,33 @@ export function Aside({
     };
   }, []);
 
-  function applyPreset(name: "wool" | "stock" | "hot", label: string) {
-    const t = PRESET[name];
+  function applyPreset(name: "wool" | "stock" | "hot") {
+    const pset = PRESET[name];
     holdUntil.current = Date.now() + 1500;
     send({ op: "preset", name });
-    setP(t.p);
-    setI(t.i);
-    setD(t.d);
-    shownGain.current = t.p.toFixed(3);
-    if ("tc" in t && t.tc != null) {
-      setTc(t.tc);
-      setAcc(t.acc);
-      setRmax(t.rmax);
+    setP(pset.p);
+    setI(pset.i);
+    setD(pset.d);
+    shownGain.current = pset.p.toFixed(3);
+    if ("tc" in pset && pset.tc != null) {
+      setTc(pset.tc);
+      setAcc(pset.acc);
+      setRmax(pset.rmax);
       addLog(
-        `${label} · P ${t.p} I ${t.i} D ${t.d} · TC ${t.tc.toFixed(2)} ACC ${Math.round(t.acc)} Rmax ${t.rmax <= 0 ? "off" : Math.round(t.rmax)}`,
+        t("Stock · P {p} I {i} D {d} · TC {tc} ACC {acc} Rmax {rmax}", {
+          p: pset.p,
+          i: pset.i,
+          d: pset.d,
+          tc: pset.tc.toFixed(2),
+          acc: Math.round(pset.acc),
+          rmax: pset.rmax <= 0 ? t("off") : Math.round(pset.rmax),
+        }),
         "cmd",
       );
+    } else if (name === "wool") {
+      addLog(t("Wool · P {p} I {i} D {d}", { p: pset.p, i: pset.i, d: pset.d }), "cmd");
     } else {
-      addLog(`${label} · P ${t.p} I ${t.i} D ${t.d}`, "cmd");
+      addLog(t("Sharp · P {p} I {i} D {d}", { p: pset.p, i: pset.i, d: pset.d }), "cmd");
     }
     onSel("atc_rat");
   }
@@ -318,27 +344,29 @@ export function Aside({
   const modeOptions = MODES.includes(s.mode) || s.mode === "?" ? MODES : [...MODES, s.mode];
   const alt = s.alt;
   const grounded = alt != null && !Number.isNaN(alt) && alt < 2;
-  let altLabel: ReactNode = "висота AGL";
+  let altLabel: ReactNode = t("AGL height");
   let altClass = "";
   if (grounded) {
     const c = s.climb || 0;
-    altLabel = c > 0.15 ? `зліт ↑ ${c.toFixed(1)} м/с` : "лежить";
+    altLabel = c > 0.15 ? t("takeoff ↑ {v} m/s", { v: c.toFixed(1) }) : t("Sitting");
     altClass = "gnd";
   } else if (alt != null && !Number.isNaN(alt)) {
     const c = s.climb || 0;
     if (c > 0.15) {
-      altLabel = `↑ ${c.toFixed(1)} м/с`;
+      altLabel = t("↑ {v} m/s", { v: c.toFixed(1) });
       altClass = "up";
     } else if (c < -0.15) {
-      altLabel = `↓ ${Math.abs(c).toFixed(1)} м/с`;
+      altLabel = t("↓ {v} m/s", { v: Math.abs(c).toFixed(1) });
       altClass = "dn";
-    } else altLabel = "тримає";
+    } else altLabel = t("Holding");
   }
 
   const tuneNode = NODES.find((n) => n.id === sel) ?? NODES.find((n) => n.id === "atc_rat") ?? null;
   const tarRoll = s.tar == null ? s.cmd || 0 : s.tar;
   const tarPitch = s.pitch_tar == null ? s.pitch_cmd || 0 : s.pitch_tar;
   const tarYaw = s.yaw_tar == null ? s.yaw || 0 : s.yaw_tar;
+  const stickName = t(feel.axis ?? axis);
+  const StickName = stickName.charAt(0).toUpperCase() + stickName.slice(1);
 
   return (
     <aside>
@@ -358,12 +386,12 @@ export function Aside({
       />
       <div className="flight">
         <select
-          title="Режим польоту"
-          aria-label="режим"
+          title={t("Flight mode")}
+          aria-label={t("Mode")}
           value={modeOptions.includes(s.mode) ? s.mode : "STABILIZE"}
           onChange={(ev) => {
             send({ op: "mode", mode: ev.target.value });
-            addLog("режим " + ev.target.value, "cmd");
+            addLog(t("Mode {mode}", { mode: ev.target.value }), "cmd");
           }}
         >
           {modeOptions.map((m) => (
@@ -385,42 +413,42 @@ export function Aside({
               return;
             }
             send({ op: "arm", on: true });
-            addLog("arm · " + s.mode, "cmd");
+            addLog(t("arm · {mode}", { mode: s.mode }), "cmd");
           }}
         >
           {s.armed ? "armed" : "disarm"}
         </button>
       </div>
-      <div className={`sticks ${live3d ? "axis-3d" : `axis-${axis}`}`} aria-label="віртуальні стики Mode 2">
-        <div className="stick thr" ref={stickL} role="button" tabIndex={0} title={axis === "yaw" && !live3d ? "Лівий стик: рискання (ліво-право)" : "Лівий стик: газ і рискання"}>
+      <div className={`sticks ${live3d ? "axis-3d" : `axis-${axis}`}`} aria-label={t("Virtual Mode 2 sticks")}>
+        <div className="stick thr" ref={stickL} role="button" tabIndex={0} title={axis === "yaw" && !live3d ? t("Left stick: yaw (left-right)") : t("Left stick: throttle and yaw")}>
           <div className="cross" />
-          <span className="tag n">газ</span>
-          <span className="tag s">газ−</span>
-          <span className="tag w">риск−</span>
-          <span className="tag e">риск+</span>
+          <span className="tag n">{t("Thr")}</span>
+          <span className="tag s">{t("Thr−")}</span>
+          <span className="tag w">{t("Yaw−")}</span>
+          <span className="tag e">{t("Yaw+")}</span>
           <div className="knob" ref={knobL} />
         </div>
-        <div className="stick" ref={stickR} role="button" tabIndex={0} title={live3d ? "Правий стик: крен і тангаж" : axis === "pitch" ? "Правий стик: тангаж (вгору-вниз)" : "Правий стик: крен (ліво-право)"}>
+        <div className="stick" ref={stickR} role="button" tabIndex={0} title={live3d ? t("Right stick: roll and pitch") : axis === "pitch" ? t("Right stick: pitch (up-down)") : t("Right stick: roll (left-right)")}>
           <div className="cross" />
-          <span className="tag n">тангаж</span>
-          <span className="tag s">тангаж</span>
-          <span className="tag w">крен−</span>
-          <span className="tag e">крен+</span>
+          <span className="tag n">{t("pitch")}</span>
+          <span className="tag s">{t("pitch")}</span>
+          <span className="tag w">{t("Roll−")}</span>
+          <span className="tag e">{t("Roll+")}</span>
           <div className="knob" ref={knobR} />
         </div>
       </div>
-      <div className={`feel ${feel.kind}`}>{feel.title}</div>
-      <div className="hint">{feel.hint}</div>
+      <div className={`feel ${feel.kind}`}>{feel.title === "—" ? "—" : t(feel.title)}</div>
+      <div className="hint">{t(feel.hint, { stick: stickName, Stick: StickName })}</div>
       <div className="btns">
-        <button className={p < 0.1 ? "cyan on" : "cyan"} onClick={() => applyPreset("wool", "вата")}>вата</button>
-        <button className={p >= 0.1 && p < 0.4 ? "on" : ""} onClick={() => applyPreset("stock", "сток")}>сток</button>
-        <button className={p >= 0.4 ? "hot on" : "hot"} onClick={() => applyPreset("hot", "гостро")}>гостро</button>
+        <button className={p < 0.1 ? "cyan on" : "cyan"} onClick={() => applyPreset("wool")}>{t("Wool")}</button>
+        <button className={p >= 0.1 && p < 0.4 ? "on" : ""} onClick={() => applyPreset("stock")}>{t("Stock")}</button>
+        <button className={p >= 0.4 ? "hot on" : "hot"} onClick={() => applyPreset("hot")}>{t("Sharp")}</button>
       </div>
       {tuneNode ? (
           <>
             <div className="tune-cap">
-              {tuneNode.title}
-              <span>{tuneNode.unit}</span>
+              {t(tuneNode.title)}
+              <span>{t(tuneNode.unit)}</span>
             </div>
             {tuneNode.gains.length ? (
               <div className="sliders">
@@ -429,11 +457,11 @@ export function Aside({
                 ))}
               </div>
             ) : (
-              <p className="tune-empty">Немає гейнів. Виберіть регулятор — слайдери залишаться тут і на графіку.</p>
+              <p className="tune-empty">{t("No gains. Pick a regulator — sliders stay here and on the plot.")}</p>
             )}
           </>
         ) : null}
-      <div className="log-label">журнал</div>
+      <div className="log-label">{t("Log")}</div>
       <div className="log" ref={logEl}>
         {log.map((row, idx) => (
           <div className="row" key={idx}>

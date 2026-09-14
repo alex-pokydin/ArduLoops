@@ -9,7 +9,7 @@ export type AxisView = {
   title: string;
   rateName: string;
   tag: "RLL" | "PIT" | "YAW";
-  cmdUnit: "°" | "°/с";
+  cmdUnit: "°" | "°/s";
   ang: number;
   rate: number;
   des: number | null;
@@ -21,18 +21,18 @@ export type AxisView = {
 };
 
 export function axisLabel(axis: Axis): string {
-  if (axis === "pitch") return "тангаж";
-  if (axis === "yaw") return "рискання";
-  return "крен";
+  if (axis === "pitch") return "pitch";
+  if (axis === "yaw") return "yaw";
+  return "roll";
 }
 
 export function axisView(s: Sample, axis: Axis): AxisView {
   if (axis === "pitch") {
     return {
       axis,
-      name: "тангаж",
-      title: "Тангаж",
-      rateName: "Швидкість тангажа",
+      name: "pitch",
+      title: "Pitch",
+      rateName: "Pitch rate",
       tag: "PIT",
       cmdUnit: "°",
       ang: s.pitch ?? 0,
@@ -48,11 +48,11 @@ export function axisView(s: Sample, axis: Axis): AxisView {
   if (axis === "yaw") {
     return {
       axis,
-      name: "рискання",
-      title: "Рискання",
-      rateName: "Швидкість рискання",
+      name: "yaw",
+      title: "Yaw",
+      rateName: "Yaw rate",
       tag: "YAW",
-      cmdUnit: "°/с",
+      cmdUnit: "°/s",
       ang: s.yaw ?? 0,
       rate: s.yaw_rate ?? 0,
       des: s.yaw_des ?? null,
@@ -65,9 +65,9 @@ export function axisView(s: Sample, axis: Axis): AxisView {
   }
   return {
     axis,
-    name: "крен",
-    title: "Крен",
-    rateName: "Швидкість крену",
+    name: "roll",
+    title: "Roll",
+    rateName: "Roll rate",
     tag: "RLL",
     cmdUnit: "°",
     ang: s.roll ?? 0,

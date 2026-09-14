@@ -1,12 +1,16 @@
+import { useT } from "../i18n/i18n";
+
 export function PlaneStub() {
+  const t = useT();
   return (
     <div className="stub">
       <p>
-        Зараз на лінку <b>plane</b>. Карта контурів крила ще заглушка — її зберемо окремо.
+        {t("The link is {frame}. The wing cascade map is still a stub — we will build it separately.", {
+          frame: t("plane"),
+        })}
       </p>
       <p>
-        Далі тут буде не PSC+ATC, а <code>RLL_*</code> / <code>PTCH_*</code> (кут → rate → серво), зовні{" "}
-        <code>NAVL1_*</code> і <code>TECS_*</code>. Yaw за замовчуванням <code>YAW2SRV_*</code>.
+        {t("Here it will not be PSC+ATC, but RLL_* / PTCH_* (angle → rate → servo), with NAVL1_* and TECS_* outside. Yaw defaults to YAW2SRV_*.")}
       </p>
     </div>
   );

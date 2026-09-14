@@ -1,9 +1,11 @@
 import { useEffect, useState, useSyncExternalStore, type FormEvent } from "react";
 import { Aside, type LogRow } from "./components/Aside";
 import { Cascade } from "./components/Cascade";
+import { LabDialog } from "./components/LabDialog";
 import { Loop } from "./components/Loop";
 import { PlaneStub } from "./components/PlaneStub";
 import { Scope } from "./components/Scope";
+import { useT } from "./i18n/i18n";
 import { addLog, setLogHandler } from "./log";
 import { send } from "./mav/cmd";
 import { loadLink, saveLink } from "./mav/link";
@@ -15,7 +17,7 @@ import {
   runtimeLabParams,
   saveLabSnapshot,
 } from "./mav/labInit";
-import { axisLabel, type Axis } from "./mav/axis";
+import { type Axis } from "./mav/axis";
 import { AxisSwitch } from "./components/AxisSwitch";
 import { getSnapshot, isPaused, setPaused, startStream, subscribe } from "./mav/store";
 
@@ -30,7 +32,17 @@ function stamp(): string {
   );
 }
 
+function isIdleDetail(detail: string | undefined): boolean {
+  return (
+    detail === "відключено" ||
+    detail === "немає лінку" ||
+    detail === "Disconnected" ||
+    detail === "No link"
+  );
+}
+
 export function App() {
+  const t = useT();
   const s = useSyncExternalStore(subscribe, getSnapshot, getSnapshot);
   const [tab, setTab] = useState<"scope" | "map" | "loop">("scope");
   const [sel, setSel] = useState<string | null>("atc_rat");
@@ -38,6 +50,7 @@ export function App() {
   const [live3d, setLive3d] = useState(false);
   const [log, setLog] = useState<LogRow[]>([]);
   const [linkUrl, setLinkUrl] = useState(loadLink);
+  const [labOpen, setLabOpen] = useState(false);
   const paused = isPaused();
 
   useEffect(() => {
@@ -65,7 +78,7 @@ export function App() {
   function togglePause() {
     const next = !isPaused();
     setPaused(next);
-    addLog(next ? "графіки на паузі" : "графіки далі", "cmd");
+    addLog(next ? t("Plots paused") : t("Plots running"), "cmd");
   }
 
   function onLink(ev: FormEvent) {
@@ -73,28 +86,28 @@ export function App() {
     const url = linkUrl.trim();
     saveLink(url);
     send({ op: "connect", url });
-    addLog("лінк " + url, "cmd");
+    addLog(t("Link {url}", { url }), "cmd");
   }
 
   function onDisconnect() {
     send({ op: "disconnect" });
-    addLog("лінк вимкнено", "cmd");
+    addLog(t("Link off"), "cmd");
   }
 
   function onLabInit() {
     if (!linked) return;
     if (s.armed) {
-      addLog("ініт · спочатку disarm", "bad");
+      addLog(t("Init · disarm first"), "bad");
       return;
     }
-    if (s.frame === "plane") {
-      addLog("ініт · лише коптер", "bad");
-      return;
-    }
-    const params = runtimeLabParams(loadLabSnapshot());
+    const vehicle = s.frame === "plane" ? "plane" : "copter";
+    const params = runtimeLabParams(loadLabSnapshot(), vehicle);
     send({ op: "init", params });
     addLog(
-      "ініт · " + Object.keys(params).length + " параметрів · Quad X + INS · ребут",
+      t("Init · {n} parameters · {vehicle} · reboot", {
+        n: Object.keys(params).length,
+        vehicle: t(vehicle),
+      }),
       "cmd",
     );
   }
@@ -104,91 +117,93 @@ export function App() {
     const live = pickLiveLab(s.params);
     const n = Object.keys(live).length;
     if (n < 8) {
-      addLog("запис · параметри ще не прийшли, зачекайте", "bad");
+      addLog(t("Export · parameters have not arrived yet, wait"), "bad");
       return;
     }
     const next = { ...loadLabSnapshot(), ...live };
     saveLabSnapshot(next);
     downloadParm(next);
-    addLog("стандарт · записано " + n + " з " + LAB_KEYS.length, "ok");
+    addLog(t("Stand · wrote {n} of {total}", { n, total: LAB_KEYS.length }), "ok");
   }
 
   function onAxis(next: Axis) {
     setAxis(next);
-    addLog("вісь · " + axisLabel(next), "cmd");
+    addLog(t("Axis · {axis}", { axis: t(next) }), "cmd");
   }
 
   function onLive3d(on: boolean) {
     setLive3d(on);
-    addLog(on ? "модель · 3D" : "модель · одна вісь", "cmd");
+    addLog(on ? t("Model · 3D") : t("Model · one axis"), "cmd");
   }
 
   const hz = s.att_hz || 0;
   const linked = s.ok;
-  const idle = !linked && (s.detail === "відключено" || s.detail === "немає лінку");
-  const banner = linked ? !hz : !idle;
+  const linkBad = !linked && !isIdleDetail(s.detail);
+  const frameName = s.frame ? t(s.frame) : "";
+  const linkHint = "tcpout:host:port, tcp:host:port, udpin:0.0.0.0:14550";
 
   return (
     <>
       <header>
-        <h1>ArduLoops{s.frame ? ` · ${s.frame}` : ""}</h1>
+        <h1>ArduLoops{frameName ? ` · ${frameName}` : ""}</h1>
         <p className="sub">
           {s.frame === "plane"
-            ? "Каскад крила ще заглушка. RLL_ / PTCH_ / L1 / TECS з’являться пізніше."
-            : "Хочемо кут. Керуємо не кутом, а швидкістю, якою туди крутимось."}
+            ? t("The wing cascade is still a stub. RLL_ / PTCH_ / L1 / TECS will appear later.")
+            : t("We want an angle. We don't command the angle — we command the rate that takes us there.")}
         </p>
         <div className="hdr-right">
           {linked ? (
             <div className="link on">
               <span className="status" title={s.detail || undefined}>
-                <b>лінк</b>
+                <b>{t("Link")}</b>
                 {hz ? ` · ATT ${hz} Hz` : ""}
               </span>
-              <button type="button" onClick={onDisconnect} title="Від’єднати">
-                стоп
+              <button type="button" onClick={onDisconnect} title={t("Disconnect")}>
+                {t("Stop")}
               </button>
             </div>
           ) : (
             <form className="link" onSubmit={onLink}>
               <input
+                className={linkBad ? "bad" : undefined}
                 value={linkUrl}
                 onChange={(ev) => setLinkUrl(ev.target.value)}
                 spellCheck={false}
+                aria-invalid={linkBad || undefined}
                 aria-label="MAVLink"
-                title="tcpout:host:port, tcp:host:port, udpin:0.0.0.0:14550"
+                title={linkHint}
                 placeholder="tcpout:127.0.0.1:5763"
               />
-              <button type="submit">лінк</button>
+              <button type="submit">{t("Link")}</button>
             </form>
           )}
-          <div className="lab-btns">
-            <button
-              type="button"
-              disabled={!linked}
-              onClick={onLabInit}
-              title="Застосувати стандарт лаби і ребутнути автопілот (MAVLink). Лінк коротко впаде."
-            >
-              ініт
-            </button>
-            <button
-              type="button"
-              disabled={!linked}
-              onClick={onLabSave}
-              title="Записати поточні параметри як стандарт лаби і зберегти .parm"
-            >
-              запис
-            </button>
-          </div>
+          <button
+            type="button"
+            className="lab-btn"
+            onClick={() => setLabOpen(true)}
+            title={t("Options")}
+            aria-label={t("Options")}
+          >
+            <svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true">
+              <path
+                fill="currentColor"
+                d="M19.14 12.94c.04-.31.06-.63.06-.94 0-.31-.02-.63-.06-.94l2.03-1.58a.49.49 0 0 0 .12-.61l-1.92-3.32a.49.49 0 0 0-.59-.22l-2.39.96c-.5-.38-1.03-.7-1.62-.94l-.36-2.54A.49.49 0 0 0 14.9 2h-3.8a.49.49 0 0 0-.48.42l-.36 2.54c-.59.24-1.13.56-1.62.94l-2.39-.96a.49.49 0 0 0-.59.22L3.74 8.48a.49.49 0 0 0 .12.61l2.03 1.58c-.04.31-.06.63-.06.94s.02.63.06.94l-2.03 1.58a.49.49 0 0 0-.12.61l1.92 3.32c.12.22.39.3.59.22l2.39-.96c.5.38 1.03.7 1.62.94l.36 2.54c.05.24.25.42.48.42h3.8c.24 0 .44-.18.48-.42l.36-2.54c.59-.24 1.13-.56 1.62-.94l2.39.96c.22.08.47 0 .59-.22l1.92-3.32a.49.49 0 0 0-.12-.61zM12 15.6A3.6 3.6 0 1 1 12 8.4a3.6 3.6 0 0 1 0 7.2z"
+              />
+            </svg>
+          </button>
         </div>
       </header>
-      <div className={banner ? "banner show" : "banner"}>
-        {linked
-          ? "Лінк є, але кут не надходить (ATT 0 Hz). Графік плоский, поки SITL не надсилає ATTITUDE."
-          : "Немає MAVLink: " + (s.detail || "SITL не знайдено") + ". Перевірте адресу й симуляцію."}
-      </div>
+      <LabDialog
+        open={labOpen}
+        linked={linked}
+        frame={s.frame}
+        onClose={() => setLabOpen(false)}
+        onInit={onLabInit}
+        onSave={onLabSave}
+      />
       <main>
         <section className="scope">
-          <nav className="tabs" aria-label="вид">
+          <nav className="tabs" aria-label={t("View")}>
             <a
               href="#scope"
               className={tab === "scope" ? "on" : undefined}
@@ -198,7 +213,7 @@ export function App() {
                 setTab("scope");
               }}
             >
-              графік
+              {t("Plot")}
             </a>
             <span className="sep" aria-hidden="true">
               ·
@@ -212,7 +227,7 @@ export function App() {
                 setTab("map");
               }}
             >
-              каскад
+              {t("Cascade")}
             </a>
             <span className="sep" aria-hidden="true">
               ·
@@ -226,7 +241,7 @@ export function App() {
                 setTab("loop");
               }}
             >
-              контур
+              {t("Loop")}
             </a>
             <AxisSwitch axis={axis} onAxis={onAxis} live3d={live3d} onLive3d={onLive3d} />
           </nav>

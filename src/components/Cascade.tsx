@@ -14,6 +14,7 @@ import {
 } from "../cascade";
 import { FrameGuide } from "./FrameGuide";
 import { fmtGain, paramOf } from "./GainRow";
+import { t, useT } from "../i18n/i18n";
 import { axisTar, axisView, gainKeysForAxis, type Axis } from "../mav/axis";
 import { getSnapshot, subscribe } from "../mav/store";
 import type { Sample } from "../mav/types";
@@ -24,12 +25,12 @@ function liveBits(node: NodeDef, s: Sample, axis: Axis): string {
   const tar = axisTar(v);
   const parts: string[] = [];
   for (const k of node.live) {
-    if (k === "cmd") parts.push(`стик ${v.cmd.toFixed(1)}${v.cmdUnit}`);
-    if (k === "tar") parts.push(`ціль ${tar.toFixed(1)}°`);
-    if (k === "roll") parts.push(`${v.name} ${v.ang.toFixed(1)}°`);
-    if (k === "des") parts.push(`tar ${(v.des || 0).toFixed(1)}°/с`);
-    if (k === "rate") parts.push(`rate ${v.rate.toFixed(1)}°/с`);
-    if (k === "alt" && s.alt != null) parts.push(`AGL ${s.alt.toFixed(1)} м`);
+    if (k === "cmd") parts.push(t("stick {v}{unit}", { v: v.cmd.toFixed(1), unit: v.cmdUnit === "°/s" ? t("°/s") : v.cmdUnit }));
+    if (k === "tar") parts.push(t("target {v}°", { v: tar.toFixed(1) }));
+    if (k === "roll") parts.push(t("{name} {v}°", { name: t(v.name), v: v.ang.toFixed(1) }));
+    if (k === "des") parts.push(t("tar {v}°/s", { v: (v.des || 0).toFixed(1) }));
+    if (k === "rate") parts.push(t("rate {v}°/s", { v: v.rate.toFixed(1) }));
+    if (k === "alt" && s.alt != null) parts.push(t("AGL {v} m", { v: s.alt.toFixed(1) }));
   }
   return parts.join(" · ");
 }
@@ -39,16 +40,17 @@ function cardLive(node: NodeDef, s: Sample, axis: Axis): string | null {
   if (!node.live?.length) return null;
   const v = axisView(s, axis);
   const tar = axisTar(v);
-  if (node.id === "pilot") return `${v.cmd.toFixed(1)}${v.cmdUnit}`;
+  if (node.id === "pilot") return t("{v}{unit}", { v: v.cmd.toFixed(1), unit: v.cmdUnit === "°/s" ? t("°/s") : v.cmdUnit });
   if (node.id === "atc_ang") return `${tar.toFixed(1)}°`;
-  if (node.id === "atc_rat") return `${v.rate.toFixed(1)} °/с`;
-  if (node.id === "psc_d_pos" && s.alt != null) return `${s.alt.toFixed(1)} м`;
+  if (node.id === "atc_rat") return t("{v} °/s", { v: v.rate.toFixed(1) });
+  if (node.id === "psc_d_pos" && s.alt != null) return t("{v} m", { v: s.alt.toFixed(1) });
   if (node.id === "motors") return `${v.ang.toFixed(1)}°`;
   return null;
 }
 
 function titleOf(id: string): string {
-  return NODES.find((n) => n.id === id)?.title ?? id;
+  const title = NODES.find((n) => n.id === id)?.title ?? id;
+  return t(title);
 }
 
 function ParamList({ node, sample, axis }: { node: NodeDef; sample: Sample; axis: Axis }) {
@@ -91,6 +93,7 @@ export function Cascade({
   onSel: (id: string | null) => void;
   axis: Axis;
 }) {
+  const t = useT();
   const s = useSyncExternalStore(subscribe, getSnapshot, getSnapshot);
   const [showAll, setShowAll] = useState(false);
   const wrapRef = useRef<HTMLDivElement>(null);
@@ -160,7 +163,7 @@ export function Cascade({
                       dominantBaseline="middle"
                       transform={`rotate(-90 ${cx} ${cy})`}
                     >
-                      {g.label}
+                      {t(g.label)}
                     </text>
                   </g>
                 );
@@ -169,7 +172,7 @@ export function Cascade({
                 <g key={r.label}>
                   <rect x={r.x + 22} y={r.y} width={r.w - 22} height={r.h} rx="6" fill={rankFill(r.band)} />
                   <text x={r.x + 30} y={r.y + 16} fill={rankInk(r.band)} fontSize="10">
-                    {r.label}
+                    {t(r.label)}
                   </text>
                 </g>
               ))}
@@ -181,7 +184,7 @@ export function Cascade({
                   fill="#8b98a8"
                   fontSize="10"
                 >
-                  межа · lean стає бажаним кутом
+                  {t("boundary · lean becomes desired angle")}
                 </text>
               ) : null}
               {EDGES.map((e) => {
@@ -214,7 +217,7 @@ export function Cascade({
                         fill="#4fc3f7"
                         fontSize="10"
                       >
-                        {e.label}
+                        {t(e.label)}
                       </text>
                     ) : null}
                   </g>
@@ -255,8 +258,8 @@ export function Cascade({
                       ))}
                     </span>
                   ) : null}
-                  <span className="t">{n.title}</span>
-                  <span className={liveTxt ? "p live" : "p"}>{liveTxt ?? n.unit}</span>
+                  <span className="t">{t(n.title)}</span>
+                  <span className={liveTxt ? "p live" : "p"}>{liveTxt ?? t(n.unit)}</span>
                 </button>
               );
             })}
@@ -266,7 +269,7 @@ export function Cascade({
       </div>
       <div className="inspect">
         <div className="inspect-head">
-          <h2>{node ? node.title : "Чому контури окремі"}</h2>
+          <h2>{node ? t(node.title) : t("Why the loops are separate")}</h2>
           <button
             type="button"
             className={showAll ? "map-sw on" : "map-sw"}
@@ -274,40 +277,41 @@ export function Cascade({
             onClick={() => setShowAll((v) => !v)}
           >
             <span className="track" aria-hidden="true" />
-            усі контури
+            {t("all loops")}
           </button>
         </div>
         {node ? (
           <>
             <div className={"kind " + nodeBand(node.id)}>
-              {BAND_LABEL[nodeBand(node.id)]} · {node.unit} · {node.kind}
-              {node.inner ? ` · ${axisView(s, axis).name}` : ""}
+              {t(BAND_LABEL[nodeBand(node.id)])} · {t(node.unit)} · {t(node.kind)}
+              {node.inner ? ` · ${t(axisView(s, axis).name)}` : ""}
             </div>
             {dimmed ? (
               <p className="warn">
-                У {s.mode || "цьому режимі"} цей контур не працює: автопілот його зараз не крутить.
-                Гейни можна дивитись, але на поведінку вони не вплинуть, поки режим його не замкне.
+                {t("In {mode} this loop is not running: the autopilot is not turning it. You can inspect gains, but they will not change behaviour until the mode closes the loop.", {
+                  mode: s.mode || t("this mode"),
+                })}
               </p>
             ) : null}
-            <p>{node.does}</p>
+            <p>{t(node.does)}</p>
             {liveBits(node, s, axis) ? <div className="live">{liveBits(node, s, axis)}</div> : null}
             <ParamList node={node} sample={s} axis={axis} />
             {incoming.length ? (
               <div className="io">
-                Входить
+                {t("In")}
                 {incoming.map((e) => (
                   <div key={e.from + e.label}>
-                    {titleOf(e.from)} · <b>{e.label}</b>
+                    {titleOf(e.from)} · <b>{t(e.label)}</b>
                   </div>
                 ))}
               </div>
             ) : null}
             {outgoing.length ? (
               <div className="io">
-                Віддає
+                {t("Out")}
                 {outgoing.map((e) => (
                   <div key={e.to + e.label}>
-                    <b>{e.label}</b> · {titleOf(e.to)}
+                    <b>{t(e.label)}</b> · {titleOf(e.to)}
                   </div>
                 ))}
               </div>
@@ -316,27 +320,20 @@ export function Cascade({
         ) : (
           <>
             <p>
-              Штатний каскад Copter: <b>PosControl (PSC, зовнішній)</b> тримає де бути,{" "}
-              <b>Attitude Control (ATC, внутрішній)</b> тримає кут.
+              {t("Stock Copter cascade: PosControl (PSC, outer) holds where to be, Attitude Control (ATC, inner) holds the angle.")}
             </p>
             <p>
-              Мотори не вміють «повернутись на 10°» — лише тяга. Різниця тяг дає момент (torque).
-              Тому регулятор кута (attitude, ATC_ANG) не крутить мотори: з помилки кута він рахує, як
-              швидко треба крутитись до цілі, і ставить завдання кутової швидкості (rate, ATC_RAT)
-              наступному контуру. Регулятор rate це завдання виконує: помилка °/с → момент у мікшер.
+              {t("Motors cannot “turn to 10°” — only thrust. Thrust difference makes torque. So the attitude regulator (ATC_ANG) does not spin motors: from angle error it computes how fast to rotate toward the target and sets a rate command for the next loop. The rate regulator does that job: °/s error → mixer torque.")}
             </p>
             <p>
-              Межа між ними — нахил (lean): горизонтальне прискорення стає бажаним креном і тангажем.
-              Далі ATC працює в тілі (° і °/с). Вертикаль кут обходить: прискорення Down (accel,
-              PSC_D_ACC) одразу йде в газ. Рискання (yaw) — ті самі два внутрішні контури: кут і
-              кутова швидкість.
+              {t("The boundary is lean: horizontal acceleration becomes desired roll and pitch. Then ATC works in the body (° and °/s). Vertical skips angle: Down acceleration (PSC_D_ACC) goes straight to throttle. Yaw is the same two inner loops: angle and rate.")}
             </p>
             <p className="io">
-              Окремого PID горизонтального прискорення немає. WP, Loiter і Circle задають цілі, це не
-              регулятори. Не показано: Plane, CC2_, FHLD, FOLL, heli.
+              {t("There is no separate horizontal-acceleration PID. WP, Loiter and Circle set targets; they are not regulators. Not shown: Plane, CC2_, FHLD, FOLL, heli.")}
+              {" "}
               {!showAll
-                ? ` У ${s.mode} неактивні блоки зараз не замкнені.`
-                : " Зараз видно всі контури штатного каскаду."}
+                ? t("In {mode}, inactive blocks are not closed now.", { mode: s.mode })
+                : t("All stock-cascade loops are visible now.")}
             </p>
           </>
         )}

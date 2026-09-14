@@ -77,19 +77,27 @@ const RUNTIME_SKIP = /^(COMPASS_|BATT_MONITOR|BRD_SAFETY)/;
 
 export function runtimeLabParams(
   snapshot: Record<string, number>,
+  frame: "copter" | "plane" | "" = "copter",
 ): Record<string, number> {
+  const plane = frame === "plane";
   const out: Record<string, number> = {};
-  for (const key of LAB_KEYS) {
-    if (RUNTIME_SKIP.test(key)) continue;
-    const v = snapshot[key];
-    if (v != null && Number.isFinite(v)) out[key] = v;
-  }
-  // Identical lab: Quad X + fake-calibrated SITL IMU (0.0 offset ⇒ PreArm accel cal).
-  for (const key of LAB_KEYS) {
-    if (key.startsWith("FRAME_") || key.startsWith("INS_")) {
-      out[key] = LAB_INIT[key];
+  if (!plane) {
+    for (const key of LAB_KEYS) {
+      if (RUNTIME_SKIP.test(key)) continue;
+      const v = snapshot[key];
+      if (v != null && Number.isFinite(v)) out[key] = v;
     }
+    for (const key of LAB_KEYS) {
+      if (key.startsWith("FRAME_") || key.startsWith("INS_")) {
+        out[key] = LAB_INIT[key];
+      }
+    }
+    return out;
   }
+  for (const key of LAB_KEYS) {
+    if (key.startsWith("INS_")) out[key] = LAB_INIT[key];
+  }
+  out.ARSPD_TYPE = 0;
   return out;
 }
 

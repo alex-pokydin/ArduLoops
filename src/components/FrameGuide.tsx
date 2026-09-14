@@ -1,4 +1,5 @@
 import type { AxisFocus } from "../cascade";
+import { useT } from "../i18n/i18n";
 
 function ink(on: boolean, hot: string, rest = "#5c6b7a"): string {
   return on ? hot : rest;
@@ -22,6 +23,7 @@ function QuadTop({ x, y }: { x: number; y: number }) {
 }
 
 export function FrameGuide({ focus }: { focus: AxisFocus | null }) {
+  const t = useT();
   const ne = focus === "ne" || focus === "nav";
   const d = focus === "d";
   const body = focus === "lean" || focus === "att" || focus === "rate" || focus === "mix";
@@ -30,23 +32,23 @@ export function FrameGuide({ focus }: { focus: AxisFocus | null }) {
 
   const hint =
     focus === "ne" || focus === "nav"
-      ? "Земля, горизонт: North і East. Метри і м/с. Не ніс дрона."
+      ? t("Earth, horizon: North and East. Metres and m/s. Not the nose of the drone.")
       : focus === "d"
-        ? "D+ вниз. «Висота» справа — AGL, тобто −D. м, м/с, м/с²."
+        ? t("D+ is down. Height on the right is AGL, i.e. −D. m, m/s, m/s².")
         : focus === "lean"
-          ? "Прискорення NE стає нахилом (lean) — крен і тангаж у градусах."
+          ? t("NE acceleration becomes lean — roll and pitch in degrees.")
           : focus === "att"
-            ? "Кут тіла (attitude), градуси. Roll / pitch / yaw."
+            ? t("Body attitude, degrees. Roll / pitch / yaw.")
             : focus === "rate"
-              ? "Кутова швидкість (rate) тіла, °/с. Не м/с польоту."
+              ? t("Body angular rate, °/s. Not airspeed m/s.")
               : focus === "mix"
-                ? "Мотори: момент з кутової швидкості (rate) і газ з прискорення Down."
-                : "NED на землі. Кут і кутова швидкість (rate) — у тілі дрона.";
+                ? t("Motors: torque from rate and throttle from Down acceleration.")
+                : t("NED on the earth. Angle and rate live in the drone body.");
 
   return (
     <div className="frames">
       <div className={ne ? "frame on amber" : "frame"}>
-        <span className="cap">згори · NE</span>
+        <span className="cap">{t("top · NE")}</span>
         <svg viewBox="0 0 140 100" aria-hidden="true">
           <QuadTop x={72} y={58} />
           <g stroke={ink(ne, amber)} fill={ink(ne, amber)} strokeWidth="1.8" strokeLinecap="round">
@@ -62,12 +64,12 @@ export function FrameGuide({ focus }: { focus: AxisFocus | null }) {
             E
           </text>
           <text x="8" y="94" fontSize="9" fill="#5c6b7a">
-            м · м/с
+            {t("m · m/s")}
           </text>
         </svg>
       </div>
       <div className={d ? "frame on amber" : "frame"}>
-        <span className="cap">збоку · D+</span>
+        <span className="cap">{t("side · D+")}</span>
         <svg viewBox="0 0 140 100" aria-hidden="true">
           <line x1="8" y1="48" x2="132" y2="48" stroke="#3a4650" strokeDasharray="4 3" />
           <g transform="translate(58 48)" fill="#1a1e24" stroke="#8b98a8" strokeWidth="1.4">
@@ -89,12 +91,12 @@ export function FrameGuide({ focus }: { focus: AxisFocus | null }) {
             AGL −D
           </text>
           <text x="8" y="94" fontSize="9" fill="#5c6b7a">
-            м · м/с · м/с²
+            {t("m · m/s · m/s²")}
           </text>
         </svg>
       </div>
       <div className={body ? "frame on cyan" : "frame"}>
-        <span className="cap">ззаду · тіло</span>
+        <span className="cap">{t("rear · body")}</span>
         <svg viewBox="0 0 140 100" aria-hidden="true">
           <line x1="8" y1="58" x2="132" y2="58" stroke="#3a4650" strokeDasharray="4 3" />
           <g transform="translate(70 52)" fill="#1a1e24" stroke="#8b98a8" strokeWidth="1.4">
@@ -122,10 +124,10 @@ export function FrameGuide({ focus }: { focus: AxisFocus | null }) {
             stroke="none"
           />
           <text x="108" y="38" fontSize="11" fill={ink(body, cyan)}>
-            {focus === "rate" ? "°/с" : "°"}
+            {focus === "rate" ? t("°/s") : "°"}
           </text>
           <text x="8" y="94" fontSize="9" fill="#5c6b7a">
-            крен · тангаж · yaw
+            {t("roll · pitch · yaw")}
           </text>
         </svg>
       </div>

@@ -1,3 +1,4 @@
+import { t } from "./i18n/i18n";
 import { MAX_T } from "./mav/store";
 import type { Axis } from "./mav/axis";
 import type { Sample } from "./mav/types";
@@ -80,7 +81,7 @@ function plot(
   for (let dt = 0; dt <= MAX_T; dt += 2) {
     const px = x(t1 - dt);
     ctx.textAlign = dt === 0 ? "right" : dt === MAX_T ? "left" : "center";
-    ctx.fillText(dt === 0 ? "зараз" : "−" + dt + " с", Math.max(4, Math.min(w - 4, px)), h - 14);
+    ctx.fillText(dt === 0 ? t("now") : t("−{n} s", { n: dt }), Math.max(4, Math.min(w - 4, px)), h - 14);
   }
 
   if (!buf.length) return;

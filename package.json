@@ -9,6 +9,7 @@
     "desktop": "node scripts/with-cargo.mjs tauri dev",
     "build": "node scripts/with-cargo.mjs tauri build",
     "bridge": "node scripts/with-cargo.mjs cargo run --manifest-path src-tauri/Cargo.toml --bin arduloops-bridge --no-default-features",
+    "i18n": "node scripts/check-i18n.mjs",
     "cli": "node scripts/arduloops-cli.mjs",
     "preview": "vite preview",
     "tauri": "node scripts/with-cargo.mjs tauri"

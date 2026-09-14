@@ -755,9 +755,6 @@ fn apply_cmd(conn: &dyn MavConnection<MavMessage>, st: &mut LinkState, cmd: Cmd)
             if st.sample.armed {
                 return;
             }
-            if st.sample.frame == "plane" {
-                return;
-            }
             let mut names: Vec<String> = params.keys().cloned().collect();
             names.sort();
             for name in names {

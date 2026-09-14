@@ -1,4 +1,5 @@
 import type { ReactNode } from "react";
+import { useT } from "../i18n/i18n";
 import type { Axis } from "../mav/axis";
 
 function clamp(v: number): number {
@@ -164,17 +165,26 @@ export function Craft({
   axis: Axis;
   live3d: boolean;
 }) {
+  const t = useT();
   const side = !live3d && axis === "pitch";
   const top = !live3d && axis === "yaw";
   const Body = side ? QuadSide : top ? QuadTop : Quad;
-  const cap = grounded ? "на землі" : live3d ? "3D" : side ? "вид збоку" : top ? "вид зверху" : "вид ззаду";
+  const cap = grounded
+    ? t("On the ground")
+    : live3d
+      ? "3D"
+      : side
+        ? t("side view")
+        : top
+          ? t("top view")
+          : t("rear view");
   return (
     <div className={grounded ? "craft grounded" : top ? "craft top" : "craft"}>
       <span className="cap">{cap}</span>
       <div className="alt-read">
         <b>
           {alt == null || Number.isNaN(alt) ? "—" : alt.toFixed(1)}
-          <em>м</em>
+          <em>{t("m")}</em>
         </b>
         <span className={altClass}>{altLabel}</span>
       </div>

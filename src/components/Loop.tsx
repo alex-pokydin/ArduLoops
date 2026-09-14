@@ -1,5 +1,6 @@
 import { useSyncExternalStore } from "react";
 import { NODES, pidTerms, type NodeDef } from "../cascade";
+import { t, useT } from "../i18n/i18n";
 import { axisTar, axisView, remapGainKey, type Axis } from "../mav/axis";
 import { fmtGain, paramOf } from "./GainRow";
 import { getSnapshot, subscribe } from "../mav/store";
@@ -50,12 +51,12 @@ function wiresOf(node: NodeDef, s: Sample, axis: Axis): Wire {
     return {
       ref: v.des,
       act: v.rate,
-      unit: "°/с",
+      unit: t("°/s"),
       digits: 1,
-      refName: "завдання rate",
-      actName: "факт rate",
+      refName: t("rate command"),
+      actName: t("actual rate"),
       refColor: COL.amber,
-      outName: "момент",
+      outName: t("torque"),
       pTerm: v.p,
       iTerm: v.i,
       dTerm: v.d,
@@ -67,10 +68,10 @@ function wiresOf(node: NodeDef, s: Sample, axis: Axis): Wire {
       act: v.ang,
       unit: "°",
       digits: 1,
-      refName: "ціль кута",
-      actName: `${v.name} Act`,
+      refName: t("angle target"),
+      actName: t("Actual {name}", { name: t(v.name) }),
       refColor: COL.white,
-      outName: "бажаний rate",
+      outName: t("desired rate"),
       pTerm: null,
       iTerm: null,
       dTerm: null,
@@ -79,12 +80,12 @@ function wiresOf(node: NodeDef, s: Sample, axis: Axis): Wire {
   return {
     ref: null,
     act: null,
-    unit: node.unit,
+    unit: t(node.unit),
     digits: 2,
-    refName: "завдання",
-    actName: "факт",
+    refName: t("setpoint"),
+    actName: t("actual"),
     refColor: node.inner ? COL.cyan : COL.amber,
-    outName: "вихід",
+    outName: t("output"),
     pTerm: null,
     iTerm: null,
     dTerm: null,
@@ -104,7 +105,7 @@ function formulaRows(node: NodeDef, w: Wire, err: number | null, s: Sample, axis
   const yTex = w.act != null && w.act < 0 ? `(${y})` : y;
   const rows: FormRow[] = [
     {
-      name: "помилка",
+      name: t("error"),
       tex: "e = r − y",
       live: w.ref == null || w.act == null ? `${w.unit}` : `${r} − ${yTex} = ${eLive} ${w.unit}`,
     },
@@ -112,12 +113,12 @@ function formulaRows(node: NodeDef, w: Wire, err: number | null, s: Sample, axis
   if (terms.includes("P") && !terms.includes("I") && !terms.includes("D")) {
     const prod =
       Kp?.v != null && err != null && !Number.isNaN(err)
-        ? `${Kp.text} × ${eLive} = ${fmt(Kp.v * err, 2)} ${w.unit === "°" ? "°/с" : w.unit}`
+        ? `${Kp.text} × ${eLive} = ${fmt(Kp.v * err, 2)} ${w.unit === "°" ? t("°/s") : w.unit}`
         : "—";
     rows.push({ name: "P", tex: "ω* = P · e", live: prod });
     return rows;
   }
-  const mix = node.id === "atc_rat" ? "  (−1…+1 мікшер)" : "";
+  const mix = node.id === "atc_rat" ? ` ${t("(−1…+1 mixer)")}` : "";
   if (terms.includes("P")) {
     const prod =
       w.pTerm != null
@@ -131,7 +132,7 @@ function formulaRows(node: NodeDef, w: Wire, err: number | null, s: Sample, axis
     rows.push({
       name: "I",
       tex: "I ← I + Ki · e · Δt",
-      live: w.iTerm != null ? `зараз ${fmt(w.iTerm, 3)}${mix}` : `${Ki?.text ?? "Ki"} · e · Δt, |I| ≤ IMAX`,
+      live: w.iTerm != null ? t("now {v}{mix}", { v: fmt(w.iTerm, 3), mix }) : `${Ki?.text ?? "Ki"} · e · Δt, |I| ≤ IMAX`,
     });
   }
   if (terms.includes("D")) {
@@ -146,7 +147,7 @@ function formulaRows(node: NodeDef, w: Wire, err: number | null, s: Sample, axis
       w.pTerm != null && w.iTerm != null && w.dTerm != null
         ? `${fmt(w.pTerm + w.iTerm + w.dTerm, 3)}${mix}`
         : "P + I + D";
-    rows.push({ name: "вихід", tex: "u = P + I + D", live: u });
+    rows.push({ name: t("output"), tex: "u = P + I + D", live: u });
   }
   return rows;
 }
@@ -197,11 +198,11 @@ export function Loop({
   sel: string | null;
   axis: Axis;
 }) {
+  const t = useT();
   const s = useSyncExternalStore(subscribe, getSnapshot, getSnapshot);
   const node = NODES.find((n) => n.id === sel) ?? NODES.find((n) => n.id === "atc_rat") ?? NODES[0];
   const terms = pidTerms(node);
   const w = wiresOf(node, s, axis);
-  const v = axisView(s, axis);
   const err =
     w.ref != null && w.act != null && !Number.isNaN(w.ref) && !Number.isNaN(w.act) ? w.ref - w.act : null;
   const regulator = terms.length > 0;
@@ -209,20 +210,18 @@ export function Loop({
   return (
     <div className="loop">
       <div className="plot-head">
-        <b>{node.title} · {v.title}</b>
+        <b>{t(node.title)}</b>
         <span>
-          Контур тому, що вихід знову порівнюють із завданням. Кольори як на графіку: жовта — завдання rate, біла —
-          ціль кута, синя — факт.
+          {t("A loop because the output is compared to the command again.")}
         </span>
       </div>
       {!regulator ? (
         <p className="loop-note">
-          Цей блок не PID. Нижче — як виглядає замкнений контур регулятора (той самий, що на карті з літерами P / I / D).
-          Виберіть <b>кут → rate</b> або <b>rate → момент</b>, щоб побачити живі числа.
+          {t("This block is not a PID. Below is a closed regulator loop (the same one on the map with P / I / D). Pick angle → rate or rate → torque to see live numbers.")}
         </p>
       ) : null}
       <div className="loop-board">
-        <svg viewBox="0 0 840 300" role="img" aria-label="Замкнений контур PID">
+        <svg viewBox="0 0 840 300" role="img" aria-label={t("Closed PID loop")}>
           <defs>
             <marker id="loopArr" markerWidth="7" markerHeight="7" refX="6" refY="3.5" orient="auto">
               <polygon points="0 0, 7 3.5, 0 7" fill={COL.line} />
@@ -243,7 +242,7 @@ export function Loop({
             markerEnd="url(#loopArrC)"
           />
           <text x="430" y="268" textAnchor="middle" fill={COL.cyan} fontSize="11" fontWeight="650">
-            зворотний звʼязок (feedback) — тому це loop
+            {t("feedback — that is why it is a loop")}
           </text>
 
           <Box
@@ -252,7 +251,7 @@ export function Loop({
             w={118}
             h={56}
             stroke={w.refColor}
-            title="хочемо"
+            title={t("want")}
             sub="setpoint"
             value={`${fmt(w.ref, w.digits)} ${w.unit}`}
           />
@@ -276,7 +275,7 @@ export function Loop({
             w={110}
             h={56}
             stroke={COL.ink}
-            title="помилка"
+            title={t("error")}
             sub="e = r − y"
             value={`${fmt(err, w.digits)} ${w.unit}`}
           />
@@ -292,7 +291,7 @@ export function Loop({
             const y = 28 + i * 54;
             const hint = letter === "P" ? "Kp · e" : letter === "I" ? "∫ Ki · e dt" : "Kd · de/dt";
             const shown =
-              !on ? "немає" : term != null ? fmt(term, 3) : computed != null ? fmt(computed, 2) : hint;
+              !on ? t("none") : term != null ? fmt(term, 3) : computed != null ? fmt(computed, 2) : hint;
             return (
               <g key={letter} opacity={on ? 1 : 0.28}>
                 <rect
@@ -331,7 +330,7 @@ export function Loop({
           </text>
 
           <path d="M 506 100 L 528 100" fill="none" stroke={COL.line} strokeWidth="1.6" markerEnd="url(#loopArr)" />
-          <Box x={532} y={72} w={108} h={56} stroke={COL.gray} title="обʼєкт" sub="plant · мотори / тіло" value={w.outName} />
+          <Box x={532} y={72} w={108} h={56} stroke={COL.gray} title={t("plant")} sub={t("plant · motors / body")} value={w.outName} />
           <path d="M 640 100 L 662 100" fill="none" stroke={COL.cyan} strokeWidth="1.8" markerEnd="url(#loopArrC)" />
           <Box
             x={666}
@@ -339,7 +338,7 @@ export function Loop({
             w={118}
             h={56}
             stroke={COL.cyan}
-            title="факт"
+            title={t("actual")}
             sub="process variable"
             value={`${fmt(w.act, w.digits)} ${w.unit}`}
           />
@@ -351,19 +350,19 @@ export function Loop({
       <div className="loop-legend">
         <span>
           <i className="a" />
-          завдання rate
+          {t("rate command")}
         </span>
         <span>
           <i className="w" />
-          ціль кута
+          {t("angle target")}
         </span>
         <span>
           <i className="c" />
-          факт
+          {t("actual")}
         </span>
         <span>
           <i className="g" />
-          стік на графіку
+          {t("stick on the plot")}
         </span>
       </div>
       <div className="loop-form">
@@ -376,8 +375,7 @@ export function Loop({
         ))}
       </div>
       <p className="loop-cap">
-        Це спрощення <code>AC_PID</code> / <code>AC_P</code>. У прошивці ще фільтри цілі й D (FLTT / FLTE / FLTD), стеля
-        інтегратора IMAX і обмеження slew (SMAX). На крилі додається FF · r.
+        {t("This is a simplification of AC_PID / AC_P. Firmware also has target and D filters (FLTT / FLTE / FLTD), integrator ceiling IMAX and slew limits (SMAX). On the wing, FF · r is added.")}
       </p>
     </div>
   );
