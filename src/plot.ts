@@ -1,0 +1,148 @@
+import { MAX_T } from "./mav/store";
+import type { Axis } from "./mav/axis";
+import type { Sample } from "./mav/types";
+
+function size(c: HTMLCanvasElement): [number, number, number] {
+  const dpr = window.devicePixelRatio || 1;
+  const cssW = Math.max(1, c.clientWidth);
+  const cssH = Math.max(1, c.clientHeight);
+  const w = Math.round(cssW * dpr);
+  const h = Math.round(cssH * dpr);
+  if (c.width !== w || c.height !== h) {
+    c.width = w;
+    c.height = h;
+  }
+  return [cssW, cssH, dpr];
+}
+
+function wrap180(d: number): number {
+  while (d > 180) d -= 360;
+  while (d < -180) d += 360;
+  return d;
+}
+
+function unwrapHeading(buf: Sample[]): Sample[] {
+  if (!buf.length) return buf;
+  let prevA = buf[0].yaw || 0;
+  let prevT = typeof buf[0].yaw_tar === "number" ? buf[0].yaw_tar : prevA;
+  let accA = prevA;
+  let accT = prevT;
+  return buf.map((p, i) => {
+    if (i === 0) return { ...p, yaw: accA, yaw_tar: accT };
+    const a = p.yaw || 0;
+    const t = typeof p.yaw_tar === "number" ? p.yaw_tar : a;
+    accA += wrap180(a - prevA);
+    accT += wrap180(t - prevT);
+    prevA = a;
+    prevT = t;
+    return { ...p, yaw: accA, yaw_tar: accT };
+  });
+}
+
+function plot(
+  ctx: CanvasRenderingContext2D,
+  c: HTMLCanvasElement,
+  buf: Sample[],
+  series: Array<keyof Sample>,
+  ymax: number,
+  colors: string[],
+): void {
+  const [w, h, dpr] = size(c);
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  ctx.clearRect(0, 0, w, h);
+  const padB = 16;
+  const t1 = buf.length ? buf[buf.length - 1].t : 0;
+  const t0 = t1 - MAX_T;
+  const x = (t: number) => ((t - t0) / MAX_T) * w;
+  const y = (v: number) => (h - padB) / 2 - (v / (Math.abs(ymax) || 1)) * ((h - padB) * 0.42);
+
+  ctx.lineWidth = 1;
+  ctx.setLineDash([]);
+  for (let dt = 1; dt < MAX_T; dt++) {
+    const px = Math.round(x(t1 - dt)) + 0.5;
+    ctx.strokeStyle = dt % 2 === 0 ? "#2e3a46" : "#222a32";
+    ctx.beginPath();
+    ctx.moveTo(px, 0);
+    ctx.lineTo(px, h - padB);
+    ctx.stroke();
+  }
+  ctx.strokeStyle = "#3a4652";
+  ctx.setLineDash([4, 5]);
+  ctx.beginPath();
+  ctx.moveTo(0, (h - padB) / 2);
+  ctx.lineTo(w, (h - padB) / 2);
+  ctx.stroke();
+  ctx.setLineDash([]);
+
+  ctx.fillStyle = "#6b7884";
+  ctx.font = "11px Segoe UI, system-ui, sans-serif";
+  ctx.textBaseline = "top";
+  for (let dt = 0; dt <= MAX_T; dt += 2) {
+    const px = x(t1 - dt);
+    ctx.textAlign = dt === 0 ? "right" : dt === MAX_T ? "left" : "center";
+    ctx.fillText(dt === 0 ? "зараз" : "−" + dt + " с", Math.max(4, Math.min(w - 4, px)), h - 14);
+  }
+
+  if (!buf.length) return;
+  series.forEach((key, i) => {
+    ctx.beginPath();
+    ctx.strokeStyle = colors[i];
+    ctx.lineWidth = key === "cmd" || key === "pitch_cmd" || key === "yaw_cmd" ? 1.6 : 2.5;
+    let started = false;
+    for (const p of buf) {
+      const v = p[key];
+      if (typeof v !== "number" || Number.isNaN(v)) continue;
+      const px = x(p.t);
+      const py = y(v);
+      if (!started) {
+        ctx.moveTo(px, py);
+        started = true;
+      } else ctx.lineTo(px, py);
+    }
+    ctx.stroke();
+  });
+}
+
+function nums(buf: Sample[], key: keyof Sample): number[] {
+  return buf.map((p) => {
+    const v = p[key];
+    return typeof v === "number" && !Number.isNaN(v) ? v : 0;
+  });
+}
+
+export function drawScope(
+  c1: HTMLCanvasElement,
+  x1: CanvasRenderingContext2D,
+  c2: HTMLCanvasElement,
+  x2: CanvasRenderingContext2D,
+  buf: Sample[],
+  axis: Axis = "roll",
+): void {
+  if (axis === "yaw") {
+    const drawn = unwrapHeading(buf);
+    const angs = nums(drawn, "yaw");
+    const tars = nums(drawn, "yaw_tar");
+    const span = Math.max(5, ...angs.map(Math.abs), ...tars.map(Math.abs)) * 1.25;
+    plot(x1, c1, drawn, ["yaw_tar", "yaw"], span, ["rgba(255,255,255,0.92)", "#4fc3f7"]);
+    const rates = nums(buf, "yaw_rate");
+    const dens = nums(buf, "yaw_des");
+    const cmds = nums(buf, "yaw_cmd");
+    const rspan = Math.max(12, ...rates.map(Math.abs), ...dens.map(Math.abs), ...cmds.map(Math.abs)) * 1.25;
+    plot(x2, c2, buf, ["yaw_cmd", "yaw_des", "yaw_rate"], rspan, ["#6b7884", "#ffb74d", "#4fc3f7"]);
+    return;
+  }
+  const angK = axis === "pitch" ? "pitch" : "roll";
+  const cmdK = axis === "pitch" ? "pitch_cmd" : "cmd";
+  const tarK = axis === "pitch" ? "pitch_tar" : "tar";
+  const desK = axis === "pitch" ? "pitch_des" : "des";
+  const rateK = axis === "pitch" ? "pitch_rate" : "rate";
+  const angs = nums(buf, angK);
+  const cmds = nums(buf, cmdK);
+  const tars = nums(buf, tarK);
+  const span = Math.max(5, ...angs.map(Math.abs), ...cmds.map(Math.abs), ...tars.map(Math.abs)) * 1.25;
+  plot(x1, c1, buf, [cmdK, tarK, angK], span, ["#6b7884", "rgba(255,255,255,0.92)", "#4fc3f7"]);
+  const rates = nums(buf, rateK);
+  const dens = nums(buf, desK);
+  const rspan = Math.max(12, ...rates.map(Math.abs), ...dens.map(Math.abs)) * 1.25;
+  plot(x2, c2, buf, [desK, rateK], rspan, ["#ffb74d", "#4fc3f7"]);
+}

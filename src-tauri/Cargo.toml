@@ -1,0 +1,31 @@
+[package]
+name = "arduloops"
+version = "0.1.0"
+description = "ArduLoops"
+authors = ["IAMPM"]
+edition = "2021"
+rust-version = "1.77.2"
+default-run = "arduloops"
+
+[lib]
+name = "arduloops_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[[bin]]
+name = "arduloops-bridge"
+path = "src/bin/bridge.rs"
+
+[features]
+default = ["desktop"]
+desktop = ["dep:tauri", "dep:tauri-plugin-log", "dep:tauri-build"]
+
+[build-dependencies]
+tauri-build = { version = "2.6.3", optional = true }
+
+[dependencies]
+serde_json = "1.0"
+serde = { version = "1.0", features = ["derive"] }
+log = "0.4"
+tauri = { version = "2.11.3", optional = true }
+tauri-plugin-log = { version = "2", optional = true }
+mavlink = { version = "0.13.1", default-features = true, features = ["ardupilotmega"] }
