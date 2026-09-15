@@ -98,6 +98,41 @@ function plot(
   });
 }
 
+/** SVG path `d` for Loop P/I/D / Σ traces — same window as the scope strip. */
+export function sparkSeries(
+  buf: Sample[],
+  picks: Array<(s: Sample) => number | null>,
+  w: number,
+  h: number,
+): { ds: string[]; ymax: number } {
+  const mid = h / 2;
+  const t1 = buf.length ? buf[buf.length - 1].t : 0;
+  const t0 = t1 - MAX_T;
+  let ymax = 0.05;
+  for (const p of buf) {
+    for (const pick of picks) {
+      const v = pick(p);
+      if (v != null && Number.isFinite(v)) ymax = Math.max(ymax, Math.abs(v));
+    }
+  }
+  ymax *= 1.25;
+  const x = (t: number) => ((t - t0) / MAX_T) * w;
+  const y = (v: number) => mid - (v / ymax) * (h * 0.42);
+  const ds = picks.map((pick) => {
+    let d = "";
+    let started = false;
+    for (const p of buf) {
+      const v = pick(p);
+      if (v == null || !Number.isFinite(v)) continue;
+      const cmd = started ? "L" : "M";
+      started = true;
+      d += `${cmd}${x(p.t).toFixed(1)},${y(v).toFixed(1)} `;
+    }
+    return d.trim();
+  });
+  return { ds, ymax };
+}
+
 function nums(buf: Sample[], key: keyof Sample): number[] {
   return buf.map((p) => {
     const v = p[key];

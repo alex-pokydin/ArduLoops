@@ -20,9 +20,13 @@ Stock Copter map: PosControl (outer) holds *where to be*, Attitude Control (inne
 
 ### Loop
 
-Closed regulator: setpoint → error → P/I/D → plant → actual, with feedback. Same P/I/D as the selected block on the map.
+Closed regulator: setpoint → error → P/I/D → plant → actual, with feedback. Same P/I/D as the selected block on the map. Pause with the button or Space. **Extend** paints the extra AC_PID boxes in red.
 
 ![Loop: closed PID diagram](docs/loop.png)
+
+### SITL
+
+**SITL** before the title opens a left rail (header and the rest of the UI shift right). Wind, GPS, RC fail, motors, IMU, compass, baro, battery, and sim speed — `SIM_*` on SITL only. **Reset** restores the values from the start of the link.
 
 ## Requirements
 
@@ -61,8 +65,8 @@ npm run build      # Windows installers
 
 `npm run build` writes:
 
-- `src-tauri/target/release/bundle/nsis/ArduLoops_0.2.0_x64-setup.exe`
-- `src-tauri/target/release/bundle/msi/ArduLoops_0.2.0_x64_en-US.msi`
+- `src-tauri/target/release/bundle/nsis/ArduLoops_0.3.0_x64-setup.exe`
+- `src-tauri/target/release/bundle/msi/ArduLoops_0.3.0_x64_en-US.msi`
 
 ## Options
 

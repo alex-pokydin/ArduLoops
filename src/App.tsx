@@ -5,6 +5,7 @@ import { LabDialog } from "./components/LabDialog";
 import { Loop } from "./components/Loop";
 import { PlaneStub } from "./components/PlaneStub";
 import { Scope } from "./components/Scope";
+import { SimRail } from "./components/SimRail";
 import { useT } from "./i18n/i18n";
 import { addLog, setLogHandler } from "./log";
 import { send } from "./mav/cmd";
@@ -51,6 +52,7 @@ export function App() {
   const [log, setLog] = useState<LogRow[]>([]);
   const [linkUrl, setLinkUrl] = useState(loadLink);
   const [labOpen, setLabOpen] = useState(false);
+  const [sitlOpen, setSitlOpen] = useState(false);
   const paused = isPaused();
 
   useEffect(() => {
@@ -155,9 +157,22 @@ export function App() {
   const linkHint = "tcpout:host:port, tcp:host:port, udpin:0.0.0.0:14550";
 
   return (
-    <>
+    <div className={sitlOpen ? "app sitl-open" : "app"}>
+      <SimRail sample={s} open={sitlOpen} />
       <header>
-        <h1>ArduLoops{frameName ? ` · ${frameName}` : ""}</h1>
+        <div className="hdr-title">
+          <button
+            type="button"
+            className={sitlOpen ? "sitl-btn on" : "sitl-btn"}
+            aria-pressed={sitlOpen}
+            aria-expanded={sitlOpen}
+            onClick={() => setSitlOpen((on) => !on)}
+            title={t("Simulation")}
+          >
+            {t("SITL")}
+          </button>
+          <h1>ArduLoops{frameName ? ` · ${frameName}` : ""}</h1>
+        </div>
         <p className="sub">
           {s.frame === "plane"
             ? t("The wing cascade is still a stub. RLL_ / PTCH_ / L1 / TECS will appear later.")
@@ -271,11 +286,11 @@ export function App() {
           ) : tab === "map" ? (
             <Cascade sel={sel} onSel={setSel} axis={axis} />
           ) : (
-            <Loop sel={sel} axis={axis} />
+            <Loop sel={sel} axis={axis} onPause={togglePause} />
           )}
         </section>
         <Aside log={log} sel={sel} onSel={setSel} axis={axis} live3d={live3d} />
       </main>
-    </>
+    </div>
   );
 }

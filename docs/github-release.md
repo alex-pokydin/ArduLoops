@@ -1,29 +1,25 @@
-# GitHub release — ArduLoops 0.2.0
+# GitHub release — ArduLoops 0.3.0
 
-Paste this as the release body. Tag: `0.2.0`. Title: `ArduLoops 0.2.0`.
-
-Suggested repository description: `Live stand for reading ArduPilot copter loops — plot, cascade, and PID diagram on a MAVLink link.`
+Paste this as the release body. Tag: `0.3.0`. Title: `ArduLoops 0.3.0`.
 
 Attach (after `npm run build`):
 
-- `ArduLoops_0.2.0_x64-setup.exe`
-- `ArduLoops_0.2.0_x64_en-US.msi`
+- `ArduLoops_0.3.0_x64-setup.exe`
+- `ArduLoops_0.3.0_x64_en-US.msi`
 
 from `src-tauri/target/release/bundle/nsis/` and `…/bundle/msi/`.
 
 ---
 
-**ArduLoops 0.2.0** — the cascade teaches first-flight knobs, and Loop extend shows the rest of the closed regulator.
+**ArduLoops 0.3.0** — poke the SITL world from a left rail, and read P/I/D live on the Loop diagram.
 
 We want an angle. We do not command the angle — we command the rate that takes us there.
 
-### What's in 0.2.0
+### What's in 0.3.0
 
-- **Cascade** — short why / typical-mistake inspect; Stabilize tune vs Loiter-later highlighting; live hover, stick climb, lean ceiling, WP / Loiter speeds
-- **Loop · extend** — AC_PID internals on the diagram: FLTT / FLTE / FLTD, IMAX, SMAX, FF · r
-- **Gyro notch** — `INS_HNTCH` on the cyan feedback path (IMU, not inside the PID). FREQ is from hover FFT, not a feel slider
-- Init writes the stand **without reboot** (live `FRAME_CLASS`) so Mission Planner SITL stays up
-- Height axis labeled as height; stand `.parm` dumps in the repo
+- **SITL rail** — button before the title; the header and the rest of the UI shift right. Accordion for wind, GPS, RC fail, motors, IMU, compass, baro, battery, sim speed (`SIM_*`). **Reset** restores the values from the start of the link. Hidden on a real board.
+- **Loop** — live sparks on want / error / actual and on P, I, D, Σ. Pause next to extend. Legend is command / actual / error / PID. Extend extras are hot red; FF runs above P so it is not hidden.
+- Init still writes the stand **without reboot** (live `FRAME_CLASS`) so Mission Planner SITL stays up
 
 ### Install (Windows)
 

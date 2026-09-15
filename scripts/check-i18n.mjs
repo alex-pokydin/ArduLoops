@@ -39,6 +39,12 @@ for (const rel of ["cascade.ts", "mav/axis.ts"]) {
   while ((m = re.exec(src))) used.add(m[1]);
 }
 {
+  const src = readFileSync(join(root, "mav/sim.ts"), "utf8");
+  const re = /(?:title|label):\s*"((?:\\.|[^"\\])*)"/g;
+  let m;
+  while ((m = re.exec(src))) used.add(m[1]);
+}
+{
   const src = readFileSync(join(root, "cascade.ts"), "utf8");
   const re = /(?:EDGES|LAYERS|BAND_LABEL)[\s\S]*?;/g;
   const blocks = src.match(re) || [];
