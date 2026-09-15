@@ -57,7 +57,7 @@ function ingest(s: Sample): void {
     while (buf.length && buf[0].t < cut) buf.shift();
   }
   const now = performance.now();
-  if (now - lastEmit > 80) {
+  if ((next.init_total || 0) > 0 || now - lastEmit > 80) {
     lastEmit = now;
     emit();
   }

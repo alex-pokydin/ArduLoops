@@ -1,8 +1,8 @@
-import { useSyncExternalStore } from "react";
-import { NODES, pidTerms, type NodeDef } from "../cascade";
+import { useState, useSyncExternalStore } from "react";
+import { GYRO_NOTCH, NODES, pidTerms, type Gain, type NodeDef } from "../cascade";
 import { t, useT } from "../i18n/i18n";
 import { axisTar, axisView, remapGainKey, type Axis } from "../mav/axis";
-import { fmtGain, paramOf } from "./GainRow";
+import { fmtGain, GainRow, liveGain, paramOf, paramUi } from "./GainRow";
 import { getSnapshot, subscribe } from "../mav/store";
 import type { Sample } from "../mav/types";
 
@@ -30,6 +30,19 @@ function gainOf(node: NodeDef, letter: "P" | "I" | "D", s: Sample, axis: Axis): 
   return { key, text: v == null ? "—" : fmtGain(g, v, key), v };
 }
 
+function extraOf(
+  node: NodeDef,
+  label: string,
+  s: Sample,
+  axis: Axis,
+): { g: Gain; key: string; text: string; v: number | null } | null {
+  const g = node.extras?.find((x) => x.label === label);
+  if (!g) return null;
+  const { name } = liveGain(g, s, axis);
+  const v = paramUi(s, g, axis);
+  return { g, key: name, text: v == null ? "—" : fmtGain(g, v, name), v };
+}
+
 type Wire = {
   ref: number | null;
   act: number | null;
@@ -39,13 +52,45 @@ type Wire = {
   actName: string;
   refColor: string;
   outName: string;
+  outUnit?: string;
   pTerm: number | null;
   iTerm: number | null;
   dTerm: number | null;
 };
 
 function wiresOf(node: NodeDef, s: Sample, axis: Axis): Wire {
-  const v = axisView(s, axis);
+  if (node.id === "psc_d_pos") {
+    return {
+      ref: s.alt_tar ?? null,
+      act: s.alt,
+      unit: "m",
+      digits: 2,
+      refName: t("altitude target"),
+      actName: t("AGL"),
+      refColor: COL.white,
+      outName: t("desired Vd"),
+      outUnit: t("m/s"),
+      pTerm: null,
+      iTerm: null,
+      dTerm: null,
+    };
+  }
+  if (node.id === "psc_d_vel") {
+    return {
+      ref: s.climb_des ?? null,
+      act: s.climb,
+      unit: t("m/s"),
+      digits: 2,
+      refName: t("climb target"),
+      actName: t("climb Act"),
+      refColor: COL.amber,
+      outName: t("desired ad"),
+      pTerm: null,
+      iTerm: null,
+      dTerm: null,
+    };
+  }
+  const v = axisView(s, axis === "d" && node.inner ? "roll" : axis);
   const tar = axisTar(v);
   if (node.id === "atc_rat") {
     return {
@@ -92,9 +137,25 @@ function wiresOf(node: NodeDef, s: Sample, axis: Axis): Wire {
   };
 }
 
+const HNTCH_MODE = ["fixed", "throttle", "RPM", "ESC", "FFT", "RPM2"] as const;
+
+function notchOf(s: Sample): { on: boolean; ready: boolean; freq: string; bw: string; mode: string; live: string } {
+  const en = paramOf(s, "INS_HNTCH_ENABLE");
+  const freq = paramOf(s, "INS_HNTCH_FREQ");
+  const bw = paramOf(s, "INS_HNTCH_BW");
+  const mode = paramOf(s, "INS_HNTCH_MODE");
+  const ready = en != null;
+  const on = ready && en >= 0.5;
+  const freqTxt = freq == null ? "—" : `${Math.round(freq)} Hz`;
+  const bwTxt = bw == null ? "—" : `${Math.round(bw)} Hz`;
+  const modeTxt = mode != null && mode >= 0 && mode < HNTCH_MODE.length ? HNTCH_MODE[Math.round(mode)] : "—";
+  const live = !ready ? "—" : on ? `${freqTxt} · BW ${bwTxt}` : "off";
+  return { on, ready, freq: freqTxt, bw: bwTxt, mode: modeTxt, live };
+}
+
 type FormRow = { name: string; tex: string; live: string };
 
-function formulaRows(node: NodeDef, w: Wire, err: number | null, s: Sample, axis: Axis): FormRow[] {
+function formulaRows(node: NodeDef, w: Wire, err: number | null, s: Sample, axis: Axis, extend: boolean): FormRow[] {
   const terms = pidTerms(node);
   const Kp = gainOf(node, "P", s, axis);
   const Ki = gainOf(node, "I", s, axis);
@@ -113,9 +174,10 @@ function formulaRows(node: NodeDef, w: Wire, err: number | null, s: Sample, axis
   if (terms.includes("P") && !terms.includes("I") && !terms.includes("D")) {
     const prod =
       Kp?.v != null && err != null && !Number.isNaN(err)
-        ? `${Kp.text} × ${eLive} = ${fmt(Kp.v * err, 2)} ${w.unit === "°" ? t("°/s") : w.unit}`
+        ? `${Kp.text} × ${eLive} = ${fmt(Kp.v * err, 2)} ${w.unit === "°" ? t("°/s") : w.outUnit ?? w.unit}`
         : "—";
     rows.push({ name: "P", tex: "ω* = P · e", live: prod });
+    if (extend) rows.push({ name: "HNTCH", tex: t("gyro IMU"), live: notchOf(s).live });
     return rows;
   }
   const mix = node.id === "atc_rat" ? ` ${t("(−1…+1 mixer)")}` : "";
@@ -143,11 +205,36 @@ function formulaRows(node: NodeDef, w: Wire, err: number | null, s: Sample, axis
     });
   }
   if (terms.length > 1) {
+    const ff = extraOf(node, "FF", s, axis);
     const u =
       w.pTerm != null && w.iTerm != null && w.dTerm != null
         ? `${fmt(w.pTerm + w.iTerm + w.dTerm, 3)}${mix}`
         : "P + I + D";
-    rows.push({ name: t("output"), tex: "u = P + I + D", live: u });
+    rows.push({
+      name: t("output"),
+      tex: extend && ff ? "u = P + I + D + FF·r" : "u = P + I + D",
+      live: u,
+    });
+  }
+  if (extend) {
+    for (const label of ["FLTT", "FLTE", "FLTD", "IMAX", "SMAX", "FF"] as const) {
+      const x = extraOf(node, label, s, axis);
+      if (!x) continue;
+      const tex =
+        label === "FLTT"
+          ? "LPF(r)"
+          : label === "FLTE"
+            ? "LPF(e)"
+            : label === "FLTD"
+              ? "LPF(D)"
+              : label === "IMAX"
+                ? "|I| ≤ IMAX"
+                : label === "SMAX"
+                  ? "slew(P+D)"
+                  : "FF · r";
+      rows.push({ name: label, tex, live: x.text });
+    }
+    rows.push({ name: "HNTCH", tex: t("gyro IMU"), live: notchOf(s).live });
   }
   return rows;
 }
@@ -161,6 +248,8 @@ function Box({
   title,
   sub,
   value,
+  dashed,
+  dim,
 }: {
   x: number;
   y: number;
@@ -170,10 +259,22 @@ function Box({
   title: string;
   sub?: string;
   value?: string;
+  dashed?: boolean;
+  dim?: boolean;
 }) {
   return (
-    <g>
-      <rect x={x} y={y} width={w} height={h} rx="7" fill={COL.panel} stroke={stroke} strokeWidth="1.4" />
+    <g opacity={dim ? 0.45 : 1}>
+      <rect
+        x={x}
+        y={y}
+        width={w}
+        height={h}
+        rx="7"
+        fill={COL.panel}
+        stroke={stroke}
+        strokeWidth="1.4"
+        strokeDasharray={dashed ? "4 3" : undefined}
+      />
       <text x={x + w / 2} y={y + 16} textAnchor="middle" fill={COL.dim} fontSize="10">
         {title}
       </text>
@@ -191,6 +292,44 @@ function Box({
   );
 }
 
+function Pill({
+  x,
+  y,
+  title,
+  value,
+  stroke,
+}: {
+  x: number;
+  y: number;
+  title: string;
+  value: string;
+  stroke: string;
+}) {
+  const w = 54;
+  const h = 32;
+  return (
+    <g>
+      <rect
+        x={x}
+        y={y}
+        width={w}
+        height={h}
+        rx="6"
+        fill={COL.panel}
+        stroke={stroke}
+        strokeWidth="1.2"
+        strokeDasharray="3 2"
+      />
+      <text x={x + w / 2} y={y + 13} textAnchor="middle" fill={COL.dim} fontSize="9">
+        {title}
+      </text>
+      <text x={x + w / 2} y={y + 25} textAnchor="middle" fill={stroke} fontSize="10" fontWeight="700">
+        {value}
+      </text>
+    </g>
+  );
+}
+
 export function Loop({
   sel,
   axis,
@@ -199,6 +338,7 @@ export function Loop({
   axis: Axis;
 }) {
   const t = useT();
+  const [extend, setExtend] = useState(false);
   const s = useSyncExternalStore(subscribe, getSnapshot, getSnapshot);
   const node = NODES.find((n) => n.id === sel) ?? NODES.find((n) => n.id === "atc_rat") ?? NODES[0];
   const terms = pidTerms(node);
@@ -206,6 +346,19 @@ export function Loop({
   const err =
     w.ref != null && w.act != null && !Number.isNaN(w.ref) && !Number.isNaN(w.act) ? w.ref - w.act : null;
   const regulator = terms.length > 0;
+  const extras = node.extras ?? [];
+  const fltt = extraOf(node, "FLTT", s, axis);
+  const flte = extraOf(node, "FLTE", s, axis);
+  const fltd = extraOf(node, "FLTD", s, axis);
+  const imax = extraOf(node, "IMAX", s, axis);
+  const smax = extraOf(node, "SMAX", s, axis);
+  const ff = extraOf(node, "FF", s, axis);
+  const notch = notchOf(s);
+  const cap = extend
+    ? extras.length
+      ? t("AC_PID filters are the dashed boxes. Gyro notch is on the cyan return (IMU), before the rate the PID subtracts. FREQ from hover FFT — not a feel slider.")
+      : t("This stage is P only. Gyro notch is still on the IMU return.")
+    : t("This is a simplification of AC_PID / AC_P. Firmware also has target and D filters (FLTT / FLTE / FLTD), integrator ceiling IMAX and slew limits (SMAX). On the wing, FF · r is added.");
 
   return (
     <div className="loop">
@@ -214,6 +367,15 @@ export function Loop({
         <span>
           {t("A loop because the output is compared to the command again.")}
         </span>
+        <button
+          type="button"
+          className={extend ? "map-sw on" : "map-sw"}
+          aria-pressed={extend}
+          onClick={() => setExtend((v) => !v)}
+        >
+          <span className="track" aria-hidden="true" />
+          {t("extend")}
+        </button>
       </div>
       {!regulator ? (
         <p className="loop-note">
@@ -234,16 +396,68 @@ export function Loop({
             </marker>
           </defs>
 
-          <path
-            d="M 700 128 L 700 248 L 168 248 L 168 122"
-            fill="none"
-            stroke={COL.cyan}
-            strokeWidth="1.8"
-            markerEnd="url(#loopArrC)"
-          />
-          <text x="430" y="268" textAnchor="middle" fill={COL.cyan} fontSize="11" fontWeight="650">
-            {t("feedback — that is why it is a loop")}
-          </text>
+          {extend ? (
+            <>
+              <path
+                d="M 700 128 L 700 248 L 510 248"
+                fill="none"
+                stroke={COL.cyan}
+                strokeWidth="1.8"
+              />
+              <path
+                d="M 400 248 L 168 248 L 168 122"
+                fill="none"
+                stroke={COL.cyan}
+                strokeWidth="1.8"
+                markerEnd="url(#loopArrC)"
+              />
+              <Box
+                x={400}
+                y={228}
+                w={110}
+                h={40}
+                stroke={COL.cyan}
+                dashed
+                dim={!notch.on}
+                title={t("gyro notch")}
+                sub={notch.on ? notch.mode : "INS_HNTCH"}
+                value={notch.ready ? (notch.on ? notch.freq : "off") : "—"}
+              />
+              <text x="230" y="242" textAnchor="middle" fill={COL.cyan} fontSize="11" fontWeight="650">
+                {t("feedback")}
+              </text>
+            </>
+          ) : (
+            <>
+              <path
+                d="M 700 128 L 700 248 L 168 248 L 168 122"
+                fill="none"
+                stroke={COL.cyan}
+                strokeWidth="1.8"
+                markerEnd="url(#loopArrC)"
+              />
+              <text x="430" y="268" textAnchor="middle" fill={COL.cyan} fontSize="11" fontWeight="650">
+                {t("feedback — that is why it is a loop")}
+              </text>
+            </>
+          )}
+
+          {extend && ff ? (
+            <>
+              <path
+                d="M 75 72 C 75 10, 492 10, 492 86"
+                fill="none"
+                stroke={COL.amber}
+                strokeWidth="1.3"
+                strokeDasharray="5 4"
+                opacity={ff.v && ff.v > 0 ? 0.9 : 0.38}
+                markerEnd="url(#loopArrA)"
+              />
+              <text x="284" y="22" textAnchor="middle" fill={COL.amber} fontSize="10" opacity="0.85">
+                FF · r  {ff.text}
+              </text>
+            </>
+          ) : null}
 
           <Box
             x={16}
@@ -252,7 +466,7 @@ export function Loop({
             h={56}
             stroke={w.refColor}
             title={t("want")}
-            sub="setpoint"
+            sub={extend && fltt ? `FLTT ${fltt.text}` : "setpoint"}
             value={`${fmt(w.ref, w.digits)} ${w.unit}`}
           />
           <text x={75} y={144} textAnchor="middle" fill={w.refColor} fontSize="10">
@@ -276,7 +490,7 @@ export function Loop({
             h={56}
             stroke={COL.ink}
             title={t("error")}
-            sub="e = r − y"
+            sub={extend && flte ? `FLTE ${flte.text}` : "e = r − y"}
             value={`${fmt(err, w.digits)} ${w.unit}`}
           />
 
@@ -290,8 +504,17 @@ export function Loop({
               letter === "P" && term == null && g?.v != null && err != null && !Number.isNaN(err) ? g.v * err : null;
             const y = 28 + i * 54;
             const hint = letter === "P" ? "Kp · e" : letter === "I" ? "∫ Ki · e dt" : "Kd · de/dt";
-            const shown =
-              !on ? t("none") : term != null ? fmt(term, 3) : computed != null ? fmt(computed, 2) : hint;
+            const shown = !on
+              ? t("none")
+              : extend && letter === "I" && imax
+                ? `IMAX ${imax.text}`
+                : extend && letter === "D" && fltd
+                  ? `FLTD ${fltd.text}`
+                  : term != null
+                    ? fmt(term, 3)
+                    : computed != null
+                      ? fmt(computed, 2)
+                      : hint;
             return (
               <g key={letter} opacity={on ? 1 : 0.28}>
                 <rect
@@ -326,9 +549,15 @@ export function Loop({
             Σ
           </text>
           <text x={492} y={82} textAnchor="middle" fill={COL.dim} fontSize="9">
-            P+I+D
+            {extend && ff ? "P+I+D+FF" : "P+I+D"}
           </text>
 
+          {extend && smax ? (
+            <>
+              <line x1="535" y1="72" x2="535" y2="100" stroke={COL.gray} strokeWidth="1" />
+              <Pill x={508} y={38} title="SMAX" value={smax.text} stroke={COL.gray} />
+            </>
+          ) : null}
           <path d="M 506 100 L 528 100" fill="none" stroke={COL.line} strokeWidth="1.6" markerEnd="url(#loopArr)" />
           <Box x={532} y={72} w={108} h={56} stroke={COL.gray} title={t("plant")} sub={t("plant · motors / body")} value={w.outName} />
           <path d="M 640 100 L 662 100" fill="none" stroke={COL.cyan} strokeWidth="1.8" markerEnd="url(#loopArrC)" />
@@ -366,7 +595,7 @@ export function Loop({
         </span>
       </div>
       <div className="loop-form">
-        {formulaRows(node, w, err, s, axis).map((row) => (
+        {formulaRows(node, w, err, s, axis, extend).map((row) => (
           <div className="frow" key={row.name}>
             <span>{row.name}</span>
             <code>{row.tex}</code>
@@ -374,9 +603,18 @@ export function Loop({
           </div>
         ))}
       </div>
-      <p className="loop-cap">
-        {t("This is a simplification of AC_PID / AC_P. Firmware also has target and D filters (FLTT / FLTE / FLTD), integrator ceiling IMAX and slew limits (SMAX). On the wing, FF · r is added.")}
-      </p>
+      {extend ? (
+        <div className="loop-xgain">
+          {extras.map((g) => (
+            <GainRow key={g.key} gain={g} sample={s} node={node} axis={axis} />
+          ))}
+          <div className="xhead">{t("gyro notch")}</div>
+          {GYRO_NOTCH.map((g) => (
+            <GainRow key={g.key} gain={g} sample={s} node={{ ...node, param: "INS_HNTCH_*" }} axis={axis} />
+          ))}
+        </div>
+      ) : null}
+      <p className="loop-cap">{cap}</p>
     </div>
   );
 }

@@ -35,7 +35,12 @@ export type Sample = {
   pitch_tar: number | null;
   yaw_tar: number | null;
   alt: number | null;
+  alt_tar: number | null;
   climb: number | null;
+  /** Desired climb (up +), m/s. PSC_D_POS output ≈ P × height error. */
+  climb_des: number | null;
+  /** Throttle stick throw, % (−100…+100). 0 = mid / no override. */
+  thr_cmd: number;
   att_hz: number;
   rx: string;
   /** HEARTBEAT.type → copter | plane. Empty until the vehicle speaks. */
@@ -43,6 +48,8 @@ export type Sample = {
   params: Record<string, number>;
   /** STATUSTEXT, newest first. Optional so older bridge samples still parse. */
   texts?: string[];
+  init_done?: number;
+  init_total?: number;
 };
 
 export const EMPTY: Sample = {
@@ -82,7 +89,10 @@ export const EMPTY: Sample = {
   pitch_tar: null,
   yaw_tar: null,
   alt: null,
+  alt_tar: null,
   climb: null,
+  climb_des: null,
+  thr_cmd: 0,
   att_hz: 0,
   rx: "",
   frame: "",

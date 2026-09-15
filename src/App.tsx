@@ -17,7 +17,7 @@ import {
   runtimeLabParams,
   saveLabSnapshot,
 } from "./mav/labInit";
-import { type Axis } from "./mav/axis";
+import { axisLabel, type Axis } from "./mav/axis";
 import { AxisSwitch } from "./components/AxisSwitch";
 import { getSnapshot, isPaused, setPaused, startStream, subscribe } from "./mav/store";
 
@@ -96,15 +96,16 @@ export function App() {
 
   function onLabInit() {
     if (!linked) return;
+    if ((s.init_total || 0) > 0) return;
     if (s.armed) {
       addLog(t("Init · disarm first"), "bad");
       return;
     }
     const vehicle = s.frame === "plane" ? "plane" : "copter";
-    const params = runtimeLabParams(loadLabSnapshot(), vehicle);
+    const params = runtimeLabParams(vehicle);
     send({ op: "init", params });
     addLog(
-      t("Init · {n} parameters · {vehicle} · reboot", {
+      t("Init · {n} parameters · {vehicle}", {
         n: Object.keys(params).length,
         vehicle: t(vehicle),
       }),
@@ -128,7 +129,15 @@ export function App() {
 
   function onAxis(next: Axis) {
     setAxis(next);
-    addLog(t("Axis · {axis}", { axis: t(next) }), "cmd");
+    setSel((id) => {
+      if (next === "d") {
+        if (id?.startsWith("psc_d") || id === "pilot" || id === "nav" || id === "motors") return id;
+        return "psc_d_pos";
+      }
+      if (id?.startsWith("psc_d")) return "atc_rat";
+      return id;
+    });
+    addLog(t("Axis · {axis}", { axis: t(axisLabel(next)) }), "cmd");
   }
 
   function onLive3d(on: boolean) {
@@ -138,6 +147,9 @@ export function App() {
 
   const hz = s.att_hz || 0;
   const linked = s.ok;
+  const initDone = s.init_done || 0;
+  const initTotal = s.init_total || 0;
+  const initPct = initTotal > 0 ? Math.min(100, Math.round((100 * initDone) / initTotal)) : 0;
   const linkBad = !linked && !isIdleDetail(s.detail);
   const frameName = s.frame ? t(s.frame) : "";
   const linkHint = "tcpout:host:port, tcp:host:port, udpin:0.0.0.0:14550";
@@ -193,10 +205,17 @@ export function App() {
           </button>
         </div>
       </header>
+      {initTotal > 0 ? (
+        <div className="init-strip" role="progressbar" aria-valuemin={0} aria-valuemax={initTotal} aria-valuenow={initDone}>
+          <i style={{ width: `${initPct}%` }} />
+        </div>
+      ) : null}
       <LabDialog
         open={labOpen}
         linked={linked}
         frame={s.frame}
+        initDone={initDone}
+        initTotal={initTotal}
         onClose={() => setLabOpen(false)}
         onInit={onLabInit}
         onSave={onLabSave}

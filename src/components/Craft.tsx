@@ -1,6 +1,16 @@
-import type { ReactNode } from "react";
+import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from "react";
 import { useT } from "../i18n/i18n";
 import type { Axis } from "../mav/axis";
+
+const MSG_MS = 60_000;
+const SEV = /^(EMERGENCY|ALERT|CRITICAL|ERROR|WARNING|NOTICE|INFO|DEBUG)\s+/i;
+
+function msgTone(text: string): string {
+  const sev = text.split(/\s/, 1)[0]?.toUpperCase();
+  if (sev === "EMERGENCY" || sev === "ALERT" || sev === "CRITICAL" || sev === "ERROR") return "bad";
+  if (sev === "WARNING") return "warn";
+  return "";
+}
 
 function clamp(v: number): number {
   return Math.max(-50, Math.min(50, v));
@@ -12,6 +22,7 @@ function att(roll: number, pitch: number, yaw: number): string {
 
 function pose(roll: number, pitch: number, yaw: number, live3d: boolean, axis: Axis): string {
   if (live3d) return att(roll, pitch, Math.max(-35, Math.min(35, yaw)));
+  if (axis === "d") return "rotateZ(0deg)";
   if (axis === "pitch") return `rotateZ(${clamp(-pitch)}deg)`;
   if (axis === "yaw") return `rotateZ(${yaw}deg)`;
   return `rotateZ(${clamp(roll)}deg)`;
@@ -151,6 +162,7 @@ export function Craft({
   altClass,
   axis,
   live3d,
+  status,
 }: {
   roll: number;
   pitch: number;
@@ -164,20 +176,55 @@ export function Craft({
   altClass: string;
   axis: Axis;
   live3d: boolean;
+  status: string;
 }) {
   const t = useT();
-  const side = !live3d && axis === "pitch";
+  const [ticker, setTicker] = useState("");
+  const [overflow, setOverflow] = useState(0);
+  const prevStatus = useRef<string | undefined>(undefined);
+  const msgBox = useRef<HTMLDivElement>(null);
+  const msgLine = useRef<HTMLSpanElement>(null);
+  useEffect(() => {
+    const next = status.trim();
+    if (prevStatus.current === undefined) {
+      prevStatus.current = next;
+      return;
+    }
+    if (next === prevStatus.current) return;
+    prevStatus.current = next;
+    if (!next) return;
+    setTicker(next);
+    setOverflow(0);
+    const hide = window.setTimeout(() => {
+      setTicker("");
+      setOverflow(0);
+    }, MSG_MS);
+    return () => window.clearTimeout(hide);
+  }, [status]);
+  useLayoutEffect(() => {
+    const box = msgBox.current;
+    const line = msgLine.current;
+    if (!box || !line || !ticker) {
+      setOverflow(0);
+      return;
+    }
+    const extra = line.scrollWidth - box.clientWidth;
+    setOverflow(extra > 2 ? extra : 0);
+  }, [ticker]);
+  const side = !live3d && (axis === "pitch" || axis === "d");
   const top = !live3d && axis === "yaw";
   const Body = side ? QuadSide : top ? QuadTop : Quad;
   const cap = grounded
     ? t("On the ground")
     : live3d
       ? "3D"
-      : side
-        ? t("side view")
-        : top
-          ? t("top view")
-          : t("rear view");
+      : axis === "d"
+        ? t("side view · height")
+        : side
+          ? t("side view")
+          : top
+            ? t("top view")
+            : t("rear view");
   return (
     <div className={grounded ? "craft grounded" : top ? "craft top" : "craft"}>
       <span className="cap">{cap}</span>
@@ -232,6 +279,21 @@ export function Craft({
           <Body kind="act" />
         </div>
       </div>
+      {ticker ? (
+        <div
+          ref={msgBox}
+          className={["craft-msg", msgTone(ticker), overflow ? "scroll" : ""].filter(Boolean).join(" ")}
+          title={ticker}
+        >
+          <span
+            ref={msgLine}
+            key={ticker}
+            style={overflow ? { ["--shift" as string]: `-${overflow}px` } : undefined}
+          >
+            {SEV.test(ticker) ? ticker.replace(SEV, "") : ticker}
+          </span>
+        </div>
+      ) : null}
     </div>
   );
 }

@@ -6,6 +6,8 @@ export function LabDialog({
   open,
   linked,
   frame,
+  initDone,
+  initTotal,
   onClose,
   onInit,
   onSave,
@@ -13,6 +15,8 @@ export function LabDialog({
   open: boolean;
   linked: boolean;
   frame: "copter" | "plane" | "";
+  initDone: number;
+  initTotal: number;
   onClose: () => void;
   onInit: () => void;
   onSave: () => void;
@@ -20,6 +24,8 @@ export function LabDialog({
   const t = useT();
   const lang = useLang();
   const vehicle = frame === "plane" ? "plane" : "copter";
+  const initing = initTotal > 0;
+  const pct = initing ? Math.min(100, Math.round((100 * initDone) / initTotal)) : 0;
   const [mcpCopied, setMcpCopied] = useState(false);
 
   async function copyMcp() {
@@ -108,17 +114,29 @@ export function LabDialog({
                 <div className="opt-body">
                   <b>{t("Init · {vehicle}", { vehicle: t(vehicle) })}</b>
                   <span>
-                    {vehicle === "plane"
-                      ? t("Dummy SITL IMU cal, then reboot.")
-                      : t("Quad X and dummy SITL IMU cal, then reboot.")}
+                    {initing
+                      ? t("Init · {done}/{total}", { done: initDone, total: initTotal })
+                      : t("Stock SITL dump + lab. Writes the stand — arm-ready.")}
                   </span>
+                  {initing ? (
+                    <div
+                      className="init-meter"
+                      role="progressbar"
+                      aria-valuemin={0}
+                      aria-valuemax={initTotal}
+                      aria-valuenow={initDone}
+                    >
+                      <i style={{ width: `${pct}%` }} />
+                    </div>
+                  ) : null}
                 </div>
                 <button
                   type="button"
                   onClick={onInit}
-                  title={t("Apply the SITL stand for this vehicle and reboot the autopilot (MAVLink). The link will drop briefly.")}
+                  disabled={initing}
+                  title={t("Write the lab stand dump so a blank SITL can arm.")}
                 >
-                  {t("Init")}
+                  {initing ? `${pct}%` : t("Init")}
                 </button>
               </li>
               <li className="opt">

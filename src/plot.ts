@@ -1,6 +1,6 @@
 import { t } from "./i18n/i18n";
+import { wrap180, type Axis } from "./mav/axis";
 import { MAX_T } from "./mav/store";
-import type { Axis } from "./mav/axis";
 import type { Sample } from "./mav/types";
 
 function size(c: HTMLCanvasElement): [number, number, number] {
@@ -14,12 +14,6 @@ function size(c: HTMLCanvasElement): [number, number, number] {
     c.height = h;
   }
   return [cssW, cssH, dpr];
-}
-
-function wrap180(d: number): number {
-  while (d > 180) d -= 360;
-  while (d < -180) d += 360;
-  return d;
 }
 
 function unwrapHeading(buf: Sample[]): Sample[] {
@@ -88,7 +82,7 @@ function plot(
   series.forEach((key, i) => {
     ctx.beginPath();
     ctx.strokeStyle = colors[i];
-    ctx.lineWidth = key === "cmd" || key === "pitch_cmd" || key === "yaw_cmd" ? 1.6 : 2.5;
+    ctx.lineWidth = key === "cmd" || key === "pitch_cmd" || key === "yaw_cmd" || key === "thr_cmd" ? 1.6 : 2.5;
     let started = false;
     for (const p of buf) {
       const v = p[key];
@@ -119,17 +113,28 @@ export function drawScope(
   buf: Sample[],
   axis: Axis = "roll",
 ): void {
+  if (axis === "d") {
+    const alts = nums(buf, "alt");
+    const tars = nums(buf, "alt_tar");
+    const span = Math.max(1, ...alts.map(Math.abs), ...tars.map(Math.abs)) * 1.25;
+    plot(x1, c1, buf, ["alt_tar", "alt"], span, ["rgba(255,255,255,0.92)", "#4fc3f7"]);
+    const climbs = nums(buf, "climb");
+    const dens = nums(buf, "climb_des");
+    const rspan = Math.max(0.5, ...climbs.map(Math.abs), ...dens.map(Math.abs)) * 1.25;
+    plot(x2, c2, buf, ["climb_des", "climb"], rspan, ["#ffb74d", "#4fc3f7"]);
+    return;
+  }
   if (axis === "yaw") {
     const drawn = unwrapHeading(buf);
     const angs = nums(drawn, "yaw");
     const tars = nums(drawn, "yaw_tar");
-    const span = Math.max(5, ...angs.map(Math.abs), ...tars.map(Math.abs)) * 1.25;
-    plot(x1, c1, drawn, ["yaw_tar", "yaw"], span, ["rgba(255,255,255,0.92)", "#4fc3f7"]);
+    const cmds = nums(drawn, "yaw_cmd");
+    const span = Math.max(5, ...angs.map(Math.abs), ...tars.map(Math.abs), ...cmds.map(Math.abs)) * 1.25;
+    plot(x1, c1, drawn, ["yaw_cmd", "yaw_tar", "yaw"], span, ["#6b7884", "rgba(255,255,255,0.92)", "#4fc3f7"]);
     const rates = nums(buf, "yaw_rate");
     const dens = nums(buf, "yaw_des");
-    const cmds = nums(buf, "yaw_cmd");
-    const rspan = Math.max(12, ...rates.map(Math.abs), ...dens.map(Math.abs), ...cmds.map(Math.abs)) * 1.25;
-    plot(x2, c2, buf, ["yaw_cmd", "yaw_des", "yaw_rate"], rspan, ["#6b7884", "#ffb74d", "#4fc3f7"]);
+    const rspan = Math.max(12, ...rates.map(Math.abs), ...dens.map(Math.abs)) * 1.25;
+    plot(x2, c2, buf, ["yaw_des", "yaw_rate"], rspan, ["#ffb74d", "#4fc3f7"]);
     return;
   }
   const angK = axis === "pitch" ? "pitch" : "roll";

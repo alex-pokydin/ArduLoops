@@ -7,6 +7,8 @@ export type Gain = {
   digits: number;
   /** Write the same value to these names (roll/pitch copies). */
   aliases?: string[];
+  /** Older firmware name. UI uses `key` units; vehicle stores `legacy.key` × scale (e.g. cm/s). */
+  legacy?: { key: string; scale: number };
   /** Rate P/I/D go through op:tune so both axes stay in sync. */
   tune?: "p" | "i" | "d";
 };
@@ -23,8 +25,16 @@ export type NodeDef = {
   unit: string;
   axes: AxisFocus;
   does: string;
-  live?: Array<"cmd" | "tar" | "roll" | "des" | "rate" | "alt">;
+  /** Short, common mistake from the Copter First Flight Tuning pages. */
+  trap?: string;
+  live?: Array<"cmd" | "tar" | "roll" | "des" | "rate" | "alt" | "climb">;
+  /** First Flight Tuning: rate, angle P, stick feel, hover. Not every P/PID. */
+  guide?: boolean;
+  /** After attitude is good: Loiter weave → NE velocity. Not Stabilize. */
+  later?: boolean;
   gains: Gain[];
+  /** AC_PID internals. Loop extend only — not first-flight Aside sliders. */
+  extras?: Gain[];
 };
 
 export type EdgeDef = {
@@ -43,6 +53,23 @@ export function pidTerms(node: NodeDef): Array<"P" | "I" | "D"> {
   return (["P", "I", "D"] as const).filter((k) => found.has(k));
 }
 
+/** First Flight Tuning: rate, angle, stick, hover. */
+export function isTuneNode(node: NodeDef): boolean {
+  return !!node.guide;
+}
+
+/** Sometimes, after ATC: Loiter weave — not the Stabilize pass. */
+export function isLaterNode(node: NodeDef): boolean {
+  return !!node.later;
+}
+
+/** IMU harmonic notch. Loop extend, on the gyro return — not a PID extra. */
+export const GYRO_NOTCH: Gain[] = [
+  { key: "INS_HNTCH_ENABLE", label: "EN", min: 0, max: 1, step: 1, digits: 0 },
+  { key: "INS_HNTCH_FREQ", label: "FREQ", min: 10, max: 495, step: 1, digits: 0 },
+  { key: "INS_HNTCH_BW", label: "BW", min: 5, max: 250, step: 1, digits: 0 },
+];
+
 export const NODES: NodeDef[] = [
   {
     id: "pilot",
@@ -51,23 +78,31 @@ export const NODES: NodeDef[] = [
     kind: "command",
     unit: "stick",
     axes: "cmd",
-    does: "Pilot command, not a regulator. Where it enters depends on mode: desired attitude (Stabilize), climb rate (AltHold), lean (Loiter), angular rate (Acro).",
+    does: "Not a loop — the stick request. Stabilize wants an angle, AltHold a climb rate (PILOT_SPD_UP / DN), Loiter a lean/accel, Acro a rate. TC / ACC / Rmax only shape how fast that request may change (Input Shaping).",
+    trap: "Do not raise ACC or Rmax past Autotune to “get more P”. That is feel, not stability. If AltHold creeps, hover is not mid-stick — set MOT_THST_HOVER, do not touch PSC yet.",
     live: ["cmd"],
+    guide: true,
     gains: [
       { key: "ATC_INPUT_TC", label: "TC", min: 0, max: 0.5, step: 0.01, digits: 2 },
       { key: "ATC_ACC_R_MAX", label: "ACC", min: 0, max: 1800, step: 20, digits: 0, aliases: ["ATC_ACC_P_MAX"] },
       { key: "ATC_RATE_R_MAX", label: "Rmax", min: 0, max: 360, step: 10, digits: 0, aliases: ["ATC_RATE_P_MAX"] },
+      { key: "PILOT_SPD_UP", label: "up", min: 0.5, max: 5, step: 0.1, digits: 1, legacy: { key: "PILOT_SPEED_UP", scale: 100 } },
+      { key: "PILOT_SPD_DN", label: "dn", min: 0, max: 5, step: 0.1, digits: 1, legacy: { key: "PILOT_SPEED_DN", scale: 100 } },
     ],
   },
   {
     id: "nav",
     title: "Navigation",
-    param: "WP_ / LOIT_ / CIRCLE_",
+    param: "WP_SPD / LOIT_SPEED_MS",
     kind: "targets, not PID",
     unit: "m · NED",
     axes: "nav",
-    does: "Sets a target for PosControl (PSC); it does not run a PID. In Loiter the stick sets desired acceleration, then the outer loop. WP and Circle set a point or radius. If it drifts in place — look at PSC, not WP/LOIT.",
-    gains: [],
+    does: "Writes a place for PSC to hold, plus how fast to get there. WP_SPD is mission cruise; LOIT_SPEED_MS is stick speed in Loiter. Not a PID.",
+    trap: "Drifting in Loiter is GPS, compass, vibe or PSC. These speeds only cap how fast it flies the path — raising them will not hold position.",
+    gains: [
+      { key: "WP_SPD", label: "WP", min: 0.5, max: 20, step: 0.5, digits: 1, legacy: { key: "WPNAV_SPEED", scale: 100 } },
+      { key: "LOIT_SPEED_MS", label: "Loit", min: 0.5, max: 20, step: 0.5, digits: 1, legacy: { key: "LOIT_SPEED", scale: 100 } },
+    ],
   },
   {
     id: "psc_ne_pos",
@@ -76,7 +111,8 @@ export const NODES: NodeDef[] = [
     kind: "P",
     unit: "m · NED NE",
     axes: "ne",
-    does: "P position regulator (PSC_NE_POS): horizontal distance error (North–East, metres) → desired horizontal velocity.",
+    does: "Holds North–East in metres: position error → desired horizontal speed. P only.",
+    trap: "Leave stock until attitude is tuned. Raising P will not fix a bad rate loop or a bad mag.",
     gains: [
       { key: "PSC_NE_POS_P", label: "P", min: 0.2, max: 3, step: 0.05, digits: 2 },
     ],
@@ -88,7 +124,8 @@ export const NODES: NodeDef[] = [
     kind: "P",
     unit: "m · NED D+",
     axes: "d",
-    does: "P altitude regulator (PSC_D_POS): Down-axis error → desired vertical velocity (climb). D+ is down; AGL on the right is −D.",
+    does: "Holds height: AGL error (−D) → desired climb. P only. D+ is down.",
+    trap: "Too much P → jerky throttle. Switching into AltHold while climbing makes motors dip, then catch — enter while level.",
     live: ["alt"],
     gains: [
       { key: "PSC_D_POS_P", label: "P", min: 0.2, max: 3, step: 0.05, digits: 2 },
@@ -101,11 +138,19 @@ export const NODES: NodeDef[] = [
     kind: "AC_PID_2D",
     unit: "m/s · NED NE",
     axes: "ne",
-    does: "Horizontal velocity PID (PSC_NE_VEL): m/s error north/east → desired acceleration. There is no separate horizontal accel PID — the output becomes desired lean.",
+    does: "Turns “go there” into a lean request: speed error → desired NE acceleration. There is no separate horizontal accel PID.",
+    trap: "If Loiter weaves after a good ATC tune, look here — not at Navigation. Too much D twitches the lean.",
+    later: true,
     gains: [
       { key: "PSC_NE_VEL_P", label: "P", min: 0.3, max: 5, step: 0.05, digits: 2 },
       { key: "PSC_NE_VEL_I", label: "I", min: 0, max: 3, step: 0.05, digits: 2 },
       { key: "PSC_NE_VEL_D", label: "D", min: 0, max: 1, step: 0.01, digits: 2 },
+    ],
+    extras: [
+      { key: "PSC_NE_VEL_FLTE", label: "FLTE", min: 0, max: 100, step: 1, digits: 0 },
+      { key: "PSC_NE_VEL_FLTD", label: "FLTD", min: 0, max: 100, step: 1, digits: 0 },
+      { key: "PSC_NE_VEL_IMAX", label: "IMAX", min: 0, max: 10, step: 0.1, digits: 1 },
+      { key: "PSC_NE_VEL_FF", label: "FF", min: 0, max: 10, step: 0.01, digits: 2 },
     ],
   },
   {
@@ -115,22 +160,33 @@ export const NODES: NodeDef[] = [
     kind: "AC_PID_Basic",
     unit: "m/s · NED D+",
     axes: "d",
-    does: "Vertical velocity PID (PSC_D_VEL): m/s-down error → desired vertical acceleration.",
+    does: "Turns the climb command into vertical acceleration. Usually left at defaults.",
+    trap: "Do not chase bounce on this P. Check vibe and PSC_D_ACC I (keep P:I ≈ 1:2) first.",
+    live: ["climb"],
     gains: [
       { key: "PSC_D_VEL_P", label: "P", min: 1, max: 12, step: 0.1, digits: 1 },
       { key: "PSC_D_VEL_I", label: "I", min: 0, max: 4, step: 0.05, digits: 2 },
       { key: "PSC_D_VEL_D", label: "D", min: 0, max: 1, step: 0.01, digits: 2 },
     ],
+    extras: [
+      { key: "PSC_D_VEL_FLTE", label: "FLTE", min: 0, max: 100, step: 1, digits: 0 },
+      { key: "PSC_D_VEL_FLTD", label: "FLTD", min: 0, max: 100, step: 1, digits: 0 },
+      { key: "PSC_D_VEL_IMAX", label: "IMAX", min: 1, max: 10, step: 0.1, digits: 1 },
+      { key: "PSC_D_VEL_FF", label: "FF", min: 0, max: 2, step: 0.01, digits: 2 },
+    ],
   },
   {
     id: "lean",
     title: "lean angle",
-    param: "accel → roll/pitch",
+    param: "ATC_ANGLE_MAX",
     kind: "not PID",
     unit: "° · roll/pitch",
     axes: "lean",
-    does: "Not a regulator. Horizontal acceleration (m/s² in NED) becomes desired lean — roll and pitch. Coordinate frame changes here: earth → body.",
-    gains: [],
+    does: "Geometry, not a loop: NE acceleration (earth, m/s²) becomes roll/pitch (body, °). ATC_ANGLE_MAX is the lean ceiling.",
+    trap: "Not Loiter speed — that is LOIT_SPEED_MS on Navigation. Raising ANGLE_MAX only lets it tilt more. Wrong lean still usually means velocity PID or ATC.",
+    gains: [
+      { key: "ATC_ANGLE_MAX", label: "Ang", min: 10, max: 80, step: 1, digits: 0, legacy: { key: "ANGLE_MAX", scale: 100 } },
+    ],
   },
   {
     id: "psc_d_acc",
@@ -139,11 +195,20 @@ export const NODES: NodeDef[] = [
     kind: "AC_PID",
     unit: "m/s² · throttle",
     axes: "d",
-    does: "Vertical acceleration PID (PSC_D_ACC): m/s²-down error → throttle. This channel skips the angle loop — straight to the motors.",
+    does: "Throttle from vertical accel error. Skips the angle loop — motors get force, not a tilt.",
+    trap: "Never raise P/I; powerful frames may cut both ~50%. Keep I ≈ 2×P. I = 0 fails pre-arm. High vibe → runaway climb in AltHold.",
     gains: [
       { key: "PSC_D_ACC_P", label: "P", min: 0.01, max: 0.3, step: 0.005, digits: 3 },
       { key: "PSC_D_ACC_I", label: "I", min: 0, max: 0.5, step: 0.01, digits: 2 },
       { key: "PSC_D_ACC_D", label: "D", min: 0, max: 0.05, step: 0.001, digits: 3 },
+    ],
+    extras: [
+      { key: "PSC_D_ACC_FLTT", label: "FLTT", min: 0, max: 50, step: 1, digits: 0 },
+      { key: "PSC_D_ACC_FLTE", label: "FLTE", min: 0, max: 100, step: 1, digits: 0 },
+      { key: "PSC_D_ACC_FLTD", label: "FLTD", min: 0, max: 100, step: 1, digits: 0 },
+      { key: "PSC_D_ACC_IMAX", label: "IMAX", min: 0, max: 1, step: 0.01, digits: 2 },
+      { key: "PSC_D_ACC_SMAX", label: "SMAX", min: 0, max: 200, step: 0.5, digits: 1 },
+      { key: "PSC_D_ACC_FF", label: "FF", min: 0, max: 0.1, step: 0.001, digits: 3 },
     ],
   },
   {
@@ -154,8 +219,10 @@ export const NODES: NodeDef[] = [
     inner: true,
     unit: "° · body",
     axes: "att",
-    does: "P attitude regulator (ATC_ANG): from angle error it computes how fast to rotate toward the target and sets the rate command for ATC_RAT. P only, three axes. On the map roll and pitch are aliased (gains write together); yaw is the same loop with its own parameters.",
+    does: "Angle error → how fast to rotate (rate command). P only. Motors cannot “be 10°”.",
+    trap: "High P → oscillate; low P → sluggish. Do not crank ANG P to hide a weak rate tune. Autotune sets this after rate.",
     live: ["tar", "cmd"],
+    guide: true,
     gains: [
       {
         key: "ATC_ANG_RLL_P",
@@ -176,12 +243,22 @@ export const NODES: NodeDef[] = [
     inner: true,
     unit: "°/s · body",
     axes: "rate",
-    does: "Angular-rate PID (ATC_RAT): compares command to actual (°/s) and sends torque to the mixer. Three axes. Roll and pitch are aliased on the map; yaw is the same loop with its own P/I/D (smaller I, D defaults to 0).",
+    does: "The loop you actually fly: °/s error → mixer torque. Rate P is the first parameter that matters.",
+    trap: "Tune in Stabilize before Autotune. Oscillation → lower P/D, not more I. Fix gyro notch/vibe before chasing D. Yaw is separate (small I, D often 0).",
     live: ["des", "rate"],
+    guide: true,
     gains: [
       { key: "ATC_RAT_RLL_P", label: "P", min: 0.01, max: 1.2, step: 0.001, digits: 3, tune: "p", aliases: ["ATC_RAT_PIT_P"] },
       { key: "ATC_RAT_RLL_I", label: "I", min: 0, max: 0.5, step: 0.001, digits: 3, tune: "i", aliases: ["ATC_RAT_PIT_I"] },
       { key: "ATC_RAT_RLL_D", label: "D", min: 0, max: 0.02, step: 0.0001, digits: 4, tune: "d", aliases: ["ATC_RAT_PIT_D"] },
+    ],
+    extras: [
+      { key: "ATC_RAT_RLL_FLTT", label: "FLTT", min: 0, max: 100, step: 1, digits: 0, aliases: ["ATC_RAT_PIT_FLTT"] },
+      { key: "ATC_RAT_RLL_FLTE", label: "FLTE", min: 0, max: 100, step: 1, digits: 0, aliases: ["ATC_RAT_PIT_FLTE"] },
+      { key: "ATC_RAT_RLL_FLTD", label: "FLTD", min: 0, max: 100, step: 1, digits: 0, aliases: ["ATC_RAT_PIT_FLTD"] },
+      { key: "ATC_RAT_RLL_IMAX", label: "IMAX", min: 0, max: 1, step: 0.01, digits: 2, aliases: ["ATC_RAT_PIT_IMAX"] },
+      { key: "ATC_RAT_RLL_SMAX", label: "SMAX", min: 0, max: 200, step: 0.5, digits: 1, aliases: ["ATC_RAT_PIT_SMAX"] },
+      { key: "ATC_RAT_RLL_FF", label: "FF", min: 0, max: 0.5, step: 0.001, digits: 3, aliases: ["ATC_RAT_PIT_FF"] },
     ],
   },
   {
@@ -191,9 +268,13 @@ export const NODES: NodeDef[] = [
     kind: "PWM / DShot",
     unit: "torque + throttle",
     axes: "mix",
-    does: "Motor mixer (AP_Motors), not a PID. Rate-loop torque (ATC_RAT) and vertical-accel throttle (PSC_D_ACC) meet here.",
+    does: "Mixer: rate torque plus D-accel throttle. Not a PID.",
+    trap: "Hover should sit near mid stick (~50%). That is MOT_THST_HOVER below. Above ~70% the frame is underpowered — motors/props, not PIDs.",
     live: ["roll"],
-    gains: [],
+    guide: true,
+    gains: [
+      { key: "MOT_THST_HOVER", label: "hover", min: 0.2, max: 0.8, step: 0.01, digits: 2 },
+    ],
   },
 ];
 
@@ -288,7 +369,7 @@ export function layoutCopter(width: number): CascadeLayout {
   const padT = 10;
   const nodeH = 48;
   const rankGap = 22;
-  const nodeGap = 20;
+  const nodeGap = 32;
   const bandPad = 8;
   const nodeW = Math.min(168, Math.max(128, Math.floor((Math.max(width, 360) - padL - padR - nodeGap) / 2)));
   const colL = padL;
@@ -381,7 +462,58 @@ export function edgeLiveIn(edge: EdgeDef, mode: string, live: Set<string>): bool
   return live.has(edge.from) && live.has(edge.to);
 }
 
-export function edgePath(x1: number, y1: number, x2: number, y2: number): string {
+export type EdgePorts = {
+  x1: number;
+  y1: number;
+  x2: number;
+  y2: number;
+  kind: "h" | "v";
+};
+
+/** Side ports for same-row edges, top/bottom for stacked ones. */
+export function edgePorts(a: NodeBox, b: NodeBox): EdgePorts {
+  const acx = a.x + a.w / 2;
+  const acy = a.y + a.h / 2;
+  const bcx = b.x + b.w / 2;
+  const bcy = b.y + b.h / 2;
+  const dx = bcx - acx;
+  const dy = bcy - acy;
+  const inset = 3;
+  if (Math.abs(dy) < Math.min(a.h, b.h) * 0.6) {
+    if (dx >= 0) {
+      return { x1: a.x + a.w + inset, y1: acy, x2: b.x - inset, y2: bcy, kind: "h" };
+    }
+    return { x1: a.x - inset, y1: acy, x2: b.x + b.w + inset, y2: bcy, kind: "h" };
+  }
+  if (dy >= 0) {
+    return { x1: acx, y1: a.y + a.h + inset, x2: bcx, y2: b.y - inset, kind: "v" };
+  }
+  return { x1: acx, y1: a.y - inset, x2: bcx, y2: b.y + b.h + inset, kind: "v" };
+}
+
+export type EdgeRoute = {
+  d: string;
+  lx: number;
+  ly: number;
+};
+
+function f(n: number): string {
+  return n.toFixed(1);
+}
+
+export function edgePath(x1: number, y1: number, x2: number, y2: number, kind: "h" | "v" = "v"): string {
+  if (kind === "h") {
+    const mx = (x1 + x2) / 2;
+    return `M ${f(x1)} ${f(y1)} C ${f(mx)} ${f(y1)}, ${f(mx)} ${f(y2)}, ${f(x2)} ${f(y2)}`;
+  }
   const my = (y1 + y2) / 2;
-  return `M ${x1} ${y1} C ${x1} ${my}, ${x2} ${my}, ${x2} ${y2}`;
+  return `M ${f(x1)} ${f(y1)} C ${f(x1)} ${f(my)}, ${f(x2)} ${f(my)}, ${f(x2)} ${f(y2)}`;
+}
+
+/** Same-row: side to side. Otherwise top/bottom cubic. */
+export function edgeRoute(a: NodeBox, b: NodeBox): EdgeRoute {
+  const p = edgePorts(a, b);
+  const lx = (p.x1 + p.x2) / 2;
+  const ly = p.kind === "h" ? p.y1 - 8 : (p.y1 + p.y2) / 2 - 6;
+  return { d: edgePath(p.x1, p.y1, p.x2, p.y2, p.kind), lx, ly };
 }

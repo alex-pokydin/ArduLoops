@@ -1,7 +1,7 @@
 import { axisLabel, type Axis } from "../mav/axis";
 import { useT } from "../i18n/i18n";
 
-const AXES: Axis[] = ["roll", "pitch", "yaw"];
+const AXES: Axis[] = ["roll", "pitch", "yaw", "d"];
 
 export function AxisSwitch({
   axis,

@@ -16,13 +16,62 @@ export function paramOf(s: Sample, key: string): number | null {
   return null;
 }
 
+function legacyScale(name: string, raw: number, scale: number): number {
+  if (scale !== 100) return scale;
+  if (name === "ANGLE_MAX" && Math.abs(raw) <= 50) return 1;
+  if ((name === "PILOT_SPEED_UP" || name === "PILOT_SPEED_DN") && Math.abs(raw) <= 20) return 1;
+  return scale;
+}
+
+/** Vehicle param name + scale from vehicle units into the slider's units. */
+export function liveGain(g: Gain, s: Sample, axis: Axis = "roll"): { name: string; scale: number } {
+  const primary = remapGainKey(g.key, axis);
+  if (paramOf(s, primary) != null) return { name: primary, scale: 1 };
+  if (g.legacy) {
+    const alt = remapGainKey(g.legacy.key, axis);
+    const raw = paramOf(s, alt);
+    if (raw != null) return { name: alt, scale: legacyScale(alt, raw, g.legacy.scale) };
+  }
+  return { name: primary, scale: 1 };
+}
+
+export function paramUi(s: Sample, g: Gain, axis: Axis = "roll"): number | null {
+  const { name, scale } = liveGain(g, s, axis);
+  const v = paramOf(s, name);
+  if (v == null) return null;
+  return v / scale;
+}
+
 export function fmtGain(g: Gain, v: number, name = g.key): string {
   if ((name === "ATC_RATE_R_MAX" || name === "ATC_RATE_P_MAX" || name === "ATC_RATE_Y_MAX") && v <= 0) return "off";
+  if (/_(FLTT|FLTE|FLTD)$/.test(name) || name === "INS_HNTCH_FREQ" || name === "INS_HNTCH_BW") {
+    return v <= 0 ? "off" : `${Math.round(v)} Hz`;
+  }
+  if (name === "INS_HNTCH_ENABLE") return v >= 0.5 ? "on" : "off";
+  if (/_SMAX$/.test(name) || /_FF$/.test(name)) {
+    if (v <= 0) return "off";
+  }
+  if (name === "MOT_THST_HOVER") return `${Math.round(v * 100)}%`;
+  if (name === "PILOT_SPD_DN" || name === "PILOT_SPEED_DN") {
+    if (v <= 0) return "up";
+    return `${v.toFixed(g.digits)} m/s`;
+  }
+  if (
+    name === "WP_SPD" ||
+    name === "WPNAV_SPEED" ||
+    name === "LOIT_SPEED_MS" ||
+    name === "LOIT_SPEED" ||
+    name === "PILOT_SPD_UP" ||
+    name === "PILOT_SPEED_UP"
+  ) {
+    return `${v.toFixed(g.digits)} m/s`;
+  }
+  if (name === "ATC_ANGLE_MAX" || name === "ANGLE_MAX") return `${Math.round(v)}°`;
   return v.toFixed(g.digits);
 }
 
 export function paramNames(g: Gain): string[] {
-  return [g.key, ...(g.aliases || [])];
+  return [g.key, ...(g.aliases || []), ...(g.legacy ? [g.legacy.key] : [])];
 }
 
 export function GainRow({
@@ -36,9 +85,12 @@ export function GainRow({
   node: NodeDef;
   axis?: Axis;
 }) {
-  const readKey = remapGainKey(gain.key, axis);
-  const writeKeys = gainKeysForAxis(gain, axis);
-  const remote = paramOf(sample, readKey);
+  const live = liveGain(gain, sample, axis);
+  const readKey = live.name;
+  const writeKeys = gain.legacy
+    ? [live.name]
+    : gainKeysForAxis(gain, axis);
+  const remote = paramUi(sample, gain, axis);
   const [local, setLocal] = useState<number | null>(null);
   const dragging = useRef(false);
   const timer = useRef(0);
@@ -51,7 +103,7 @@ export function GainRow({
   function push(v: number, logIt: boolean) {
     setLocal(v);
     const fire = () => {
-      if (gain.tune && axis !== "yaw") {
+      if (gain.tune && axis !== "yaw" && axis !== "d") {
         const p = gain.tune === "p" ? v : paramOf(sample, "ATC_RAT_RLL_P") ?? 0.135;
         const i = gain.tune === "i" ? v : paramOf(sample, "ATC_RAT_RLL_I") ?? 0.135;
         const d = gain.tune === "d" ? v : paramOf(sample, "ATC_RAT_RLL_D") ?? 0.0036;
@@ -69,7 +121,7 @@ export function GainRow({
         if (logIt) addLog(`YAW P ${p.toFixed(3)}  I ${i.toFixed(3)}  D ${d.toFixed(4)}`, "cmd");
         return;
       }
-      for (const name of writeKeys) send({ op: "param", name, value: v });
+      for (const name of writeKeys) send({ op: "param", name, value: v * live.scale });
       if (logIt) addLog(`${readKey} ${fmtGain(gain, v, readKey)}`, "cmd");
     };
     if (logIt) {

@@ -61,15 +61,15 @@ npm run build      # Windows installers
 
 `npm run build` writes:
 
-- `src-tauri/target/release/bundle/nsis/ArduLoops_0.1.0_x64-setup.exe`
-- `src-tauri/target/release/bundle/msi/ArduLoops_0.1.0_x64_en-US.msi`
+- `src-tauri/target/release/bundle/nsis/ArduLoops_0.2.0_x64-setup.exe`
+- `src-tauri/target/release/bundle/msi/ArduLoops_0.2.0_x64_en-US.msi`
 
 ## Options
 
 Gear in the header.
 
 - **Language** — English (default) or Ukrainian. The choice is kept in the browser.
-- **Init** (when linked, disarmed) — apply the SITL stand (Quad X + dummy IMU on copter; dummy IMU on plane) and reboot the autopilot. The link drops briefly.
+- **Init** (when linked, disarmed) — write the lab stand dump (ArduPilot SITL `copter.parm` + Quad X / failsafe / `GCS_PID_MASK` / stock ATC). Frame class applies while disarmed (1 Hz). Init does not reboot: Mission Planner SITL often restarts with `-w` and comes back as `Frame: UNSUPPORTED`.
 - **Export** — write live parameters to a `.parm` file.
 - **MCP** — copy a Cursor config. The running app already serves HTTP `127.0.0.1:8767`. Cursor launches `arduloops.exe --mcp`; that process is not a second MAVLink link.
 

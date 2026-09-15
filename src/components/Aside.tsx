@@ -149,7 +149,27 @@ export function Aside({
     const zcHz = zc / ((last.length > 1 ? last[last.length - 1].t - last[0].t : 1) || 1);
     const rstd = rates.length ? stdev(rates) : 0;
     const yawP = Number(_s.params?.ATC_RAT_YAW_P ?? NaN);
-    const g = ax === "yaw" ? yawP : Number(shownGain.current || (_s.gain_p ?? NaN));
+    const g = ax === "yaw" ? yawP : ax === "d" ? Number(_s.params?.PSC_D_POS_P ?? NaN) : Number(shownGain.current || (_s.gain_p ?? NaN));
+    if (ax === "d") {
+      const climb = Math.abs(_s.climb || 0);
+      const thr = Math.abs(_s.thr_cmd || 0);
+      if (climb > 0.2 || thr > 12) {
+        setFeel({
+          kind: "ok",
+          title: "Climb",
+          axis: ax,
+          hint: "Throttle stick is climb. Amber on the lower plot should meet cyan.",
+        });
+        return;
+      }
+      setFeel({
+        kind: "ok",
+        title: "Holding",
+        axis: ax,
+        hint: "D+ is down. Height is AGL (−D). Left stick up/down is throttle.",
+      });
+      return;
+    }
     const moving =
       ax === "yaw"
         ? Math.max(...rates.map(Math.abs), ...cmds.map(Math.abs), 0) > 8
@@ -383,6 +403,7 @@ export function Aside({
         altClass={altClass}
         axis={axis}
         live3d={live3d}
+        status={s.texts?.[0] ?? ""}
       />
       <div className="flight">
         <select
@@ -420,7 +441,7 @@ export function Aside({
         </button>
       </div>
       <div className={`sticks ${live3d ? "axis-3d" : `axis-${axis}`}`} aria-label={t("Virtual Mode 2 sticks")}>
-        <div className="stick thr" ref={stickL} role="button" tabIndex={0} title={axis === "yaw" && !live3d ? t("Left stick: yaw (left-right)") : t("Left stick: throttle and yaw")}>
+        <div className="stick thr" ref={stickL} role="button" tabIndex={0} title={axis === "d" && !live3d ? t("Left stick: throttle (up-down)") : axis === "yaw" && !live3d ? t("Left stick: yaw (left-right)") : t("Left stick: throttle and yaw")}>
           <div className="cross" />
           <span className="tag n">{t("Thr")}</span>
           <span className="tag s">{t("Thr−")}</span>

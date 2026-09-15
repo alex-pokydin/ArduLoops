@@ -4,18 +4,20 @@ import {
   NODES,
   BAND_LABEL,
   edgeLiveIn,
-  edgePath,
+  edgeRoute,
   layoutCopter,
   nodeBand,
   nodesLiveIn,
   pidTerms,
+  isTuneNode,
+  isLaterNode,
   type Band,
   type NodeDef,
 } from "../cascade";
 import { FrameGuide } from "./FrameGuide";
-import { fmtGain, paramOf } from "./GainRow";
+import { fmtGain, liveGain, paramUi } from "./GainRow";
 import { t, useT } from "../i18n/i18n";
-import { axisTar, axisView, gainKeysForAxis, type Axis } from "../mav/axis";
+import { axisTar, axisView, type Axis } from "../mav/axis";
 import { getSnapshot, subscribe } from "../mav/store";
 import type { Sample } from "../mav/types";
 
@@ -31,6 +33,7 @@ function liveBits(node: NodeDef, s: Sample, axis: Axis): string {
     if (k === "des") parts.push(t("tar {v}°/s", { v: (v.des || 0).toFixed(1) }));
     if (k === "rate") parts.push(t("rate {v}°/s", { v: v.rate.toFixed(1) }));
     if (k === "alt" && s.alt != null) parts.push(t("AGL {v} m", { v: s.alt.toFixed(1) }));
+    if (k === "climb" && s.climb != null) parts.push(t("climb {v} m/s", { v: s.climb.toFixed(2) }));
   }
   return parts.join(" · ");
 }
@@ -44,7 +47,11 @@ function cardLive(node: NodeDef, s: Sample, axis: Axis): string | null {
   if (node.id === "atc_ang") return `${tar.toFixed(1)}°`;
   if (node.id === "atc_rat") return t("{v} °/s", { v: v.rate.toFixed(1) });
   if (node.id === "psc_d_pos" && s.alt != null) return t("{v} m", { v: s.alt.toFixed(1) });
-  if (node.id === "motors") return `${v.ang.toFixed(1)}°`;
+  if (node.id === "psc_d_vel" && s.climb != null) return t("{v} m/s", { v: s.climb.toFixed(2) });
+  if (node.id === "motors") {
+    if (axis === "d") return t("{v}%", { v: v.cmd.toFixed(0) });
+    return `${v.ang.toFixed(1)}°`;
+  }
   return null;
 }
 
@@ -57,17 +64,16 @@ function ParamList({ node, sample, axis }: { node: NodeDef; sample: Sample; axis
   if (!node.gains.length) return null;
   return (
     <div className="plist">
-      {node.gains.flatMap((g) =>
-        gainKeysForAxis(g, axis).map((name) => {
-          const v = paramOf(sample, name);
-          return (
-            <div className="prow" key={name}>
-              <code>{name}</code>
-              <b>{v == null ? "—" : fmtGain(g, v, name)}</b>
-            </div>
-          );
-        }),
-      )}
+      {node.gains.map((g) => {
+        const live = liveGain(g, sample, axis);
+        const v = paramUi(sample, g, axis);
+        return (
+          <div className="prow" key={g.key}>
+            <code>{live.name}</code>
+            <b>{v == null ? "—" : fmtGain(g, v, live.name)}</b>
+          </div>
+        );
+      })}
     </div>
   );
 }
@@ -138,11 +144,11 @@ export function Cascade({
           <div className="cmap-inner" style={{ width: layout.width, height: layout.height }}>
             <svg className="cmap-edges" width={layout.width} height={layout.height} aria-hidden="true">
               <defs>
-                <marker id="arr" markerWidth="7" markerHeight="7" refX="6" refY="3.5" orient="auto">
-                  <polygon points="0 0, 7 3.5, 0 7" fill="#6b7884" />
+                <marker id="arr" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto" markerUnits="userSpaceOnUse">
+                  <polygon points="0 0, 8 4, 0 8" fill="#6b7884" />
                 </marker>
-                <marker id="arrHot" markerWidth="7" markerHeight="7" refX="6" refY="3.5" orient="auto">
-                  <polygon points="0 0, 7 3.5, 0 7" fill="#4fc3f7" />
+                <marker id="arrHot" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto" markerUnits="userSpaceOnUse">
+                  <polygon points="0 0, 8 4, 0 8" fill="#4fc3f7" />
                 </marker>
               </defs>
               {layout.groups.map((g) => {
@@ -191,17 +197,14 @@ export function Cascade({
                 const a = boxById.get(e.from);
                 const b = boxById.get(e.to);
                 if (!a || !b) return null;
-                const x1 = a.x + a.w / 2;
-                const y1 = a.y + a.h;
-                const x2 = b.x + b.w / 2;
-                const y2 = b.y;
+                const r = edgeRoute(a, b);
                 const on = edgeLiveIn(e, modeKey, live);
                 const connected = sel != null && (e.from === sel || e.to === sel);
                 const hot = connected && on;
                 return (
                   <g key={`${e.from}-${e.to}-${e.label}`}>
                     <path
-                      d={edgePath(x1, y1, x2, y2)}
+                      d={r.d}
                       fill="none"
                       stroke={hot ? "#4fc3f7" : on ? "#6b7884" : "#2a333c"}
                       strokeWidth={hot ? 2.2 : 1.2}
@@ -211,11 +214,14 @@ export function Cascade({
                     />
                     {hot ? (
                       <text
-                        x={(x1 + x2) / 2}
-                        y={(y1 + y2) / 2 - 6}
+                        x={r.lx}
+                        y={r.ly}
                         textAnchor="middle"
                         fill="#4fc3f7"
                         fontSize="10"
+                        stroke="#0c0e11"
+                        strokeWidth="3"
+                        paintOrder="stroke"
                       >
                         {t(e.label)}
                       </text>
@@ -229,12 +235,16 @@ export function Cascade({
               if (!box) return null;
               const on = live.has(n.id);
               const pid = pidTerms(n);
+              const tune = isTuneNode(n);
+              const later = isLaterNode(n);
               const cls = [
                 "cnode",
                 nodeBand(n.id),
                 sel === n.id ? "sel" : neighbors.has(n.id) ? "rel" : "",
                 on ? "" : "dim",
                 pid.length ? "has-pid" : "",
+                tune ? "tune" : later ? "later" : pid.length ? "" : "struct",
+                axis === "d" && n.axes === "d" ? "d-on" : "",
               ]
                 .filter(Boolean)
                 .join(" ");
@@ -244,6 +254,7 @@ export function Cascade({
                   key={n.id}
                   type="button"
                   className={cls}
+                  aria-pressed={sel === n.id}
                   title={n.param}
                   style={{ left: box.x, top: box.y, width: box.w, height: box.h }}
                   onClick={(ev) => {
@@ -265,7 +276,12 @@ export function Cascade({
             })}
           </div>
         </div>
-        <FrameGuide focus={node?.axes ?? null} />
+        <div className="cmap-key" aria-hidden="true">
+          <span className="k-tune">{t("tune · manuals")}</span>
+          <span className="k-later">{t("sometimes · Loiter")}</span>
+          <span className="k-struct">{t("not a regulator")}</span>
+        </div>
+        <FrameGuide focus={axis === "d" ? "d" : node?.axes ?? null} />
       </div>
       <div className="inspect">
         <div className="inspect-head">
@@ -284,7 +300,14 @@ export function Cascade({
           <>
             <div className={"kind " + nodeBand(node.id)}>
               {t(BAND_LABEL[nodeBand(node.id)])} · {t(node.unit)} · {t(node.kind)}
-              {node.inner ? ` · ${t(axisView(s, axis).name)}` : ""}
+              {isTuneNode(node)
+                ? ` · ${t("tune")}`
+                : isLaterNode(node)
+                  ? ` · ${t("sometimes")}`
+                  : pidTerms(node).length
+                    ? ""
+                    : ` · ${t("not a regulator")}`}
+              {node.inner && axis !== "d" ? ` · ${t(axisView(s, axis).name)}` : ""}
             </div>
             {dimmed ? (
               <p className="warn">
@@ -294,6 +317,11 @@ export function Cascade({
               </p>
             ) : null}
             <p>{t(node.does)}</p>
+            {node.trap ? (
+              <p className="trap">
+                <b>{t("typical")}</b> {t(node.trap)}
+              </p>
+            ) : null}
             {liveBits(node, s, axis) ? <div className="live">{liveBits(node, s, axis)}</div> : null}
             <ParamList node={node} sample={s} axis={axis} />
             {incoming.length ? (
@@ -319,6 +347,12 @@ export function Cascade({
           </>
         ) : (
           <>
+            <p>
+              {t("The manuals tune attitude first: rate (Manual / QuikTune / AutoTune), then angle P, then stick feel (Input Shaping). PSC position loops are usually left at defaults.")}
+            </p>
+            <p>
+              {t("Autotune writes the same rate and angle blocks, from AltHold. If Loiter still weaves after that, NE velocity is the next knob — not Navigation.")}
+            </p>
             <p>
               {t("Stock Copter cascade: PosControl (PSC, outer) holds where to be, Attitude Control (ATC, inner) holds the angle.")}
             </p>

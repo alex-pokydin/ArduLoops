@@ -1,6 +1,6 @@
 import { useEffect, useRef, useSyncExternalStore } from "react";
 import { useT } from "../i18n/i18n";
-import { axisTar, axisView, type Axis } from "../mav/axis";
+import { axisErr, axisTar, axisView, type Axis } from "../mav/axis";
 import { drawScope } from "../plot";
 import { getBuffer, getSnapshot, isPaused, subscribe } from "../mav/store";
 
@@ -25,7 +25,9 @@ export function Scope({
   const paused = isPaused();
   const v = axisView(s, axis);
   const tar = axisTar(v);
+  const err = axisErr(v);
   const yaw = axis === "yaw";
+  const down = axis === "d";
   const unit = v.cmdUnit === "°/s" ? t("°/s") : v.cmdUnit;
 
   useEffect(() => {
@@ -52,11 +54,13 @@ export function Scope({
   return (
     <>
       <div className="plot-head">
-        <b>{t("want · angle, °")}</b>
+        <b>{down ? t("want · height, m") : t("want · angle, °")}</b>
         <span>
-          {yaw
-            ? t("Where we want to be. Target is heading; actual should catch it. Yaw stick is rate, not angle — that is below.")
-            : t("Where we want to be. Target is not the stick — actual should catch the target.")}
+          {down
+            ? t("White is the altitude target, cyan is AGL (−D). Throttle stick is on the readout — 0 = mid.")
+            : yaw
+              ? t("Grey is the stick throw, 0 = centered. White and cyan are heading.")
+              : t("Where we want to be. Target is not the stick — actual should catch the target.")}
         </span>
         <button type="button" className={paused ? "pause-btn on" : "pause-btn"} onClick={onPause} title={t("Space")}>
           {paused ? t("Resume") : t("Pause")}
@@ -67,27 +71,43 @@ export function Scope({
       </div>
       <div className="caption">
         <div className="legend">
-          {yaw ? null : (
+          {down ? null : (
             <span><i className="g" />{t("Stick")}</span>
           )}
           <span><i className="w" />{t("FC target")}</span>
           <span><i className="c" />{t("Actual {name}", { name: t(v.name) })}</span>
         </div>
         <div className="readout">
-          {t("actual {ang}°   target {tar}°   stick {cmd}{unit}", {
-            ang: fmt(v.ang, 2),
-            tar: fmt(tar, 1),
-            cmd: fmt(v.cmd, 1),
-            unit,
-          })}
+          {down
+            ? t("AGL {ang} m   target {tar} m   throttle {cmd}%   error {err} m", {
+                ang: fmt(v.ang, 2),
+                tar: fmt(tar, 2),
+                cmd: fmt(v.cmd, 0),
+                err: fmt(err, 2),
+              })
+            : yaw
+              ? t("actual {ang}°   target {tar}°   stick {cmd}°   error {err}°", {
+                  ang: fmt(v.ang, 2),
+                  tar: fmt(tar, 1),
+                  cmd: fmt(v.cmd, 1),
+                  err: fmt(err, 1),
+                })
+              : t("actual {ang}°   target {tar}°   stick {cmd}{unit}", {
+                  ang: fmt(v.ang, 2),
+                  tar: fmt(tar, 1),
+                  cmd: fmt(v.cmd, 1),
+                  unit,
+                })}
         </div>
       </div>
       <div className="plot-head">
-        <b>{t("command · rate, °/s")}</b>
+        <b>{down ? t("command · climb, m/s") : t("command · rate, °/s")}</b>
         <span>
-          {yaw
-            ? t("Stick here is rate, not angle. Target is the ATC rate command. In Stabilize the yaw stick goes here.")
-            : t("How we get there. Rate command is not position — it is “rotate this fast”.")}
+          {down
+            ? t("Amber is the throttle climb command (PILOT_SPD_UP), cyan is climb. Up is +.")
+            : yaw
+              ? t("Amber is the ATC yaw-rate command, cyan is the gyro. Left stick asks for rate — on the ground with throttle down the craft will not yaw.")
+              : t("How we get there. Rate command is not position — it is “rotate this fast”.")}
         </span>
       </div>
       <div className={paused ? "plot paused" : "plot"}>
@@ -95,13 +115,13 @@ export function Scope({
       </div>
       <div className="caption">
         <div className="legend">
-          {yaw ? <span><i className="g" />{t("Stick")}</span> : null}
-          <span><i className="a" />{t("tar rate")}</span>
-          <span><i className="c" />{t("rate Act")}</span>
+          <span><i className="a" />{down ? t("tar climb") : t("tar rate")}</span>
+          <span><i className="c" />{down ? t("climb Act") : t("rate Act")}</span>
         </div>
         <div className="readout">
-          {t("rate {v}°/s", { v: fmt(v.rate, 2) })}   {t("tar {v}°/s", { v: fmt(v.des || 0, 2) })}
-          {yaw ? `   ${t("stick {cmd} °/s", { cmd: fmt(v.cmd, 1) })}` : ""}
+          {down
+            ? t("climb {v} m/s   tar {tar} m/s", { v: fmt(v.rate, 2), tar: fmt(v.des || 0, 2) })
+            : `${t("rate {v}°/s", { v: fmt(v.rate, 2) })}   ${t("tar {v}°/s", { v: fmt(v.des || 0, 2) })}`}
         </div>
       </div>
     </>

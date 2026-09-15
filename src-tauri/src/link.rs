@@ -28,12 +28,30 @@ const PARAM_WATCH: &[&str] = &[
     "ATC_RAT_RLL_P",
     "ATC_RAT_RLL_I",
     "ATC_RAT_RLL_D",
+    "ATC_RAT_RLL_FLTT",
+    "ATC_RAT_RLL_FLTE",
+    "ATC_RAT_RLL_FLTD",
+    "ATC_RAT_RLL_IMAX",
+    "ATC_RAT_RLL_SMAX",
+    "ATC_RAT_RLL_FF",
     "ATC_RAT_PIT_P",
     "ATC_RAT_PIT_I",
     "ATC_RAT_PIT_D",
+    "ATC_RAT_PIT_FLTT",
+    "ATC_RAT_PIT_FLTE",
+    "ATC_RAT_PIT_FLTD",
+    "ATC_RAT_PIT_IMAX",
+    "ATC_RAT_PIT_SMAX",
+    "ATC_RAT_PIT_FF",
     "ATC_RAT_YAW_P",
     "ATC_RAT_YAW_I",
     "ATC_RAT_YAW_D",
+    "ATC_RAT_YAW_FLTT",
+    "ATC_RAT_YAW_FLTE",
+    "ATC_RAT_YAW_FLTD",
+    "ATC_RAT_YAW_IMAX",
+    "ATC_RAT_YAW_SMAX",
+    "ATC_RAT_YAW_FF",
     "ATC_ANG_RLL_P",
     "ATC_ANG_PIT_P",
     "ATC_ANG_YAW_P",
@@ -47,14 +65,43 @@ const PARAM_WATCH: &[&str] = &[
     "PSC_NE_VEL_P",
     "PSC_NE_VEL_I",
     "PSC_NE_VEL_D",
+    "PSC_NE_VEL_FLTE",
+    "PSC_NE_VEL_FLTD",
+    "PSC_NE_VEL_IMAX",
+    "PSC_NE_VEL_FF",
     "PSC_D_POS_P",
     "PSC_D_VEL_P",
     "PSC_D_VEL_I",
     "PSC_D_VEL_D",
+    "PSC_D_VEL_FLTE",
+    "PSC_D_VEL_FLTD",
+    "PSC_D_VEL_IMAX",
+    "PSC_D_VEL_FF",
     "PSC_D_ACC_P",
     "PSC_D_ACC_I",
     "PSC_D_ACC_D",
+    "PSC_D_ACC_FLTT",
+    "PSC_D_ACC_FLTE",
+    "PSC_D_ACC_FLTD",
+    "PSC_D_ACC_IMAX",
+    "PSC_D_ACC_SMAX",
+    "PSC_D_ACC_FF",
     "ANGLE_MAX",
+    "ATC_ANGLE_MAX",
+    "PILOT_SPD_UP",
+    "PILOT_SPD_DN",
+    "PILOT_SPEED_UP",
+    "PILOT_SPEED_DN",
+    "THR_DZ",
+    "MOT_THST_HOVER",
+    "INS_HNTCH_ENABLE",
+    "INS_HNTCH_FREQ",
+    "INS_HNTCH_BW",
+    "INS_HNTCH_MODE",
+    "WP_SPD",
+    "WPNAV_SPEED",
+    "LOIT_SPEED_MS",
+    "LOIT_SPEED",
     "RCMAP_ROLL",
     "RCMAP_PITCH",
     "RCMAP_THROTTLE",
@@ -66,6 +113,7 @@ const LAB_PARAMS: &[&str] = &[
     "FRAME_CLASS",
     "FRAME_TYPE",
     "INS_GYR_CAL",
+    "INS_USE2",
     "INS_ACCOFFS_X",
     "INS_ACCOFFS_Y",
     "INS_ACCOFFS_Z",
@@ -162,13 +210,19 @@ pub struct Sample {
     pub pitch_tar: Option<f64>,
     pub yaw_tar: Option<f64>,
     pub alt: Option<f64>,
+    pub alt_tar: Option<f64>,
     pub climb: Option<f64>,
+    pub climb_des: Option<f64>,
+    pub thr_cmd: f64,
     pub att_hz: u32,
     pub rx: String,
     pub frame: String,
     pub params: HashMap<String, f64>,
     /// Newest first. STATUSTEXT from the vehicle.
     pub texts: Vec<String>,
+    /// Init dump progress. `init_total == 0` means not running.
+    pub init_done: u32,
+    pub init_total: u32,
 }
 
 impl Sample {
@@ -210,12 +264,17 @@ impl Sample {
             pitch_tar: None,
             yaw_tar: None,
             alt: None,
+            alt_tar: None,
             climb: None,
+            climb_des: None,
+            thr_cmd: 0.0,
             att_hz: 0,
             rx: String::new(),
             frame: String::new(),
             params: HashMap::new(),
             texts: Vec::new(),
+            init_done: 0,
+            init_total: 0,
         }
     }
 }
@@ -311,9 +370,10 @@ struct LinkState {
     rc_in_roll: i32,
     rc_in_pitch: i32,
     rc_in_yaw: i32,
+    rc_in_thr: i32,
     angle_max: f64,
-    yaw_rate_max: f64,
     have_att_target: bool,
+    alt_error: Option<f64>,
     target_system: u8,
     target_component: u8,
 }
@@ -340,9 +400,10 @@ impl LinkState {
             rc_in_roll: 1500,
             rc_in_pitch: 1500,
             rc_in_yaw: 1500,
+            rc_in_thr: 1500,
             angle_max: 30.0,
-            yaw_rate_max: 200.0,
             have_att_target: false,
+            alt_error: None,
             target_system: 1,
             target_component: 1,
         }
@@ -486,9 +547,73 @@ fn command_long(
     );
 }
 
-fn set_param(
+fn pump_rx(conn: &dyn MavConnection<MavMessage>, st: &mut LinkState) {
+    // Cap: SITL never idles (ATTITUDE ~50 Hz). An unbounded recv loop
+    // would stall Init at 0/N after the first PARAM_SET.
+    for _ in 0..8 {
+        match conn.recv() {
+            Ok((hdr, msg)) => handle_msg(st, &hdr, msg),
+            Err(mavlink::error::MessageReadError::Io(err))
+                if err.kind() == std::io::ErrorKind::TimedOut
+                    || err.kind() == std::io::ErrorKind::WouldBlock =>
+            {
+                break;
+            }
+            Err(_) => break,
+        }
+    }
+}
+
+fn request_param_read(conn: &dyn MavConnection<MavMessage>, st: &LinkState, name: &str) {
+    send_msg(
+        conn,
+        &MavMessage::PARAM_REQUEST_READ(PARAM_REQUEST_READ_DATA {
+            param_index: -1,
+            target_system: st.target_system,
+            target_component: st.target_component,
+            param_id: param_id(name),
+        }),
+    );
+}
+
+fn param_close(a: f64, b: f64) -> bool {
+    (a - b).abs() < 0.51
+}
+
+/// Wait for a PARAM_VALUE from the vehicle. Does not trust the optimistic cache.
+fn wait_param(
     conn: &dyn MavConnection<MavMessage>,
     st: &mut LinkState,
+    name: &str,
+    expect: f64,
+    timeout: Duration,
+) -> bool {
+    st.sample.params.remove(name);
+    request_param_read(conn, st, name);
+    let until = Instant::now() + timeout;
+    while Instant::now() < until {
+        match conn.recv() {
+            Ok((hdr, msg)) => {
+                handle_msg(st, &hdr, msg);
+                if let Some(&v) = st.sample.params.get(name) {
+                    if param_close(v, expect) {
+                        return true;
+                    }
+                }
+            }
+            Err(mavlink::error::MessageReadError::Io(err))
+                if err.kind() == std::io::ErrorKind::TimedOut
+                    || err.kind() == std::io::ErrorKind::WouldBlock => {}
+            Err(_) => return false,
+        }
+    }
+    false
+}
+
+fn send_param_set(
+    conn: &dyn MavConnection<MavMessage>,
+    sys: u8,
+    comp: u8,
     name: &str,
     value: f64,
 ) {
@@ -496,12 +621,43 @@ fn set_param(
         conn,
         &MavMessage::PARAM_SET(PARAM_SET_DATA {
             param_value: value as f32,
-            target_system: st.target_system,
-            target_component: st.target_component,
+            target_system: sys,
+            target_component: comp,
             param_id: param_id(name),
             param_type: MavParamType::MAV_PARAM_TYPE_REAL32,
         }),
     );
+}
+
+fn set_param_now(
+    conn: &dyn MavConnection<MavMessage>,
+    st: &mut LinkState,
+    name: &str,
+    value: f64,
+) {
+    set_param(conn, st, name, value);
+    pump_rx(conn, st);
+}
+
+fn set_param_wait(
+    conn: &dyn MavConnection<MavMessage>,
+    st: &mut LinkState,
+    name: &str,
+    value: f64,
+) -> bool {
+    for comp in [st.target_component, 1, 0] {
+        send_param_set(conn, st.target_system, comp, name, value);
+    }
+    wait_param(conn, st, name, value, Duration::from_millis(1500))
+}
+
+fn set_param(
+    conn: &dyn MavConnection<MavMessage>,
+    st: &mut LinkState,
+    name: &str,
+    value: f64,
+) {
+    send_param_set(conn, st.target_system, st.target_component, name, value);
     st.sample.params.insert(name.to_string(), value);
 }
 
@@ -594,7 +750,7 @@ fn request_streams(conn: &dyn MavConnection<MavMessage>, st: &LinkState) {
         ("SR0_EXTRA2", 20.0),
         ("SR1_EXTRA2", 20.0),
         ("SR2_EXTRA2", 20.0),
-        ("GCS_PID_MASK", 1.0),
+        ("GCS_PID_MASK", 7.0),
     ] {
         send_msg(
             conn,
@@ -638,10 +794,6 @@ fn stick_deg(st: &LinkState, pwm: i32) -> f64 {
     (pwm as f64 - 1500.0) / 500.0 * st.angle_max
 }
 
-fn stick_yaw_rate(st: &LinkState, pwm: i32) -> f64 {
-    (pwm as f64 - 1500.0) / 500.0 * st.yaw_rate_max
-}
-
 fn axis_pwm(st: &LinkState, pitch: bool) -> i32 {
     let pulsing = st.pulse_until.map(|t| Instant::now() < t).unwrap_or(false);
     if !pitch && pulsing {
@@ -663,6 +815,75 @@ fn yaw_pwm(st: &LinkState) -> i32 {
     } else {
         st.rc_in_yaw
     }
+}
+
+fn thr_pwm(st: &LinkState) -> i32 {
+    let raw = if st.virtual_stick {
+        st.rc.thr
+    } else {
+        st.rc_in_thr
+    };
+    if (801..2200).contains(&raw) {
+        raw
+    } else {
+        1500
+    }
+}
+
+fn thr_pct(pwm: i32) -> f64 {
+    (pwm as f64 - 1500.0) / 5.0
+}
+
+fn param_ms(st: &LinkState, names: &[&str], fallback: f64) -> f64 {
+    for name in names {
+        if let Some(&v) = st.sample.params.get(*name) {
+            // Older PILOT_SPEED_* were cm/s (~250). New PILOT_SPD_* are m/s (~2.5).
+            return if v.abs() > 20.0 { v / 100.0 } else { v };
+        }
+    }
+    fallback
+}
+
+/// AltHold / Loiter: throttle 0…1000 → climb m/s (up +). Matches Copter::get_pilot_desired_climb_rate_ms.
+fn pilot_climb_ms(st: &LinkState) -> f64 {
+    if !st.sample.armed {
+        return 0.0;
+    }
+    let thr = (thr_pwm(st) as f64 - 1000.0).clamp(0.0, 1000.0);
+    let mid = 500.0;
+    let dz = st
+        .sample
+        .params
+        .get("THR_DZ")
+        .copied()
+        .unwrap_or(100.0)
+        .clamp(0.0, 400.0);
+    let spd_up = param_ms(st, &["PILOT_SPD_UP", "PILOT_SPEED_UP"], 2.5).abs();
+    let spd_dn = {
+        let v = param_ms(st, &["PILOT_SPD_DN", "PILOT_SPEED_DN"], 0.0).abs();
+        if v < 1e-6 {
+            spd_up
+        } else {
+            v
+        }
+    };
+    let top = mid + dz;
+    let bot = (mid - dz).max(1.0);
+    if thr < bot {
+        spd_dn * (thr - bot) / bot
+    } else if thr > top {
+        spd_up * (thr - top) / (1000.0 - top).max(1.0)
+    } else {
+        0.0
+    }
+}
+
+fn apply_d_targets(st: &mut LinkState) {
+    if let (Some(alt), Some(err)) = (st.sample.alt, st.alt_error) {
+        // NAV alt_error is D-error (target_D − pos_D). AGL = −D, so target AGL = AGL − error_D.
+        st.sample.alt_tar = Some(alt - err);
+    }
+    st.sample.climb_des = Some(pilot_climb_ms(st));
 }
 
 fn override_channels(st: &LinkState, roll: i32, pitch: i32, thr: i32, yaw: i32) -> [u16; 8] {
@@ -725,19 +946,25 @@ fn send_rc(conn: &dyn MavConnection<MavMessage>, st: &LinkState) {
 }
 
 fn reboot_fc(conn: &dyn MavConnection<MavMessage>, st: &LinkState) {
-    for comp in [st.target_component, 1, 0] {
-        command_long(
-            conn,
-            st.target_system,
-            comp,
-            MavCmd::MAV_CMD_PREFLIGHT_REBOOT_SHUTDOWN,
-            1.0,
-            0.0,
-        );
-    }
+    // One COMMAND_LONG. Sending to 1 and 0 as well used to triple-boot
+    // Mission Planner SITL (often with -w), which wiped FRAME_CLASS.
+    command_long(
+        conn,
+        st.target_system,
+        st.target_component,
+        MavCmd::MAV_CMD_PREFLIGHT_REBOOT_SHUTDOWN,
+        1.0,
+        0.0,
+    );
 }
 
-fn apply_cmd(conn: &dyn MavConnection<MavMessage>, st: &mut LinkState, cmd: Cmd) {
+fn apply_cmd(
+    conn: &dyn MavConnection<MavMessage>,
+    st: &mut LinkState,
+    cmd: Cmd,
+    on_sample: &OnSample,
+    latest: &Mutex<Sample>,
+) {
     match cmd {
         Cmd::Param { name, value } => set_param(conn, st, &name, value),
         Cmd::ParamRead { name } => {
@@ -757,16 +984,61 @@ fn apply_cmd(conn: &dyn MavConnection<MavMessage>, st: &mut LinkState, cmd: Cmd)
             }
             let mut names: Vec<String> = params.keys().cloned().collect();
             names.sort();
-            for name in names {
-                if let Some(&value) = params.get(&name) {
-                    set_param(conn, st, &name, value);
-                    std::thread::sleep(Duration::from_millis(4));
+            // Frame first. Confirm FRAME_CLASS from the vehicle (not the local
+            // cache). Do not reboot: Mission Planner SITL often relaunches with
+            // -w, EEPROM is empty, boot prints Frame: UNSUPPORTED. Copter
+            // re-inits motors from FRAME_CLASS at 1 Hz while disarmed.
+            let mut ordered: Vec<String> = Vec::new();
+            for must in ["FRAME_CLASS", "FRAME_TYPE"] {
+                if names.iter().any(|n| n == must) {
+                    ordered.push(must.to_string());
                 }
             }
-            // EEPROM flush, then reboot so FRAME / INS take effect on the next boot.
-            std::thread::sleep(Duration::from_millis(500));
-            st.sample.detail = "ребут…".into();
-            reboot_fc(conn, st);
+            ordered.extend(names.into_iter().filter(|n| n != "FRAME_CLASS" && n != "FRAME_TYPE"));
+            let extra = usize::from(params.contains_key("FRAME_CLASS"));
+            let total = (ordered.len() + extra) as u32;
+            let mut done = 0u32;
+            st.sample.init_done = 0;
+            st.sample.init_total = total;
+            emit_sample(on_sample, latest, st);
+            for name in &ordered {
+                if let Some(&value) = params.get(name) {
+                    if name == "FRAME_CLASS" || name == "FRAME_TYPE" {
+                        if !set_param_wait(conn, st, name, value) {
+                            st.sample.texts.insert(
+                                0,
+                                format!("WARNING Init: {name} not confirmed"),
+                            );
+                            st.sample.texts.truncate(24);
+                        }
+                    } else {
+                        set_param_now(conn, st, name, value);
+                    }
+                    done += 1;
+                    st.sample.init_done = done;
+                    emit_sample(on_sample, latest, st);
+                }
+            }
+            if let Some(&v) = params.get("FRAME_CLASS") {
+                if !set_param_wait(conn, st, "FRAME_CLASS", v) {
+                    st.sample.texts.insert(
+                        0,
+                        "WARNING Init: FRAME_CLASS not confirmed".into(),
+                    );
+                    st.sample.texts.truncate(24);
+                }
+                done += 1;
+                st.sample.init_done = done;
+                emit_sample(on_sample, latest, st);
+            }
+            let settle = Instant::now() + Duration::from_millis(1200);
+            while Instant::now() < settle {
+                pump_rx(conn, st);
+                std::thread::sleep(Duration::from_millis(50));
+            }
+            st.sample.init_done = 0;
+            st.sample.init_total = 0;
+            emit_sample(on_sample, latest, st);
         }
         Cmd::Preset { name } => {
             let (p, i, d, ang, shape) = match name.as_str() {
@@ -932,12 +1204,15 @@ fn handle_msg(st: &mut LinkState, header: &MavHeader, msg: MavMessage) {
         MavMessage::NAV_CONTROLLER_OUTPUT(NAV_CONTROLLER_OUTPUT_DATA {
             nav_roll,
             nav_pitch,
+            alt_error,
             ..
         }) => {
             if !st.have_att_target {
                 st.sample.tar = Some(nav_roll as f64);
                 st.sample.pitch_tar = Some(nav_pitch as f64);
             }
+            st.alt_error = Some(alt_error as f64);
+            apply_d_targets(st);
         }
         MavMessage::PID_TUNING(PID_TUNING_DATA {
             axis,
@@ -976,6 +1251,7 @@ fn handle_msg(st: &mut LinkState, header: &MavHeader, msg: MavMessage) {
         }) => {
             st.sample.alt = Some(relative_alt as f64 / 1000.0);
             st.sample.climb = Some(-(vz as f64) / 100.0);
+            apply_d_targets(st);
         }
         MavMessage::VFR_HUD(VFR_HUD_DATA { climb, .. }) => {
             if st.sample.climb.is_none() {
@@ -1023,6 +1299,11 @@ fn handle_msg(st: &mut LinkState, header: &MavHeader, msg: MavMessage) {
                     st.rc_in_yaw = raw as i32;
                 }
             }
+            if let Some(raw) = read_rc_chan(st, &chans, "thr") {
+                if (801..2200).contains(&raw) {
+                    st.rc_in_thr = raw as i32;
+                }
+            }
         }
         MavMessage::STATUSTEXT(STATUSTEXT_DATA { severity, text, .. }) => {
             let msg = param_name(&text);
@@ -1048,7 +1329,7 @@ fn handle_msg(st: &mut LinkState, header: &MavHeader, msg: MavMessage) {
                 "ATC_RAT_RLL_P" => st.sample.gain_p = Some(val),
                 "ATC_RAT_RLL_I" => st.sample.gain_i = Some(val),
                 "ATC_RAT_RLL_D" => st.sample.gain_d = Some(val),
-                "ANGLE_MAX" => {
+                "ANGLE_MAX" | "ATC_ANGLE_MAX" => {
                     if val > 50.0 {
                         st.angle_max = val / 100.0;
                     } else {
@@ -1070,11 +1351,6 @@ fn handle_msg(st: &mut LinkState, header: &MavHeader, msg: MavMessage) {
                 "ATC_INPUT_TC" => st.sample.input_tc = Some(val),
                 "ATC_ACC_R_MAX" => st.sample.acc_max = Some(val),
                 "ATC_RATE_R_MAX" => st.sample.rate_max = Some(val),
-                "ATC_RATE_Y_MAX" => {
-                    if val > 0.0 {
-                        st.yaw_rate_max = val;
-                    }
-                }
                 _ => {}
             }
         }
@@ -1183,6 +1459,8 @@ fn drain_cmds(
     url: &Mutex<String>,
     conn: Option<&dyn MavConnection<MavMessage>>,
     st: &mut LinkState,
+    on_sample: &OnSample,
+    latest: &Mutex<Sample>,
 ) -> Drain {
     let rx = cmds.lock().unwrap();
     loop {
@@ -1203,7 +1481,7 @@ fn drain_cmds(
             }
             Ok(cmd) => {
                 if let Some(conn) = conn {
-                    apply_cmd(conn, st, cmd);
+                    apply_cmd(conn, st, cmd, on_sample, latest);
                 }
             }
             Err(TryRecvError::Empty) => return Drain::None,
@@ -1227,7 +1505,7 @@ pub fn run_loop(
             st.sample.detail = "відключено".into();
             emit_sample(&on_sample, &latest, &st);
             loop {
-                match drain_cmds(&cmds, &url, None, &mut st) {
+                match drain_cmds(&cmds, &url, None, &mut st, &on_sample, &latest) {
                     Drain::None => std::thread::sleep(Duration::from_millis(50)),
                     Drain::Reconnect => break,
                     Drain::Stop => return,
@@ -1262,7 +1540,7 @@ pub fn run_loop(
             emit_sample(&on_sample, &latest, &st);
             let until = Instant::now() + Duration::from_secs(2);
             while Instant::now() < until {
-                match drain_cmds(&cmds, &url, None, &mut st) {
+                match drain_cmds(&cmds, &url, None, &mut st, &on_sample, &latest) {
                     Drain::None => std::thread::sleep(Duration::from_millis(50)),
                     Drain::Reconnect => break,
                     Drain::Stop => return,
@@ -1283,7 +1561,7 @@ pub fn run_loop(
         let mut last_att: Option<Instant> = None;
 
         loop {
-            match drain_cmds(&cmds, &url, Some(&*conn), &mut st) {
+            match drain_cmds(&cmds, &url, Some(&*conn), &mut st, &on_sample, &latest) {
                 Drain::None => {}
                 Drain::Reconnect => break,
                 Drain::Stop => return,
@@ -1293,7 +1571,11 @@ pub fn run_loop(
             st.sample.t = wall_time();
             st.sample.cmd = stick_deg(&st, axis_pwm(&st, false));
             st.sample.pitch_cmd = stick_deg(&st, axis_pwm(&st, true));
-            st.sample.yaw_cmd = stick_yaw_rate(&st, yaw_pwm(&st));
+            // Same ±ANGLE_MAX throw as roll. Upper yaw plot adds this to heading
+            // so the grey line sits on actual at rest and peels off with the stick.
+            st.sample.yaw_cmd = stick_deg(&st, yaw_pwm(&st));
+            st.sample.thr_cmd = thr_pct(thr_pwm(&st));
+            apply_d_targets(&mut st);
             if now.duration_since(att_t0) >= Duration::from_secs(1) {
                 st.sample.att_hz = att_n;
                 att_n = 0;
