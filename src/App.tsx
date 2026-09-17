@@ -1,4 +1,4 @@
-import { useEffect, useState, useSyncExternalStore, type FormEvent } from "react";
+import { useEffect, useRef, useState, useSyncExternalStore, type FormEvent } from "react";
 import { Aside, type LogRow } from "./components/Aside";
 import { Cascade } from "./components/Cascade";
 import { LabDialog } from "./components/LabDialog";
@@ -19,6 +19,7 @@ import {
   saveLabSnapshot,
 } from "./mav/labInit";
 import { axisLabel, type Axis } from "./mav/axis";
+import { isSitl } from "./mav/sim";
 import { AxisSwitch } from "./components/AxisSwitch";
 import { getSnapshot, isPaused, setPaused, startStream, subscribe } from "./mav/store";
 
@@ -53,6 +54,7 @@ export function App() {
   const [linkUrl, setLinkUrl] = useState(loadLink);
   const [labOpen, setLabOpen] = useState(false);
   const [sitlOpen, setSitlOpen] = useState(false);
+  const sitlReset = useRef<(() => void) | null>(null);
   const paused = isPaused();
 
   useEffect(() => {
@@ -158,24 +160,37 @@ export function App() {
 
   return (
     <div className={sitlOpen ? "app sitl-open" : "app"}>
-      <SimRail sample={s} open={sitlOpen} />
-      <header>
-        <div className="hdr-title">
+      <div className="sitl-dock">
+        <button
+          type="button"
+          className={sitlOpen ? "sitl-btn on" : "sitl-btn"}
+          aria-pressed={sitlOpen}
+          aria-expanded={sitlOpen}
+          onClick={() => setSitlOpen((on) => !on)}
+          title={t("Simulation")}
+        >
+          {t("SITL")}
+        </button>
+        {sitlOpen ? (
           <button
             type="button"
-            className={sitlOpen ? "sitl-btn on" : "sitl-btn"}
-            aria-pressed={sitlOpen}
-            aria-expanded={sitlOpen}
-            onClick={() => setSitlOpen((on) => !on)}
-            title={t("Simulation")}
+            className="sitl-btn"
+            disabled={!isSitl(s.params)}
+            onClick={() => sitlReset.current?.()}
+            title={t("Restore SITL defaults")}
           >
-            {t("SITL")}
+            {t("Reset")}
           </button>
+        ) : null}
+      </div>
+      <SimRail sample={s} open={sitlOpen} resetRef={sitlReset} />
+      <header>
+        <div className="hdr-title">
           <h1>ArduLoops{frameName ? ` · ${frameName}` : ""}</h1>
         </div>
         <p className="sub">
           {s.frame === "plane"
-            ? t("The wing cascade is still a stub. RLL_ / PTCH_ / L1 / TECS will appear later.")
+            ? t("The wing layers view is still a stub. RLL_ / PTCH_ / L1 / TECS will appear later.")
             : t("We want an angle. We don't command the angle — we command the rate that takes us there.")}
         </p>
         <div className="hdr-right">
@@ -261,7 +276,7 @@ export function App() {
                 setTab("map");
               }}
             >
-              {t("Cascade")}
+              {t("Layers")}
             </a>
             <span className="sep" aria-hidden="true">
               ·

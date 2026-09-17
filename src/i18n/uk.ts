@@ -88,8 +88,8 @@ export const uk: Record<string, string> = {
 
   "We want an angle. We don't command the angle — we command the rate that takes us there.":
     "Хочемо кут. Керуємо не кутом, а швидкістю, якою туди крутимось.",
-  "The wing cascade is still a stub. RLL_ / PTCH_ / L1 / TECS will appear later.":
-    "Каскад крила ще заглушка. RLL_ / PTCH_ / L1 / TECS з’являться пізніше.",
+  "The wing layers view is still a stub. RLL_ / PTCH_ / L1 / TECS will appear later.":
+    "Шари крила ще заглушка. RLL_ / PTCH_ / L1 / TECS з’являться пізніше.",
   "Link is up, but attitude is not arriving (ATT 0 Hz). The plot stays flat until SITL sends ATTITUDE.":
     "Лінк є, але кут не надходить (ATT 0 Hz). Графік плоский, поки SITL не надсилає ATTITUDE.",
   "No MAVLink: {detail}. Check the address and the simulation.":
@@ -97,7 +97,7 @@ export const uk: Record<string, string> = {
   "SITL not found": "SITL не знайдено",
   View: "вид",
   Plot: "графік",
-  Cascade: "каскад",
+  Layers: "шари",
   Loop: "контур",
 
   "No link": "Немає лінку",
@@ -144,12 +144,15 @@ export const uk: Record<string, string> = {
     "де хочемо бути. Ціль — курс; факт має її спіймати. Стік рискання — rate, не кут; він унизу.",
   "Heading, not the stick. Error is the shortest turn to the target.":
     "курс, не стік. Помилка — найкоротший поворот до цілі.",
-  "Grey is the stick throw, 0 = centered. White and cyan are heading.":
-    "сірий — положення стика, 0 = центр. Біла і блакитна — курс.",
+  "Grey is the stick throw, 0 = centered. Yellow and cyan are heading.":
+    "сірий — положення стика, 0 = центр. Жовта і блакитна — курс.",
   "Where we want to be. Target is not the stick — actual should catch the target.":
     "де хочемо бути. Ціль — не стік; факт має спіймати ціль.",
   Stick: "стик",
-  "FC target": "ціль FC",
+  Target: "ціль",
+  Desired: "бажане",
+  "error gap": "щілина",
+  "FC target": "ціль",
   "Actual {name}": "{name} Act",
   "actual {ang}°   target {tar}°   stick {cmd}{unit}":
     "факт {ang}°   ціль {tar}°   стик {cmd}{unit}",
@@ -165,8 +168,8 @@ export const uk: Record<string, string> = {
     "чим туди їдемо. Завдання rate — не позиція, а «крутись ось так швидко».",
   "stick {cmd} °/s": "стик {cmd} °/с",
 
-  "The link is {frame}. The wing cascade map is still a stub — we will build it separately.":
-    "Зараз на лінку {frame}. Карта контурів крила ще заглушка — її зберемо окремо.",
+  "The link is {frame}. The wing layers map is still a stub — we will build it separately.":
+    "Зараз на лінку {frame}. Карта шарів крила ще заглушка — її зберемо окремо.",
   "Here it will not be PSC+ATC, but RLL_* / PTCH_* (angle → rate → servo), with NAVL1_* and TECS_* outside. Yaw defaults to YAW2SRV_*.":
     "Далі тут буде не PSC+ATC, а RLL_* / PTCH_* (кут → rate → серво), зовні NAVL1_* і TECS_*. Yaw за замовчуванням YAW2SRV_*.",
 
@@ -222,8 +225,8 @@ export const uk: Record<string, string> = {
     "P завищений. {Stick} стиком покаже переліт або дзвін.",
   "Yaw stick is rate. Watch whether amber and cyan match on the lower plot.":
     "Стік рискання — це rate. Дивіться, чи жовта і синя на нижньому графіку збігаються.",
-  "Watch whether cyan meets white after you release the stick.":
-    "Дивіться, чи збігається блакитна лінія з білою після відпускання стика.",
+  "Watch whether cyan meets yellow after you release the stick.":
+    "Дивіться, чи збігається блакитна лінія з жовтою після відпускання стика.",
   "Yaw is separate: I is smaller, D is often 0. Left stick is the reference — does rate catch the command.":
     "Yaw окремо: I менший, D часто 0. Лівий стік — еталон, чи rate ловить завдання.",
   "Typical P. {Stick} stick is the horizon-return reference.":
@@ -339,8 +342,8 @@ export const uk: Record<string, string> = {
   "want · height, m": "хочемо · висота, м",
   "command · rate, °/s": "керуємо · rate, °/с",
   "command · climb, m/s": "керуємо · climb, м/с",
-  "White is the altitude target, cyan is AGL (−D). Throttle stick is on the readout — 0 = mid.":
-    "біла — ціль висоти, блакитна — AGL (−D). Стік газу в рядку цифр, 0 = середина.",
+  "Yellow is the altitude target, cyan is AGL (−D). Throttle stick is on the readout — 0 = mid.":
+    "жовта — ціль висоти, блакитна — AGL (−D). Стік газу в рядку цифр, 0 = середина.",
   "AGL {ang} m   target {tar} m   throttle {cmd}%   error {err} m":
     "AGL {ang} м   ціль {tar} м   газ {cmd}%   помилка {err} м",
   "Amber is the throttle climb command (PILOT_SPD_UP), cyan is climb. Up is +.":
@@ -376,8 +379,23 @@ export const uk: Record<string, string> = {
     "За мануалом спочатку attitude: rate (Manual / QuikTune / AutoTune), далі angle P, потім відчуття стика (Input Shaping). Контури PSC зазвичай лишають стоком.",
   "Autotune writes the same rate and angle blocks, from AltHold. If Loiter still weaves after that, NE velocity is the next knob — not Navigation.":
     "Autotune пише ті самі блоки rate і angle, з AltHold. Якщо Loiter після цього ще плететься — наступний важіль швидкість NE, не Navigation.",
-  outer: "зовнішній",
-  inner: "внутрішній",
+  PosControl: "PosControl",
+  Attitude: "Attitude",
+  PSC: "PSC",
+  ATC: "ATC",
+  Loops: "контури",
+  "Holds where to be: position → velocity → acceleration. North–East is metres on the earth; Down is height. Horizontal output is lean — there is no separate accel PID.":
+    "Тримає де бути: позиція → швидкість → прискорення. North–East — метри на землі; Down — висота. Горизонтальний вихід — lean: окремого PID прискорення немає.",
+  "Vertical skips Attitude: Down acceleration (PSC_D_ACC) goes straight to throttle. Navigation only writes targets for PSC; it is not a regulator.":
+    "Вертикаль Attitude обходить: прискорення Down (PSC_D_ACC) одразу йде в газ. Navigation лише пише цілі для PSC, це не регулятор.",
+  "Leave stock until attitude is tuned. Autotune does not write PSC. If Loiter still weaves, NE velocity is the next knob — not Navigation.":
+    "Лишай сток, доки не налаштований attitude. Autotune PSC не пише. Якщо Loiter ще плететься — наступний важіль швидкість NE, не Navigation.",
+  "Holds the angle. Motors cannot “be 10°” — only thrust. Angle error becomes a rate command; the rate loop turns °/s error into mixer torque.":
+    "Тримає кут. Мотори не вміють «бути 10°» — лише тяга. Помилка кута стає командою rate; контур rate перетворює помилку °/с на момент у мікшер.",
+  "Yaw is the same two loops. Vertical does not come here: D acceleration stays in PosControl and goes to throttle.":
+    "Рискання (yaw) — ті самі два контури. Вертикаль сюди не заходить: прискорення D лишається в PosControl і йде в газ.",
+  "Tune rate first (Manual / QuikTune / AutoTune), then angle P, then stick feel. Do not crank ANG P to hide a weak rate.":
+    "Спочатку rate (Manual / QuikTune / AutoTune), далі angle P, потім відчуття стика. Не крути ANG P, щоб сховати слабкий rate.",
   position: "позиція",
   velocity: "швидкість",
   acceleration: "прискорення",
@@ -392,6 +410,7 @@ export const uk: Record<string, string> = {
   "AGL {v} m": "AGL {v} м",
   "{v}{unit}": "{v}{unit}",
   rate: "rate",
+  "angular rate (rate)": "кутова швидкість (rate)",
   P: "P",
   "P only": "лише P",
   AC_PID: "AC_PID",
@@ -406,8 +425,8 @@ export const uk: Record<string, string> = {
     "У {mode} цей контур не працює: автопілот його зараз не крутить. Гейни можна дивитись, але на поведінку вони не вплинуть, поки режим його не замкне.",
   In: "Входить",
   Out: "Віддає",
-  "Stock Copter cascade: PosControl (PSC, outer) holds where to be, Attitude Control (ATC, inner) holds the angle.":
-    "Штатний каскад Copter: PosControl (PSC, зовнішній) тримає де бути, Attitude Control (ATC, внутрішній) тримає кут.",
+  "Stock Copter layers: PosControl (PSC) holds where to be, Attitude Control (ATC) holds the angle.":
+    "Штатні шари Copter: PosControl (PSC) тримає де бути, Attitude Control (ATC) тримає кут.",
   "Motors cannot “turn to 10°” — only thrust. Thrust difference makes torque. So the attitude regulator (ATC_ANG) does not spin motors: from angle error it computes how fast to rotate toward the target and sets a rate command for the next loop. The rate regulator does that job: °/s error → mixer torque.":
     "Мотори не вміють «повернутись на 10°» — лише тяга. Різниця тяг дає момент (torque). Тому регулятор кута (attitude, ATC_ANG) не крутить мотори: з помилки кута він рахує, як швидко треба крутитись до цілі, і ставить завдання кутової швидкості (rate, ATC_RAT) наступному контуру. Регулятор rate це завдання виконує: помилка °/с → момент у мікшер.",
   "The boundary is lean: horizontal acceleration becomes desired roll and pitch. Then ATC works in the body (° and °/s). Vertical skips angle: Down acceleration (PSC_D_ACC) goes straight to throttle. Yaw is the same two inner loops: angle and rate.":
@@ -416,7 +435,7 @@ export const uk: Record<string, string> = {
     "Окремого PID горизонтального прискорення немає. WP, Loiter і Circle задають цілі, це не регулятори. Не показано: Plane, CC2_, FHLD, FOLL, heli.",
   "In {mode}, inactive blocks are not closed now.":
     "У {mode} неактивні блоки зараз не замкнені.",
-  "All stock-cascade loops are visible now.": "Зараз видно всі контури штатного каскаду.",
+  "All stock layers are visible now.": "Зараз видно всі штатні шари.",
   "this mode": "цьому режимі",
 
   "A loop because the output is compared to the command again.":

@@ -76,7 +76,7 @@ fn handle(msg: Value) {
                 json!({
                     "protocolVersion": ver,
                     "capabilities": { "tools": {} },
-                    "serverInfo": { "name": "arduloops", "version": "0.3.0" },
+                    "serverInfo": { "name": "arduloops", "version": "0.4.0" },
                     "instructions": format!(
                         "Same MAVLink as the ArduLoops window. Start the app first (HTTP {HTTP_ADDR})."
                     )

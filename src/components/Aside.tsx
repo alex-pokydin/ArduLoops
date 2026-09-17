@@ -206,7 +206,7 @@ export function Aside({
         hint:
           ax === "yaw"
             ? "Yaw stick is rate. Watch whether amber and cyan match on the lower plot."
-            : "Watch whether cyan meets white after you release the stick.",
+            : "Watch whether cyan meets yellow after you release the stick.",
       });
       return;
     }

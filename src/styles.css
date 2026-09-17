@@ -19,21 +19,21 @@ html, body, #root { margin: 0; height: 100%; height: 100dvh; background: var(--b
   grid-template-columns: 0px minmax(0, 1fr);
   grid-template-rows: auto auto minmax(0, 1fr);
   transition: grid-template-columns 0.18s ease;
+  position: relative;
 }
 .app.sitl-open { grid-template-columns: 248px minmax(0, 1fr); }
+.sitl-dock {
+  position: absolute; top: 6px; left: 16px; z-index: 6;
+  display: flex; align-items: center; gap: 8px;
+}
 .sim-rail {
   grid-column: 1; grid-row: 1 / -1; min-width: 0; overflow: hidden;
   display: flex; flex-direction: column;
   background: none;
   border-radius: 0;
-  padding: 6px 8px 16px 16px;
+  padding: 32px 8px 16px 16px;
 }
 .sim-rail[hidden] { display: none; }
-.sim-rail-h {
-  flex: none; display: flex; align-items: center; justify-content: flex-start;
-  gap: 8px; padding: 0 0 4px;
-}
-.sim-rail-h button { margin: 0; padding: 3px 8px; font-size: 11px; }
 .sim-body { flex: 1; min-height: 0; overflow-x: hidden; overflow-y: auto; }
 .sim-empty { margin: 8px 0; font-size: 12px; color: var(--dim); line-height: 1.4; }
 .sim-sec { margin: 0 0 6px; }
@@ -57,8 +57,9 @@ html, body, #root { margin: 0; height: 100%; height: 100dvh; background: var(--b
 }
 .sim-choice > div { display: flex; flex-wrap: wrap; gap: 4px; }
 .sim-choice button { margin: 0; padding: 3px 7px; font-size: 11px; }
-header { grid-column: 2; grid-row: 1; padding: 6px 16px 4px; display: flex; gap: 6px 14px;
+header { grid-column: 2; grid-row: 1; padding: 6px 16px 4px 66px; display: flex; gap: 6px 14px;
   flex-wrap: wrap; align-items: center; min-width: 0; }
+.app.sitl-open header { padding-left: 16px; }
 .hdr-title { display: flex; align-items: center; gap: 8px; min-width: 0; }
 .sitl-btn {
   margin: 0; padding: 2px 8px; font-size: 11px; font-weight: 650;
@@ -197,6 +198,15 @@ html[lang="uk"] .loop-board.paused::after { content: "пауза"; }
 .legend .w { background: rgba(255,255,255,0.9); }
 .legend .c { background: var(--cyan); }
 .legend .a { background: var(--amber); }
+.legend .gap,
+.loop-legend .gap {
+  width: 18px; height: 10px; border-radius: 2px;
+  background: repeating-linear-gradient(
+    -45deg,
+    rgba(255, 183, 77, 0.9) 0 3px,
+    rgba(79, 195, 247, 0.85) 3px 6px
+  );
+}
 .loop { flex: 1; min-height: 0; display: flex; flex-direction: column; gap: 8px; overflow: hidden; }
 .loop-board { flex: 0 1 auto; min-height: 0; position: relative; background: #0c0e11; border-radius: 10px; padding: 8px 6px 0;
   display: flex; justify-content: center; align-items: center; }
@@ -417,12 +427,13 @@ button.hot { background: #6b2424; }
 .frame.on.cyan { border-color: var(--cyan); }
 .frame.on.wool { border-color: var(--wool); }
 .frame-hint { grid-area: h; margin: 0; font-size: 11px; color: var(--dim); line-height: 1.35; }
-.cmap-inner { position: relative; }
+.cmap-inner { position: relative; margin: 0 auto; }
 .cmap-edges { position: absolute; inset: 0; pointer-events: none; z-index: 0; overflow: visible; }
 .cnode { position: absolute; z-index: 1; margin: 0; padding: 6px 8px; text-align: left; background: #1a1e24;
   border-radius: 6px; border: 1px solid #2a333c; }
 .cnode:hover { background: #222830; }
-.cnode:focus { outline: none; }
+.cnode:focus,
+.cnode:focus-visible { outline: none; }
 .cnode.has-pid { padding-right: 36px; }
 .cnode .t { display: block; font-size: 11px; font-weight: 700; }
 .cnode .p { display: block; font-size: 10px; color: var(--dim); margin-top: 2px; }
@@ -458,34 +469,36 @@ button.hot { background: #6b2424; }
   z-index: 2;
   background: #2c3848;
   border-style: solid;
-  outline: 1px solid #6d7d88;
-  outline-offset: 0;
-  filter:
-    drop-shadow(0 2px 5px rgba(0, 0, 0, 0.55))
-    drop-shadow(0 0 7px rgba(144, 164, 174, 0.35));
+  outline: none;
+  filter: drop-shadow(0 2px 6px rgba(0, 0, 0, 0.5));
 }
 .cnode.sel:hover { background: #2c3848; }
 .cnode.sel.inner {
-  outline-color: var(--cyan);
-  filter:
-    drop-shadow(0 2px 5px rgba(0, 0, 0, 0.5))
-    drop-shadow(0 0 8px rgba(79, 195, 247, 0.42));
+  border-color: var(--cyan);
+  filter: drop-shadow(0 2px 8px rgba(79, 195, 247, 0.35));
 }
 .cnode.sel.outer {
-  outline-color: var(--amber);
-  filter:
-    drop-shadow(0 2px 5px rgba(0, 0, 0, 0.5))
-    drop-shadow(0 0 8px rgba(255, 183, 77, 0.38));
+  border-color: var(--amber);
+  filter: drop-shadow(0 2px 8px rgba(255, 183, 77, 0.32));
 }
 .cnode.sel.ends {
-  outline-color: var(--wool);
-  filter:
-    drop-shadow(0 2px 5px rgba(0, 0, 0, 0.5))
-    drop-shadow(0 0 7px rgba(144, 164, 174, 0.4));
+  border-color: var(--wool);
+  filter: drop-shadow(0 2px 6px rgba(0, 0, 0, 0.5));
 }
 .cnode.rel { background: #222830; }
 .cnode.dim { opacity: 0.32; }
 .cnode.dim.sel { opacity: 0.78; }
+.cband {
+  position: absolute; z-index: 1; margin: 0; padding: 0; border: 0;
+  border-radius: 5px; background: transparent; cursor: pointer;
+  box-shadow: none; filter: none;
+}
+.cband.outer:hover { background: rgba(255, 183, 77, 0.14); }
+.cband.inner:hover { background: rgba(79, 195, 247, 0.14); }
+.cband.sel.outer { background: rgba(255, 183, 77, 0.16); }
+.cband.sel.inner { background: rgba(79, 195, 247, 0.16); }
+.cband:focus,
+.cband:focus-visible { outline: none; box-shadow: none; }
 .cmap-key { flex: none; display: flex; gap: 14px; padding: 0 4px;
   font-size: 10px; color: var(--dim); letter-spacing: 0.02em; }
 .cmap-key span { display: inline-flex; align-items: center; gap: 6px; }
@@ -516,6 +529,11 @@ button.hot { background: #6b2424; }
 .inspect p { margin: 0 0 10px; font-size: 13px; color: var(--ink); }
 .inspect .io { font-size: 12px; color: var(--dim); margin: 0 0 6px; }
 .inspect .io b { color: var(--amber); font-weight: 650; }
+.inspect .io button {
+  display: block; width: 100%; margin: 0; padding: 3px 0; border: 0;
+  background: none; color: inherit; font: inherit; text-align: left; cursor: pointer;
+}
+.inspect .io button:hover { color: var(--ink); }
 .inspect .warn { font-size: 12px; color: var(--amber); margin: 0 0 8px; }
 .inspect .trap {
   font-size: 12px;
@@ -544,7 +562,9 @@ button.hot { background: #6b2424; }
   .map-wrap { grid-template-columns: 1fr; }
 }
 @media (max-height: 640px) {
-  header { padding: 6px 12px 4px; }
+  header { padding: 6px 12px 4px 62px; }
+  .app.sitl-open header { padding-left: 12px; }
+  .sitl-dock { left: 12px; }
   .hint { -webkit-line-clamp: 2; }
   .feel { font-size: 18px; }
   .craft { margin-bottom: 6px; }

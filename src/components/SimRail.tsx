@@ -17,7 +17,15 @@ import type { Sample } from "../mav/types";
 
 const MOTOR_BITS = [0, 1, 2, 3];
 
-export function SimRail({ sample, open }: { sample: Sample; open: boolean }) {
+export function SimRail({
+  sample,
+  open,
+  resetRef,
+}: {
+  sample: Sample;
+  open: boolean;
+  resetRef: { current: (() => void) | null };
+}) {
   const t = useT();
   const params = sample.params || {};
   const sitl = isSitl(params);
@@ -67,13 +75,10 @@ export function SimRail({ sample, open }: { sample: Sample; open: boolean }) {
     addLog(t("Restore SITL defaults"), "cmd");
   }
 
+  resetRef.current = onReset;
+
   return (
     <aside className="sim-rail" aria-label={t("Simulation")} hidden={!open} inert={!open || undefined}>
-      <div className="sim-rail-h">
-        <button type="button" disabled={!sitl} onClick={onReset} title={t("Restore SITL defaults")}>
-          {t("Reset")}
-        </button>
-      </div>
       <div className="sim-body">
         {!sample.ok ? (
           <p className="sim-empty">{t("No link")}</p>

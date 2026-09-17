@@ -5,7 +5,7 @@ export function PlaneStub() {
   return (
     <div className="stub">
       <p>
-        {t("The link is {frame}. The wing cascade map is still a stub — we will build it separately.", {
+        {t("The link is {frame}. The wing layers map is still a stub — we will build it separately.", {
           frame: t("plane"),
         })}
       </p>

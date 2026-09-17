@@ -3,6 +3,15 @@ import { wrap180, type Axis } from "./mav/axis";
 import { MAX_T } from "./mav/store";
 import type { Sample } from "./mav/types";
 
+/** Stick gray, desired white, target amber, actual cyan. Error is the gap, not a 5th trace. */
+export const TRACE = {
+  stick: "#6b7884",
+  desired: "rgba(255,255,255,0.92)",
+  target: "#ffb74d",
+  actual: "#4fc3f7",
+  gap: "rgba(255, 183, 77, 0.20)",
+} as const;
+
 function size(c: HTMLCanvasElement): [number, number, number] {
   const dpr = window.devicePixelRatio || 1;
   const cssW = Math.max(1, c.clientWidth);
@@ -41,6 +50,7 @@ function plot(
   series: Array<keyof Sample>,
   ymax: number,
   colors: string[],
+  gap?: [keyof Sample, keyof Sample],
 ): void {
   const [w, h, dpr] = size(c);
   ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
@@ -79,6 +89,29 @@ function plot(
   }
 
   if (!buf.length) return;
+  if (gap) {
+    const [ka, kb] = gap;
+    ctx.beginPath();
+    let top = false;
+    for (const p of buf) {
+      const v = p[ka];
+      if (typeof v !== "number" || Number.isNaN(v)) continue;
+      if (!top) {
+        ctx.moveTo(x(p.t), y(v));
+        top = true;
+      } else ctx.lineTo(x(p.t), y(v));
+    }
+    for (let i = buf.length - 1; i >= 0; i--) {
+      const v = buf[i][kb];
+      if (typeof v !== "number" || Number.isNaN(v)) continue;
+      ctx.lineTo(x(buf[i].t), y(v));
+    }
+    if (top) {
+      ctx.closePath();
+      ctx.fillStyle = TRACE.gap;
+      ctx.fill();
+    }
+  }
   series.forEach((key, i) => {
     ctx.beginPath();
     ctx.strokeStyle = colors[i];
@@ -152,11 +185,11 @@ export function drawScope(
     const alts = nums(buf, "alt");
     const tars = nums(buf, "alt_tar");
     const span = Math.max(1, ...alts.map(Math.abs), ...tars.map(Math.abs)) * 1.25;
-    plot(x1, c1, buf, ["alt_tar", "alt"], span, ["rgba(255,255,255,0.92)", "#4fc3f7"]);
+    plot(x1, c1, buf, ["alt_tar", "alt"], span, [TRACE.target, TRACE.actual], ["alt_tar", "alt"]);
     const climbs = nums(buf, "climb");
     const dens = nums(buf, "climb_des");
     const rspan = Math.max(0.5, ...climbs.map(Math.abs), ...dens.map(Math.abs)) * 1.25;
-    plot(x2, c2, buf, ["climb_des", "climb"], rspan, ["#ffb74d", "#4fc3f7"]);
+    plot(x2, c2, buf, ["climb_des", "climb"], rspan, [TRACE.target, TRACE.actual], ["climb_des", "climb"]);
     return;
   }
   if (axis === "yaw") {
@@ -165,11 +198,11 @@ export function drawScope(
     const tars = nums(drawn, "yaw_tar");
     const cmds = nums(drawn, "yaw_cmd");
     const span = Math.max(5, ...angs.map(Math.abs), ...tars.map(Math.abs), ...cmds.map(Math.abs)) * 1.25;
-    plot(x1, c1, drawn, ["yaw_cmd", "yaw_tar", "yaw"], span, ["#6b7884", "rgba(255,255,255,0.92)", "#4fc3f7"]);
+    plot(x1, c1, drawn, ["yaw_cmd", "yaw_tar", "yaw"], span, [TRACE.stick, TRACE.target, TRACE.actual], ["yaw_tar", "yaw"]);
     const rates = nums(buf, "yaw_rate");
     const dens = nums(buf, "yaw_des");
     const rspan = Math.max(12, ...rates.map(Math.abs), ...dens.map(Math.abs)) * 1.25;
-    plot(x2, c2, buf, ["yaw_des", "yaw_rate"], rspan, ["#ffb74d", "#4fc3f7"]);
+    plot(x2, c2, buf, ["yaw_des", "yaw_rate"], rspan, [TRACE.target, TRACE.actual], ["yaw_des", "yaw_rate"]);
     return;
   }
   const angK = axis === "pitch" ? "pitch" : "roll";
@@ -181,9 +214,9 @@ export function drawScope(
   const cmds = nums(buf, cmdK);
   const tars = nums(buf, tarK);
   const span = Math.max(5, ...angs.map(Math.abs), ...cmds.map(Math.abs), ...tars.map(Math.abs)) * 1.25;
-  plot(x1, c1, buf, [cmdK, tarK, angK], span, ["#6b7884", "rgba(255,255,255,0.92)", "#4fc3f7"]);
+  plot(x1, c1, buf, [cmdK, tarK, angK], span, [TRACE.stick, TRACE.target, TRACE.actual], [tarK, angK]);
   const rates = nums(buf, rateK);
   const dens = nums(buf, desK);
   const rspan = Math.max(12, ...rates.map(Math.abs), ...dens.map(Math.abs)) * 1.25;
-  plot(x2, c2, buf, [desK, rateK], rspan, ["#ffb74d", "#4fc3f7"]);
+  plot(x2, c2, buf, [desK, rateK], rspan, [TRACE.target, TRACE.actual], [desK, rateK]);
 }

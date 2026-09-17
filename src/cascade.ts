@@ -331,8 +331,31 @@ export type Band = "ends" | "outer" | "inner";
 
 export const BAND_LABEL: Record<Band, string> = {
   ends: "not a regulator",
-  outer: "outer",
-  inner: "inner",
+  outer: "PosControl",
+  inner: "Attitude",
+};
+
+export type BandId = "outer" | "inner";
+
+export function isBandId(id: string | null | undefined): id is BandId {
+  return id === "outer" || id === "inner";
+}
+
+export const BAND_COPY: Record<BandId, { kind: string; unit: string; does: string; more: string; trap: string }> = {
+  outer: {
+    kind: "PSC",
+    unit: "m · NED",
+    does: "Holds where to be: position → velocity → acceleration. North–East is metres on the earth; Down is height. Horizontal output is lean — there is no separate accel PID.",
+    more: "Vertical skips Attitude: Down acceleration (PSC_D_ACC) goes straight to throttle. Navigation only writes targets for PSC; it is not a regulator.",
+    trap: "Leave stock until attitude is tuned. Autotune does not write PSC. If Loiter still weaves, NE velocity is the next knob — not Navigation.",
+  },
+  inner: {
+    kind: "ATC",
+    unit: "° · body",
+    does: "Holds the angle. Motors cannot “be 10°” — only thrust. Angle error becomes a rate command; the rate loop turns °/s error into mixer torque.",
+    more: "Yaw is the same two loops. Vertical does not come here: D acceleration stays in PosControl and goes to throttle.",
+    trap: "Tune rate first (Manual / QuikTune / AutoTune), then angle P, then stick feel. Do not crank ANG P to hide a weak rate.",
+  },
 };
 
 export const LAYERS: { label: string; ids: string[]; band: Band }[] = [
@@ -341,7 +364,7 @@ export const LAYERS: { label: string; ids: string[]; band: Band }[] = [
   { label: "velocity", ids: ["psc_ne_vel", "psc_d_vel"], band: "outer" },
   { label: "acceleration", ids: ["lean", "psc_d_acc"], band: "outer" },
   { label: "angle", ids: ["atc_ang"], band: "inner" },
-  { label: "rate", ids: ["atc_rat"], band: "inner" },
+  { label: "angular rate (rate)", ids: ["atc_rat"], band: "inner" },
   { label: "actuator", ids: ["motors"], band: "ends" },
 ];
 
@@ -421,7 +444,7 @@ export function layoutCopter(width: number): CascadeLayout {
     lastOuter && firstInner ? (lastOuter.y + lastOuter.h + firstInner.y) / 2 : null;
 
   return {
-    width: Math.max(width, padL + nodeW * 2 + nodeGap + padR),
+    width: padL + nodeW * 2 + nodeGap + padR,
     height: y - rankGap + padT,
     nodeW,
     nodeH,

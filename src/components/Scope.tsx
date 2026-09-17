@@ -57,9 +57,9 @@ export function Scope({
         <b>{down ? t("want · height, m") : t("want · angle, °")}</b>
         <span>
           {down
-            ? t("White is the altitude target, cyan is AGL (−D). Throttle stick is on the readout — 0 = mid.")
+            ? t("Yellow is the altitude target, cyan is AGL (−D). Throttle stick is on the readout — 0 = mid.")
             : yaw
-              ? t("Grey is the stick throw, 0 = centered. White and cyan are heading.")
+              ? t("Grey is the stick throw, 0 = centered. Yellow and cyan are heading.")
               : t("Where we want to be. Target is not the stick — actual should catch the target.")}
         </span>
         <button type="button" className={paused ? "pause-btn on" : "pause-btn"} onClick={onPause} title={t("Space")}>
@@ -74,8 +74,9 @@ export function Scope({
           {down ? null : (
             <span><i className="g" />{t("Stick")}</span>
           )}
-          <span><i className="w" />{t("FC target")}</span>
+          <span><i className="a" />{t("Target")}</span>
           <span><i className="c" />{t("Actual {name}", { name: t(v.name) })}</span>
+          <span><i className="gap" />{t("error gap")}</span>
         </div>
         <div className="readout">
           {down
@@ -117,6 +118,7 @@ export function Scope({
         <div className="legend">
           <span><i className="a" />{down ? t("tar climb") : t("tar rate")}</span>
           <span><i className="c" />{down ? t("climb Act") : t("rate Act")}</span>
+          <span><i className="gap" />{t("error gap")}</span>
         </div>
         <div className="readout">
           {down

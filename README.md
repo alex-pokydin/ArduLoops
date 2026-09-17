@@ -12,11 +12,11 @@ Angle we want (°) and rate we command (°/s). Legend maps colour to **stick / t
 
 ![Plot: angle we want and rate we command](docs/plot.png)
 
-### Cascade
+### Layers
 
 Stock Copter map: PosControl (outer) holds *where to be*, Attitude Control (inner) holds the angle. Inactive blocks in the current mode are dimmed. Click a block to inspect gains.
 
-![Cascade: Copter loop map](docs/cascade.png)
+![Layers: Copter loop map](docs/cascade.png)
 
 ### Loop
 
@@ -65,8 +65,8 @@ npm run build      # Windows installers
 
 `npm run build` writes:
 
-- `src-tauri/target/release/bundle/nsis/ArduLoops_0.3.0_x64-setup.exe`
-- `src-tauri/target/release/bundle/msi/ArduLoops_0.3.0_x64_en-US.msi`
+- `src-tauri/target/release/bundle/nsis/ArduLoops_0.4.0_x64-setup.exe`
+- `src-tauri/target/release/bundle/msi/ArduLoops_0.4.0_x64_en-US.msi`
 
 ## Options
 
@@ -104,6 +104,6 @@ npm run cli -- mode STABILIZE
 
 ## Notes
 
-- Built for **Copter**. The Plane cascade (RLL_ / PTCH_ / L1 / TECS) is still a stub.
+- Built for **Copter**. The Plane layers view (RLL_ / PTCH_ / L1 / TECS) is still a stub.
 - Presets **Wool / Stock / Sharp** illustrate feel on the stand. They are not a tuning protocol.
 - Do not bump `mavlink` in `src-tauri/Cargo.toml` (stay on **0.13.1**).

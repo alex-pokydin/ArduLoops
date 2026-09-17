@@ -2,9 +2,11 @@ import { useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore } from
 import {
   EDGES,
   NODES,
+  BAND_COPY,
   BAND_LABEL,
   edgeLiveIn,
   edgeRoute,
+  isBandId,
   layoutCopter,
   nodeBand,
   nodesLiveIn,
@@ -107,7 +109,8 @@ export function Cascade({
   const layout = useMemo(() => layoutCopter(width), [width]);
   const modeKey = showAll ? "ALL" : s.mode;
   const live = nodesLiveIn(modeKey);
-  const node = NODES.find((n) => n.id === sel) ?? null;
+  const band = isBandId(sel) ? sel : null;
+  const node = band ? null : NODES.find((n) => n.id === sel) ?? null;
   const boxById = useMemo(() => {
     const m = new Map<string, (typeof layout.nodes)[0]>();
     for (const b of layout.nodes) m.set(b.id, b);
@@ -154,11 +157,22 @@ export function Cascade({
               {layout.groups.map((g) => {
                 const cx = g.x + g.w / 2;
                 const cy = g.y + g.h / 2;
+                const on = g.band === band;
                 const ink = g.band === "outer" ? "#ffb74d" : "#4fc3f7";
                 const fill = g.band === "outer" ? "rgba(255,183,77,0.12)" : "rgba(79,195,247,0.12)";
                 return (
                   <g key={g.band}>
-                    <rect x={g.x} y={g.y} width={g.w} height={g.h} rx="5" fill={fill} stroke={ink} strokeOpacity="0.45" />
+                    <rect
+                      x={g.x}
+                      y={g.y}
+                      width={g.w}
+                      height={g.h}
+                      rx="5"
+                      fill={fill}
+                      stroke={ink}
+                      strokeOpacity={on ? 0.95 : 0.45}
+                      strokeWidth={on ? 1.6 : 1}
+                    />
                     <text
                       x={cx}
                       y={cy}
@@ -184,7 +198,7 @@ export function Cascade({
               ))}
               {layout.cutY != null ? (
                 <text
-                  x={layout.width / 2 + 20}
+                  x={(layout.ranks[0]?.x ?? 0) + (layout.ranks[0]?.w ?? layout.width) / 2}
                   y={layout.cutY + 4}
                   textAnchor="middle"
                   fill="#8b98a8"
@@ -199,7 +213,8 @@ export function Cascade({
                 if (!a || !b) return null;
                 const r = edgeRoute(a, b);
                 const on = edgeLiveIn(e, modeKey, live);
-                const connected = sel != null && (e.from === sel || e.to === sel);
+                const connected = !band && sel != null && (e.from === sel || e.to === sel);
+                const bandEdge = !!band && (nodeBand(e.from) === band || nodeBand(e.to) === band);
                 const hot = connected && on;
                 return (
                   <g key={`${e.from}-${e.to}-${e.label}`}>
@@ -209,7 +224,7 @@ export function Cascade({
                       stroke={hot ? "#4fc3f7" : on ? "#6b7884" : "#2a333c"}
                       strokeWidth={hot ? 2.2 : 1.2}
                       strokeDasharray={on ? undefined : "4 4"}
-                      opacity={sel && !hot ? 0.22 : 1}
+                      opacity={sel && !hot && !bandEdge ? 0.22 : 1}
                       markerEnd={hot ? "url(#arrHot)" : on ? "url(#arr)" : undefined}
                     />
                     {hot ? (
@@ -230,18 +245,34 @@ export function Cascade({
                 );
               })}
             </svg>
+            {layout.groups.map((g) => (
+              <button
+                key={g.band}
+                type="button"
+                className={["cband", g.band, band === g.band ? "sel" : ""].filter(Boolean).join(" ")}
+                style={{ left: g.x, top: g.y, width: g.w, height: g.h }}
+                aria-pressed={band === g.band}
+                aria-label={t(g.label)}
+                title={t(g.label)}
+                onClick={(ev) => {
+                  ev.stopPropagation();
+                  onSel(g.band === sel ? null : g.band);
+                }}
+              />
+            ))}
             {NODES.map((n) => {
               const box = boxById.get(n.id);
               if (!box) return null;
               const on = live.has(n.id);
+              const inBand = band != null && nodeBand(n.id) === band;
               const pid = pidTerms(n);
               const tune = isTuneNode(n);
               const later = isLaterNode(n);
               const cls = [
                 "cnode",
                 nodeBand(n.id),
-                sel === n.id ? "sel" : neighbors.has(n.id) ? "rel" : "",
-                on ? "" : "dim",
+                sel === n.id ? "sel" : inBand || neighbors.has(n.id) ? "rel" : "",
+                !on || (band != null && !inBand) ? "dim" : "",
                 pid.length ? "has-pid" : "",
                 tune ? "tune" : later ? "later" : pid.length ? "" : "struct",
                 axis === "d" && n.axes === "d" ? "d-on" : "",
@@ -281,11 +312,23 @@ export function Cascade({
           <span className="k-later">{t("sometimes · Loiter")}</span>
           <span className="k-struct">{t("not a regulator")}</span>
         </div>
-        <FrameGuide focus={axis === "d" ? "d" : node?.axes ?? null} />
+        <FrameGuide
+          focus={
+            band === "outer"
+              ? axis === "d"
+                ? "d"
+                : "ne"
+              : band === "inner"
+                ? "att"
+                : axis === "d"
+                  ? "d"
+                  : node?.axes ?? null
+          }
+        />
       </div>
       <div className="inspect">
         <div className="inspect-head">
-          <h2>{node ? t(node.title) : t("Why the loops are separate")}</h2>
+          <h2>{node ? t(node.title) : band ? t(BAND_LABEL[band]) : t("Why the loops are separate")}</h2>
           <button
             type="button"
             className={showAll ? "map-sw on" : "map-sw"}
@@ -345,6 +388,25 @@ export function Cascade({
               </div>
             ) : null}
           </>
+        ) : band ? (
+          <>
+            <div className={"kind " + band}>
+              {t(BAND_COPY[band].kind)} · {t(BAND_COPY[band].unit)}
+            </div>
+            <p>{t(BAND_COPY[band].does)}</p>
+            <p>{t(BAND_COPY[band].more)}</p>
+            <p className="trap">
+              <b>{t("typical")}</b> {t(BAND_COPY[band].trap)}
+            </p>
+            <div className="io">
+              {t("Loops")}
+              {NODES.filter((n) => nodeBand(n.id) === band).map((n) => (
+                <button type="button" key={n.id} onClick={() => onSel(n.id)}>
+                  {t(n.title)} · <b>{t(n.kind)}</b>
+                </button>
+              ))}
+            </div>
+          </>
         ) : (
           <>
             <p>
@@ -354,7 +416,7 @@ export function Cascade({
               {t("Autotune writes the same rate and angle blocks, from AltHold. If Loiter still weaves after that, NE velocity is the next knob — not Navigation.")}
             </p>
             <p>
-              {t("Stock Copter cascade: PosControl (PSC, outer) holds where to be, Attitude Control (ATC, inner) holds the angle.")}
+              {t("Stock Copter layers: PosControl (PSC) holds where to be, Attitude Control (ATC) holds the angle.")}
             </p>
             <p>
               {t("Motors cannot “turn to 10°” — only thrust. Thrust difference makes torque. So the attitude regulator (ATC_ANG) does not spin motors: from angle error it computes how fast to rotate toward the target and sets a rate command for the next loop. The rate regulator does that job: °/s error → mixer torque.")}
@@ -367,7 +429,7 @@ export function Cascade({
               {" "}
               {!showAll
                 ? t("In {mode}, inactive blocks are not closed now.", { mode: s.mode })
-                : t("All stock-cascade loops are visible now.")}
+                : t("All stock layers are visible now.")}
             </p>
           </>
         )}

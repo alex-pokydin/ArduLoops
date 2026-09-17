@@ -34,9 +34,11 @@ for (const file of walk(root)) {
 
 for (const rel of ["cascade.ts", "mav/axis.ts"]) {
   const src = readFileSync(join(root, rel), "utf8");
-  const re = /(?:title|kind|unit|does|trap|name|rateName):\s*"((?:\\.|[^"\\])*)"/g;
+  const re = /(?:title|kind|unit|does|trap|more|name|rateName):\s*"((?:\\.|[^"\\])*)"/g;
   let m;
-  while ((m = re.exec(src))) used.add(m[1]);
+  while ((m = re.exec(src))) {
+    if (m[1].length > 1) used.add(m[1]);
+  }
 }
 {
   const src = readFileSync(join(root, "mav/sim.ts"), "utf8");
