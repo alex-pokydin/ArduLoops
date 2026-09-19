@@ -77,13 +77,17 @@ Each SITL TCP port accepts **one** GCS. Do not run `npm run dev` and the desktop
 ## Desktop
 
 ```bash
-npm run build      # Windows installers (same UI as `dev`)
+npm run build      # native installers for this OS (same UI as `dev`)
 ```
 
-`npm run build` writes:
+On Windows that writes NSIS + MSI. On Linux: `.deb`, `.rpm` and AppImage (`--bundles deb,rpm,appimage`).
 
-- `src-tauri/target/release/bundle/nsis/ArduLoops_1.0.0_x64-setup.exe`
-- `src-tauri/target/release/bundle/msi/ArduLoops_1.0.0_x64_en-US.msi`
+GitHub Actions (`.github/workflows/release.yml`) builds the Linux packages and uploads them to the release. Local Linux needs the [Tauri v2 prerequisites](https://v2.tauri.app/start/prerequisites/#linux) (`libwebkit2gtk-4.1-dev`, …).
+
+Release assets:
+
+- `ArduLoops_1.0.0_x64-setup.exe` / `ArduLoops_1.0.0_x64_en-US.msi` — Windows
+- `.deb` / `.rpm` / `.AppImage` — Linux x86_64
 
 ## Options
 

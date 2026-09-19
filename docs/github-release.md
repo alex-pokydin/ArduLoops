@@ -2,12 +2,10 @@
 
 Paste this as the release body. Tag: `1.0.0`. Title: `ArduLoops 1.0.0`.
 
-Attach (after `npm run build`):
+Attach:
 
-- `ArduLoops_1.0.0_x64-setup.exe`
-- `ArduLoops_1.0.0_x64_en-US.msi`
-
-from `src-tauri/target/release/bundle/nsis/` and `…/bundle/msi`.
+- Windows (after `npm run build` on Windows): `ArduLoops_1.0.0_x64-setup.exe`, `ArduLoops_1.0.0_x64_en-US.msi`
+- Linux (GitHub Actions `Release` workflow): `.deb`, `.rpm`, `.AppImage`
 
 ---
 
@@ -22,9 +20,11 @@ HEARTBEAT mounts **copter** or **plane**. The stand starts SITL from the left ra
 - **Link** — UDP (`udpin` / `udpout`), recent URLs, SITL vs live-board badge, force disarm in air.
 - **Loop** — TECS and L1 internals with wiki copy. Clicking a map card stays on Map.
 
-### Install (Windows)
+### Install
 
-Download the NSIS setup or the MSI. Open **SITL**, pick a thumb, **Start** — or Link an existing vehicle.
+**Windows** — NSIS setup or MSI. **Linux** — `.deb`, `.rpm` or AppImage.
+
+Open **SITL**, pick a thumb, **Start** — or Link an existing vehicle. In-app SITL downloads the Mission Planner Windows sitl-exe, so on Linux you typically Link a SITL you started yourself.
 
 ### From source
 

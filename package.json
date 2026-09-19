@@ -5,6 +5,7 @@
   "scripts": {
     "dev": "node scripts/dev-web.mjs",
     "build": "node scripts/with-cargo.mjs tauri build",
+    "tauri": "node scripts/with-cargo.mjs tauri",
     "cli": "node scripts/arduloops-cli.mjs",
     "i18n": "node scripts/check-i18n.mjs",
     "web": "vite",
