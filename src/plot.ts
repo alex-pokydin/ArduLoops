@@ -151,29 +151,45 @@ export function sparkSeries(
   picks: Array<(s: Sample) => number | null>,
   w: number,
   h: number,
+  opts?: { fit?: "abs" | "band"; spanMin?: number },
 ): { ds: string[]; ymax: number } {
   const mid = h / 2;
   const t1 = buf.length ? buf[buf.length - 1].t : 0;
   const t0 = t1 - MAX_T;
+  const vals: number[] = [];
   let ymax = 0.05;
   for (const p of buf) {
+    if (p.t < t0) continue;
     for (const pick of picks) {
       const v = pick(p);
-      if (v != null && Number.isFinite(v)) ymax = Math.max(ymax, Math.abs(v));
+      if (v != null && Number.isFinite(v)) {
+        ymax = Math.max(ymax, Math.abs(v));
+        vals.push(v);
+      }
     }
   }
   ymax *= 1.25;
+  if (opts?.spanMin && opts.fit !== "band") ymax = Math.max(ymax, opts.spanMin);
+  let yOf = (v: number) => mid - (v / ymax) * (h * 0.42);
+  if (opts?.fit === "band" && vals.length) {
+    const lo = Math.min(...vals);
+    const hi = Math.max(...vals);
+    const minSpan = opts.spanMin ?? 1;
+    const c0 = (lo + hi) / 2;
+    const half = Math.max((hi - lo) / 2, minSpan / 2) * 1.25;
+    yOf = (v: number) => mid - ((v - c0) / half) * (h * 0.42);
+  }
   const x = (t: number) => ((t - t0) / MAX_T) * w;
-  const y = (v: number) => mid - (v / ymax) * (h * 0.42);
   const ds = picks.map((pick) => {
     let d = "";
     let started = false;
     for (const p of buf) {
+      if (p.t < t0) continue;
       const v = pick(p);
       if (v == null || !Number.isFinite(v)) continue;
       const cmd = started ? "L" : "M";
       started = true;
-      d += `${cmd}${x(p.t).toFixed(1)},${y(v).toFixed(1)} `;
+      d += `${cmd}${x(p.t).toFixed(1)},${yOf(v).toFixed(1)} `;
     }
     return d.trim();
   });

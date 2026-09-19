@@ -329,7 +329,7 @@ export function PlaneMap({
           <span className="k-later">{t("sometimes · after rate")}</span>
           <span className="k-struct">{t("dashed · no knobs")}</span>
         </div>
-        <PlaneGuide focus={band === "outer" ? "energy" : band === "inner" ? "att" : node?.axes ?? null} />
+        <PlaneGuide focus={node?.axes ?? null} band={band} />
       </div>
       <div className="inspect">
         <div className="inspect-head">

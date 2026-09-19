@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { paramOf } from "../components/GainRow";
-import { LoopLiveBox, LoopMixDot } from "../components/LoopPids";
+import { LoopFrame, LoopLiveBox, loopBoxHit, type LoopMark } from "../components/LoopPids";
 import { namedGains, SchemeDoc, SchemeKey, SchemeKnobs, schemeHit } from "../components/SchemeKnobs";
 import { useT } from "../i18n/i18n";
 import { isPaused } from "../mav/store";
@@ -107,8 +107,8 @@ function l1Doc(t: Phrase, pick: string | null): string[] {
       ];
     default:
       return [
-        t("The L1 controller looks a distance L1 ahead of the track and asks for a lateral acceleration, then a bank φ* = atan(a/g). That bank is nav_roll for the roll loop."),
-        t("L1 length is (1/π) · DAMPING · PERIOD · groundspeed, so the tracking loop keeps a constant period as speed changes. NAVL1_PERIOD is the main knob (wiki default around 17–20): smaller is a tighter turn. NAVL1_DAMPING adds extra damping for GPS lag and roll delay — unlikely you need it below 0.6."),
+        t("The circle of radius L1 is centred on the aircraft and meets the track at the L1 point. Nu is the angle from the velocity vector V to that point. PERIOD sets how long L1 is; it does not sit in the accel formula."),
+        t("Lateral acceleration a = K · V² / L1 · sin(Nu), then bank φ* = atan(a/g) = nav_roll. K = 4 · DAMPING². L1 = (1/π) · DAMPING · PERIOD · groundspeed, so the same PERIOD feels the same as speed changes."),
         t("Wiki: tune roll and pitch first, and set ROLL_LIMIT_DEG so the wing can hold the bank without stalling. Turns too slow: lower PERIOD by about 5. Weaving after a turn: raise PERIOD by 1–2. WP_RADIUS chooses fly-through vs turn-early."),
       ];
   }
@@ -134,8 +134,11 @@ function tecsDoc(t: Phrase, pick: string | null): string[] {
       ];
     case "w":
       return [
-        t("TECS_SPDWEIGHT: how much the pitch loop weights speed vs height errors. 0.0: pitch holds height and ignores speed. 2.0: pitch holds speed and ignores height (glider / soaring). 1.0: both. It is not a P. STE is always SPE + SKE. No effect without an airspeed estimate."),
-        t("The circle sits where the four arrows meet: height and speed each feed total energy and energy balance. Straight paths are each channel into itself; the diagonals are the cross."),
+        t("TECS_SPDWEIGHT (W) is not a P. It only weights the pitch trade (SEB). Throttle still holds total energy STE = SPE + SKE — W does not go into STE. Without an airspeed estimate W is forced to 0."),
+        t("A stick jab in FBWB is a climb-rate pulse — two TIME_CONST humps, the same at any W. Hold elevator for several seconds, or change speed with the throttle stick and leave elevator centered: W = 0 keeps height (speed sags), W = 2 keeps speed (height wanders)."),
+        t("0 — height. Pitch holds altitude and ignores speed. A powered plane in a valley, a landing pattern, or any flight where not sinking matters more than a few m/s of airspeed. Throttle then looks after speed, because pitch already took height."),
+        t("1 — both (stock). Pitch shares height and speed. Start here on a powered plane with an airspeed sensor in AUTO / FBWB / CRUISE / RTL. Usual cruise: stay on the altitude line without letting speed wander."),
+        t("2 — speed. Pitch holds airspeed and ignores height. A glider, or soaring: climb from rising air (thermal, ridge, wave), not from the motor. Pitch keeps a safe glide speed; height comes from the air. Also when stall or overspeed would be worse than being off altitude."),
       ];
     case "ste":
       return [
@@ -165,10 +168,76 @@ function tecsDoc(t: Phrase, pick: string | null): string[] {
       return [
         t("TECS (Total Energy Control System) coordinates throttle and pitch to hold height and airspeed. The aircraft has two mechanical energies: gravitational potential (mass × g × height) and kinetic (½ × mass × speed²). Drag always takes energy; only thrust or a thermal puts it back."),
         t("Total energy is their sum. TECS sets throttle to hold that total. Pitch does not add energy — it trades height for speed. If you are high and slow, total energy can still be right: too much potential, not enough kinetic. Lower the nose to move energy into speed."),
-        t("W (TECS_SPDWEIGHT) sits at the four-arrow crossing. It is how much pitch listens to speed vs height: 0 height, 1 both (stock), 2 speed (glider). STE does not use W. TECS_TIME_CONST is how quickly the energy error is chased — time, not a mix."),
+        t("W (TECS_SPDWEIGHT) is the slider on the pitch trade: 0 height, 1 both (stock), 2 speed (glider). STE does not use W — throttle always holds the sum. TECS_TIME_CONST is how quickly the energy error is chased — time, not a mix."),
         t("Wiki: tune the pitch-to-servo loop in FBWA first. If height then oscillates, raise TECS_TIME_CONST (do not go past 10). TECS is live in AUTO / FBWB / CRUISE / RTL / LOITER, not FBWA or MANUAL."),
       ];
   }
+}
+
+function LoopChip({
+  x,
+  y,
+  w,
+  h,
+  title,
+  value,
+  stroke,
+  mark,
+  step,
+  picked,
+  onPick,
+}: {
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+  title: string;
+  value?: string;
+  stroke: string;
+  mark?: LoopMark;
+  step?: string;
+  picked: boolean;
+  onPick: () => void;
+}) {
+  return (
+    <g {...loopBoxHit(onPick)}>
+      <LoopFrame x={x} y={y} w={w} h={h} rx={6} color={stroke} mark={mark} picked={picked} />
+      {step ? (
+        <text x={x + 10} y={y + h / 2 + 4} fill={stroke} fontSize="11" fontWeight="700">
+          {step}
+        </text>
+      ) : null}
+      <text x={x + (step ? 26 : 10)} y={y + h / 2 + 4} fill={COL.dim} fontSize="11" fontWeight="700">
+        {title}
+      </text>
+      {value != null ? (
+        <text x={x + w - 8} y={y + h / 2 + 4} textAnchor="end" fill={stroke} fontSize="11" fontWeight="700">
+          {value}
+        </text>
+      ) : null}
+    </g>
+  );
+}
+
+function L1Plane() {
+  return (
+    <g fill="#1a1e24" stroke="currentColor" strokeWidth="1.6" strokeLinejoin="round">
+      <polygon points="0,-26 -4,-13 4,-13" />
+      <rect x="-3.4" y="-13" width="6.8" height="38" rx="2" />
+      <polygon points="-38,-1 0,-10 38,-1 0,5" />
+      <polygon points="-12,17 0,14 12,17 0,23" />
+    </g>
+  );
+}
+
+function TecsPlane() {
+  return (
+    <g fill="#1a1e24" stroke="currentColor" strokeWidth="1.55" strokeLinejoin="round">
+      <polygon points="-40,4 -34,-18 -24,4" />
+      <polygon points="-42,-5.5 28,-5.5 50,0 28,5.5 -42,5.5" />
+      <polygon points="-12,5.5 28,5.5 18,16 -10,16" />
+    </g>
+  );
 }
 
 export function L1Scheme({ onPause, embed }: { onPause: () => void; embed?: boolean }) {
@@ -184,8 +253,34 @@ export function L1Scheme({ onPause, embed }: { onPause: () => void; embed?: bool
   const hit = (id: string) => schemeHit(id, pick, setPick);
   const knobs = namedGains(
     [L1.gains],
-    pick === "l1" || pick === "ay" ? ["NAVL1_PERIOD", "NAVL1_DAMPING"] : pick === "t" ? ["NAVL1_PERIOD"] : pick === "k" ? ["NAVL1_DAMPING"] : [],
+    pick === "l1" ? ["NAVL1_PERIOD", "NAVL1_DAMPING"] : pick === "t" ? ["NAVL1_PERIOD"] : pick === "k" ? ["NAVL1_DAMPING"] : [],
   );
+  const knobNode = pick === "t" || pick === "k" || pick === "l1" ? { ...L1, gains: [] } : L1;
+
+  const PX = 190;
+  const PY = 248;
+  const hd = (32 * Math.PI) / 180;
+  const vx = Math.sin(hd);
+  const vy = -Math.cos(hd);
+  const L1X = 428;
+  const L1Y = 84;
+  const rL = Math.hypot(L1X - PX, L1Y - PY);
+  const aL = Math.atan2(L1Y - PY, L1X - PX);
+  const aArc = aL - 0.38;
+  const arcX = PX + rL * Math.cos(aArc);
+  const arcY = PY + rL * Math.sin(aArc);
+  const vLen = 74;
+  const vX = PX + vx * vLen;
+  const vY = PY + vy * vLen;
+  const nuR = 54;
+  const nuVx = PX + vx * nuR;
+  const nuVy = PY + vy * nuR;
+  const nuLx = PX + Math.cos(aL) * nuR;
+  const nuLy = PY + Math.sin(aL) * nuR;
+  const xtrackOn = pick === "xtrack";
+  const nuOn = pick === "nu";
+  const l1On = pick === "l1" || pick === "t";
+  const vOn = pick === "gspd";
 
   return (
     <div className={embed ? "loop embed" : "loop"}>
@@ -198,11 +293,12 @@ export function L1Scheme({ onPause, embed }: { onPause: () => void; embed?: bool
       )}
       <div className="plot-head">
         <b>{t("L1 · track → bank")}</b>
-        <span>{t("Looks a distance L1 ahead, asks for lateral accel, then bank via atan(a/g). Period smaller = tighter.")}</span>
+        <span>{t("1 look ahead → 2 Nu → 3 accel → 4 bank. Solid left edge is a knob.")}</span>
         <button type="button" className={paused ? "pause-btn on" : "pause-btn"} onClick={onPause} title={t("Space")}>
           {paused ? t("Resume") : t("Pause")}
         </button>
       </div>
+      <SchemeKey />
       <div className={!s.ok ? "loop-board idle" : paused ? "loop-board paused" : "loop-board"} onClick={() => setPick(null)}>
         <svg viewBox="0 0 900 330" preserveAspectRatio="xMidYMid meet" role="img" aria-label={t("L1 track")}>
           <defs>
@@ -216,118 +312,163 @@ export function L1Scheme({ onPause, embed }: { onPause: () => void; embed?: bool
               <polygon points="0 0, 7 3.5, 0 7" fill={COL.cyan} />
             </marker>
           </defs>
-          <LoopLiveBox
-            x={10}
-            y={48}
-            w={150}
-            h={88}
-            stroke={COL.dim}
+          <text x="36" y="22" fill={COL.dim} fontSize="11">
+            {t("track")}
+          </text>
+          <line
+            x1="36"
+            y1="84"
+            x2="548"
+            y2="84"
+            stroke={xtrackOn ? COL.amber : COL.line}
+            strokeWidth={xtrackOn ? 2 : 1.4}
+            strokeDasharray="7 5"
+          />
+          <circle cx="48" cy="84" r="3.2" fill={xtrackOn ? COL.amber : COL.dim} stroke="none" />
+          <circle cx="536" cy="84" r="3.2" fill={xtrackOn ? COL.amber : COL.dim} stroke="none" />
+          <line
+            x1={PX}
+            y1={PY}
+            x2={PX}
+            y2="84"
+            stroke={xtrackOn ? COL.amber : COL.line}
+            strokeWidth={xtrackOn ? 2 : 1.3}
+            strokeDasharray="4 3"
+          />
+          <path
+            d={`M ${arcX.toFixed(1)} ${arcY.toFixed(1)} A ${rL.toFixed(1)} ${rL.toFixed(1)} 0 0 1 ${L1X} ${L1Y}`}
+            fill="none"
+            stroke={l1On ? COL.amber : "#5a4a32"}
+            strokeWidth={l1On ? 2 : 1.3}
+            strokeDasharray="5 4"
+          />
+          <line x1={PX} y1={PY} x2={L1X} y2={L1Y} stroke={COL.amber} strokeWidth={l1On ? 2.4 : 1.7} />
+          <circle cx={L1X} cy={L1Y} r="5" fill={COL.amber} stroke="#0c0e11" strokeWidth="1.2" />
+          <line
+            x1={PX}
+            y1={PY}
+            x2={vX}
+            y2={vY}
+            stroke={vOn ? COL.cyan : COL.amber}
+            strokeWidth={vOn ? 2.4 : 1.8}
+            strokeLinecap="round"
+            markerEnd="url(#l1ArrC)"
+          />
+          <path
+            d={`M ${nuVx.toFixed(1)} ${nuVy.toFixed(1)} A ${nuR} ${nuR} 0 0 1 ${nuLx.toFixed(1)} ${nuLy.toFixed(1)}`}
+            fill="none"
+            stroke={nuOn ? COL.amber : COL.dim}
+            strokeWidth={nuOn ? 2.4 : 1.6}
+          />
+          <g transform={`translate(${PX} ${PY}) rotate(32)`} color={COL.amber} pointerEvents="none">
+            <L1Plane />
+          </g>
+          <LoopChip
+            x={8}
+            y={96}
+            w={128}
+            h={32}
             title={t("cross-track")}
-            sub={t("not on this MAVLink sample")}
-            value="—"
-            pick={() => null}
+            stroke={COL.dim}
             mark="struct"
             {...hit("xtrack")}
           />
-          <LoopLiveBox
-            x={10}
-            y={194}
-            w={150}
-            h={88}
-            stroke={COL.cyan}
-            title={t("groundspeed")}
-            sub="VFR_HUD"
+          <LoopChip
+            x={8}
+            y={218}
+            w={128}
+            h={32}
+            title="V"
             value={s.gspd == null ? "—" : `${fmt(s.gspd, 1)} m/s`}
-            pick={(p) => p.gspd}
+            stroke={COL.cyan}
             mark="struct"
             {...hit("gspd")}
           />
-          <path d="M 160 92 L 186 92" fill="none" stroke={COL.line} strokeWidth="1.5" markerEnd="url(#l1Arr)" />
-          <path d="M 160 238 L 186 238" fill="none" stroke={COL.cyan} strokeWidth="1.5" markerEnd="url(#l1ArrC)" />
-          <LoopLiveBox
-            x={186}
-            y={48}
-            w={140}
-            h={88}
-            stroke={COL.dim}
+          <LoopChip
+            x={248}
+            y={210}
+            w={96}
+            h={32}
+            step="2"
             title="Nu"
-            sub={t("to L1 point")}
-            value="—"
-            pick={() => null}
+            stroke={COL.dim}
             mark="struct"
             {...hit("nu")}
           />
-          <LoopLiveBox
-            x={186}
-            y={194}
-            w={140}
-            h={88}
+          <LoopChip
+            x={248}
+            y={128}
+            w={156}
+            h={34}
+            title="PERIOD"
+            value={per == null ? "—" : `${fmt(per, 1)} s`}
             stroke={COL.amber}
-            title="L1"
-            sub={t("(1/pi)·DAMP·PERIOD·V")}
-            value={l1 == null ? "—" : `${fmt(l1, 0)} m`}
-            pick={(p) => l1DistOf(paramOf(p, "NAVL1_DAMPING"), paramOf(p, "NAVL1_PERIOD"), p.gspd)}
-            mark="tune"
-            {...hit("l1")}
-          />
-          <path d="M 326 92 L 364 92" fill="none" stroke={COL.line} strokeWidth="1.4" markerEnd="url(#l1Arr)" />
-          <path d="M 326 222 L 364 108" fill="none" stroke={COL.line} strokeWidth="1.2" markerEnd="url(#l1Arr)" />
-          <path d="M 443 194 L 443 136" fill="none" stroke={COL.line} strokeWidth="1.2" markerEnd="url(#l1Arr)" />
-          <LoopMixDot
-            cx={345}
-            cy={165}
-            stroke={COL.amber}
-            label="T"
-            value={fmt(per, 0)}
             mark="tune"
             {...hit("t")}
           />
-          <LoopLiveBox
-            x={364}
-            y={48}
-            w={158}
-            h={88}
+          <LoopChip
+            x={L1X - 20}
+            y={8}
+            w={168}
+            h={34}
+            step="1"
+            title="L1"
+            value={l1 == null ? "—" : `${fmt(l1, 0)} m`}
             stroke={COL.amber}
-            title={t("lateral accel")}
+            mark="struct"
+            {...hit("l1")}
+          />
+          <path
+            d={`M ${L1X + 18} ${L1Y + 8} L 608 80`}
+            fill="none"
+            stroke={COL.amber}
+            strokeWidth="1.5"
+            markerEnd="url(#l1ArrA)"
+          />
+          <LoopChip
+            x={608}
+            y={6}
+            w={160}
+            h={34}
+            title="DAMP"
+            value={fmt(damp, 2)}
+            stroke={COL.amber}
+            mark="later"
+            {...hit("k")}
+          />
+          <LoopLiveBox
+            x={608}
+            y={46}
+            w={272}
+            h={72}
+            stroke={COL.amber}
+            title={`3 · ${t("lateral accel")}`}
             sub={t("K · V² / L1 · sin(Nu)")}
             value="—"
             pick={() => null}
-            mark="tune"
+            mark="struct"
             {...hit("ay")}
           />
+          <path d="M 744 118 L 744 130" fill="none" stroke={COL.amber} strokeWidth="1.5" markerEnd="url(#l1ArrA)" />
           <LoopLiveBox
-            x={364}
-            y={194}
-            w={158}
-            h={88}
+            x={608}
+            y={132}
+            w={272}
+            h={72}
             stroke={COL.amber}
-            title="K"
-            sub={t("4 · DAMP²")}
-            value={fmt(k, 2)}
-            pick={(p) => kL1Of(paramOf(p, "NAVL1_DAMPING"))}
-            mark="tune"
-            {...hit("k")}
-          />
-          <path d="M 522 92 L 548 92" fill="none" stroke={COL.amber} strokeWidth="1.5" markerEnd="url(#l1ArrA)" />
-          <LoopLiveBox
-            x={548}
-            y={48}
-            w={140}
-            h={88}
-            stroke={COL.amber}
-            title={t("desired roll")}
+            title={`4 · ${t("desired roll")}`}
             sub="nav_roll · atan(a/g)"
             value={`${fmt(s.tar, 1)}°`}
             pick={(p) => p.tar}
             mark="struct"
             {...hit("bank")}
           />
-          <path d="M 688 92 L 714 92" fill="none" stroke={COL.line} strokeWidth="1.5" markerEnd="url(#l1Arr)" />
+          <path d="M 744 204 L 744 216" fill="none" stroke={COL.line} strokeWidth="1.5" markerEnd="url(#l1Arr)" />
           <LoopLiveBox
-            x={714}
-            y={48}
-            w={174}
-            h={88}
+            x={608}
+            y={218}
+            w={272}
+            h={72}
             stroke={COL.cyan}
             title={t("roll loop")}
             sub="ATTITUDE.roll"
@@ -338,7 +479,6 @@ export function L1Scheme({ onPause, embed }: { onPause: () => void; embed?: bool
           />
         </svg>
       </div>
-      <SchemeKey />
       <div className="loop-rest">
         <div className="loop-form">
           <div className="frow">
@@ -372,7 +512,7 @@ export function L1Scheme({ onPause, embed }: { onPause: () => void; embed?: bool
             <b>{`${fmt(s.tar, 1)}°`}</b>
           </div>
         </div>
-        <SchemeKnobs node={L1} gains={knobs} picked={pick} quiet />
+      <SchemeKnobs node={knobNode} gains={knobs} picked={pick} quiet />
         <SchemeDoc lines={l1Doc(t, pick)} href={L1_WIKI} wiki={t("L1 navigation")} />
       </div>
     </div>
@@ -412,6 +552,11 @@ function steOf(alt: number | null | undefined, v: number | null | undefined): nu
   return pe == null || ke == null ? null : pe + ke;
 }
 
+function energyFrac(v: number | null, typical: number): number {
+  if (v == null || Number.isNaN(v) || typical <= 0) return 0.5;
+  return Math.min(0.92, Math.max(0.16, v / typical));
+}
+
 function sebOf(alt: number | null | undefined, v: number | null | undefined, w: number | null): number | null {
   const pe = speOf(alt);
   const ke = skeOf(v);
@@ -426,7 +571,6 @@ export function TecsScheme({ onPause, embed }: { onPause: () => void; embed?: bo
   const live = nodesLiveIn(s.mode, s).has("tecs");
   const w = paramOf(s, "TECS_SPDWEIGHT");
   const tc = paramOf(s, "TECS_TIME_CONST");
-  const hErr = s.alt_tar != null && s.alt != null ? s.alt_tar - s.alt : null;
   const spe = speOf(s.alt);
   const ske = skeOf(s.aspd);
   const ste = steOf(s.alt, s.aspd);
@@ -434,6 +578,38 @@ export function TecsScheme({ onPause, embed }: { onPause: () => void; embed?: bo
   const [pick, setPick] = useState<string | null>(null);
   const hit = (id: string) => schemeHit(id, pick, setPick);
   const knobs = namedGains([TECS_POOL], tecsKnobKeys(pick));
+  const knobNode = pick === "w" || pick === "ste" || pick === "seb" ? { ...TECS, gains: [] } : TECS;
+  const wVal = w == null || Number.isNaN(w) ? 1 : Math.min(2, Math.max(0, w));
+  const knobX = 352;
+  const wX0 = knobX;
+  const wX2 = knobX + 148;
+  const wY = 130;
+  const wFx = wX0 + (wVal / 2) * (wX2 - wX0);
+  const PX = 132;
+  const PY = 196;
+  const GND = 286;
+  const planeScale = 1.58;
+  const noseX = PX + 50 * planeScale;
+  const speX = 28;
+  const speW = 20;
+  const speTop = 8;
+  const speTankH = GND - speTop;
+  const speFillH = GND - PY;
+  const vArrow = 78;
+  const skeX = noseX + 6;
+  const skeY = PY - 38;
+  const skeH = 18;
+  const skeMaxW = 72;
+  const skeFillW = skeMaxW * energyFrac(ske, 350);
+  const tcW = 124;
+  const tcH = 28;
+  const tcY = 36;
+  const tcCy = tcY + tcH / 2;
+  const skeRight = skeX + skeMaxW;
+  const hOn = pick === "herr" || pick === "spe";
+  const vOn = pick === "aspd" || pick === "ske";
+  const wOn = pick === "w" || pick === "seb";
+  const addOn = pick === "ste" || pick === "thr";
 
   return (
     <div className={embed ? "loop embed" : "loop"}>
@@ -446,17 +622,15 @@ export function TecsScheme({ onPause, embed }: { onPause: () => void; embed?: bo
       )}
       <div className="plot-head">
         <b>{t("TECS · energy → pitch + throttle")}</b>
-        <span>{t("Throttle holds total energy. Pitch only trades height for speed. W is the mix, not a P.")}</span>
+        <span>{t("1 height · 2 speed → W mix → 3 throttle adds, 4 pitch trades. Solid left edge is a knob.")}</span>
         <button type="button" className={paused ? "pause-btn on" : "pause-btn"} onClick={onPause} title={t("Space")}>
           {paused ? t("Resume") : t("Pause")}
         </button>
       </div>
+      <SchemeKey />
       <div className={!s.ok ? "loop-board idle" : paused ? "loop-board paused" : "loop-board"} onClick={() => setPick(null)}>
-        <svg viewBox="0 0 900 330" preserveAspectRatio="xMidYMid meet" role="img" aria-label={t("TECS energy")}>
+        <svg viewBox="0 0 900 300" preserveAspectRatio="xMidYMid meet" role="img" aria-label={t("TECS energy")}>
           <defs>
-            <marker id="tecsArr" markerWidth="7" markerHeight="7" refX="6" refY="3.5" orient="auto">
-              <polygon points="0 0, 7 3.5, 0 7" fill={COL.line} />
-            </marker>
             <marker id="tecsArrA" markerWidth="7" markerHeight="7" refX="6" refY="3.5" orient="auto">
               <polygon points="0 0, 7 3.5, 0 7" fill={COL.amber} />
             </marker>
@@ -464,147 +638,248 @@ export function TecsScheme({ onPause, embed }: { onPause: () => void; embed?: bo
               <polygon points="0 0, 7 3.5, 0 7" fill={COL.cyan} />
             </marker>
           </defs>
+          <line x1="16" y1={GND} x2="360" y2={GND} stroke={COL.line} strokeWidth="1.2" strokeDasharray="5 4" />
+          <g {...loopBoxHit(hit("spe").onPick)}>
+            <rect
+              x={speX}
+              y={speTop}
+              width={speW}
+              height={speTankH}
+              rx="3"
+              fill="#2a2014"
+              stroke={COL.amber}
+              strokeWidth={hOn ? 2 : 1.3}
+              strokeDasharray={hOn ? undefined : "4 3"}
+            />
+            <rect
+              x={speX + 2}
+              y={GND - speFillH}
+              width={speW - 4}
+              height={speFillH - 2}
+              rx="2"
+              fill={COL.amber}
+              opacity="0.55"
+              stroke="none"
+            />
+            <text x={speX + speW + 6} y={speTop + 16} fill={hOn ? COL.amber : COL.dim} fontSize="11" fontWeight="700">
+              SPE
+            </text>
+            <text x={speX + speW + 6} y={speTop + 28} fill={COL.amber} fontSize="10">
+              h
+            </text>
+            <line
+              x1={speX + speW}
+              y1={PY}
+              x2={PX - 70}
+              y2={PY}
+              stroke={COL.amber}
+              strokeWidth="1.1"
+              strokeDasharray="3 3"
+            />
+          </g>
+          <g {...loopBoxHit(hit("ske").onPick)}>
+            <rect
+              x={skeX}
+              y={skeY}
+              width={skeMaxW}
+              height={skeH}
+              rx="3"
+              fill="#102028"
+              stroke={COL.cyan}
+              strokeWidth={vOn ? 2 : 1.3}
+              strokeDasharray={vOn ? undefined : "4 3"}
+            />
+            <rect
+              x={skeX + 2}
+              y={skeY + 2}
+              width={Math.max(4, skeFillW - 2)}
+              height={skeH - 4}
+              rx="2"
+              fill={COL.cyan}
+              opacity="0.55"
+              stroke="none"
+            />
+            <text x={skeX} y={skeY - 5} fill={vOn ? COL.cyan : COL.dim} fontSize="11" fontWeight="700">
+              SKE
+            </text>
+            <text x={skeX + 36} y={skeY - 5} fill={COL.dim} fontSize="10">
+              {t("½ V²")}
+            </text>
+          </g>
+          <g transform={`translate(${PX} ${PY}) scale(${planeScale})`} color={COL.amber} pointerEvents="none">
+            <TecsPlane />
+          </g>
+          <g pointerEvents="none">
+            <line
+              x1={noseX}
+              y1={PY}
+              x2={noseX + vArrow}
+              y2={PY}
+              stroke={COL.cyan}
+              strokeWidth="2"
+              markerEnd="url(#tecsArrC)"
+            />
+          </g>
           <LoopLiveBox
-            x={10}
-            y={48}
-            w={150}
-            h={88}
+            x={speX + speW + 8}
+            y={86}
+            w={132}
+            h={56}
             stroke={COL.amber}
-            title={t("height error")}
-            sub={`AGL ${fmt(s.alt, 1)} m`}
-            value={`${fmt(hErr, 1)} m`}
-            pick={(p) => (p.alt_tar != null && p.alt != null ? p.alt_tar - p.alt : null)}
+            title={`1 · ${t("height")}`}
+            value={s.alt == null ? "—" : `${fmt(s.alt, 0)} m`}
+            pick={(p) => (p.alt != null && p.alt_tar != null ? p.alt - p.alt_tar : p.alt)}
+            fit="abs"
+            spanMin={8}
             mark="later"
             {...hit("herr")}
           />
           <LoopLiveBox
-            x={10}
-            y={194}
-            w={150}
-            h={88}
+            x={skeX}
+            y={PY + 32}
+            w={132}
+            h={52}
             stroke={COL.cyan}
-            title={t("airspeed")}
-            sub="VFR_HUD"
+            title="2 · V"
             value={s.aspd == null ? "—" : `${fmt(s.aspd, 1)} m/s`}
-            pick={(p) => p.aspd}
+            pick={(p) => {
+              const v = p.aspd;
+              const c = p.params.AIRSPEED_CRUISE;
+              if (v == null) return null;
+              return c == null || Number.isNaN(c) ? v : v - c;
+            }}
+            fit="abs"
+            spanMin={4}
             mark="later"
             {...hit("aspd")}
           />
-          <path d="M 160 92 L 186 92" fill="none" stroke={COL.amber} strokeWidth="1.5" markerEnd="url(#tecsArrA)" />
-          <path d="M 160 238 L 186 238" fill="none" stroke={COL.cyan} strokeWidth="1.5" markerEnd="url(#tecsArrC)" />
-          <LoopLiveBox
-            x={186}
-            y={48}
-            w={128}
-            h={88}
-            stroke={COL.amber}
-            title="SPE"
-            sub={t("g · height")}
-            value={fmt(spe, 0)}
-            pick={(p) => speOf(p.alt)}
-            mark="struct"
-            {...hit("spe")}
+          <path
+            d={`M ${speX + speW} ${tcCy} H ${knobX}`}
+            fill="none"
+            stroke={addOn ? COL.amber : COL.line}
+            strokeWidth="1.4"
           />
-          <LoopLiveBox
-            x={186}
-            y={194}
-            w={128}
-            h={88}
-            stroke={COL.cyan}
-            title="SKE"
-            sub={t("½ V²")}
-            value={fmt(ske, 0)}
-            pick={(p) => skeOf(p.aspd)}
-            mark="struct"
-            {...hit("ske")}
+          <path
+            d={`M ${skeRight} ${skeY} V ${tcCy} H ${knobX}`}
+            fill="none"
+            stroke={addOn ? COL.cyan : COL.line}
+            strokeWidth="1.4"
           />
-          <path d="M 314 92 L 348 92" fill="none" stroke={COL.line} strokeWidth="1.4" markerEnd="url(#tecsArr)" />
-          <path d="M 314 238 L 348 238" fill="none" stroke={COL.line} strokeWidth="1.4" markerEnd="url(#tecsArr)" />
-          <path d="M 314 108 L 348 222" fill="none" stroke={COL.line} strokeWidth="1.2" />
-          <path d="M 314 222 L 348 108" fill="none" stroke={COL.line} strokeWidth="1.2" markerEnd="url(#tecsArr)" />
-          <LoopMixDot
-            cx={331}
-            cy={165}
+          <circle cx={skeRight} cy={tcCy} r="3.5" fill={addOn ? COL.amber : COL.line} stroke="#0c0e11" strokeWidth="1" />
+          <text x={skeRight} y={tcCy - 10} textAnchor="middle" fill={addOn ? COL.amber : COL.dim} fontSize="11" fontWeight="700">
+            Σ {t("add")}
+          </text>
+          <path
+            d={`M ${knobX + tcW} ${tcCy} H 546`}
+            fill="none"
+            stroke={addOn ? COL.amber : COL.line}
+            strokeWidth="1.4"
+            markerEnd="url(#tecsArrA)"
+          />
+          <LoopChip
+            x={knobX}
+            y={tcY}
+            w={tcW}
+            h={tcH}
+            title="TIME_CONST"
+            value={tc == null ? "—" : `${fmt(tc, 1)} s`}
             stroke={COL.amber}
-            label="W"
+            mark="later"
+            {...hit("ste")}
+          />
+          <LoopChip
+            x={knobX}
+            y={92}
+            w={124}
+            h={28}
+            title="W"
             value={fmt(w, 1)}
+            stroke={COL.amber}
             mark="tune"
             {...hit("w")}
           />
-          <LoopLiveBox
-            x={348}
-            y={48}
-            w={162}
-            h={88}
-            stroke={COL.amber}
-            title="STE · Σ"
-            sub={t("total → throttle")}
-            value={fmt(ste, 0)}
-            pick={(p) => steOf(p.alt, p.aspd)}
-            mark="tune"
-            {...hit("ste")}
+          <g {...loopBoxHit(hit("w").onPick)}>
+            <rect x={wX0 - 10} y={wY - 16} width={wX2 - wX0 + 20} height={36} fill="transparent" />
+            <line
+              x1={wX0}
+              y1={wY}
+              x2={wX2}
+              y2={wY}
+              stroke={wOn ? COL.amber : COL.line}
+              strokeWidth={wOn ? 2.2 : 1.5}
+            />
+            <line x1={wX0} y1={wY - 6} x2={wX0} y2={wY + 6} stroke={COL.dim} strokeWidth="1.3" />
+            <line x1={(wX0 + wX2) / 2} y1={wY - 4} x2={(wX0 + wX2) / 2} y2={wY + 4} stroke={COL.dim} strokeWidth="1.1" />
+            <line x1={wX2} y1={wY - 6} x2={wX2} y2={wY + 6} stroke={COL.dim} strokeWidth="1.3" />
+            <circle cx={wX0} cy={wY} r="4.5" fill={COL.amber} stroke="#0c0e11" strokeWidth="1.1" />
+            <circle cx={wX2} cy={wY} r="4.5" fill={COL.cyan} stroke="#0c0e11" strokeWidth="1.1" />
+            <polygon
+              points={`${wFx},${wY - 9} ${wFx - 7},${wY + 5} ${wFx + 7},${wY + 5}`}
+              fill={COL.amber}
+              stroke="#0c0e11"
+              strokeWidth="1"
+            />
+            <text x={wX0} y={wY + 18} textAnchor="middle" fill={COL.dim} fontSize="10">
+              0
+            </text>
+            <text x={wX2} y={wY + 18} textAnchor="middle" fill={COL.dim} fontSize="10">
+              2
+            </text>
+          </g>
+          <path
+            d={`M ${knobX + 124} 106 L 522 106 L 546 118`}
+            fill="none"
+            stroke={wOn ? COL.amber : COL.line}
+            strokeWidth="1.4"
+            markerEnd="url(#tecsArrA)"
           />
+          <text x="498" y="98" fill={wOn ? COL.amber : COL.dim} fontSize="11" fontWeight="700">
+            {t("trade")}
+          </text>
           <LoopLiveBox
-            x={348}
-            y={194}
-            w={162}
-            h={88}
+            x={548}
+            y={16}
+            w={336}
+            h={68}
             stroke={COL.amber}
-            title="SEB · Δ"
-            sub={t("W mix → pitch")}
-            value={fmt(seb, 0)}
-            pick={(p) => sebOf(p.alt, p.aspd, paramOf(p, "TECS_SPDWEIGHT"))}
-            mark="later"
-            {...hit("seb")}
-          />
-          <path d="M 510 92 L 536 92" fill="none" stroke={COL.line} strokeWidth="1.5" markerEnd="url(#tecsArr)" />
-          <path d="M 510 238 L 536 238" fill="none" stroke={COL.amber} strokeWidth="1.5" markerEnd="url(#tecsArrA)" />
-          <LoopLiveBox
-            x={536}
-            y={48}
-            w={140}
-            h={88}
-            stroke={COL.amber}
-            title={t("throttle")}
-            sub={`TC ${fmt(tc, 1)} · VFR_HUD`}
+            title={`3 · ${t("throttle")}`}
+            sub={`STE ${fmt(ste, 0)} · ${t("total → throttle")}`}
             value={`${fmt(s.thr_out, 0)}%`}
             pick={(p) => p.thr_out}
             mark="later"
             {...hit("thr")}
           />
           <LoopLiveBox
-            x={536}
-            y={194}
-            w={140}
-            h={88}
+            x={548}
+            y={96}
+            w={336}
+            h={68}
             stroke={COL.amber}
-            title={t("desired pitch")}
-            sub="nav_pitch"
+            title={`4 · ${t("desired pitch")}`}
+            sub={`SEB ${fmt(seb, 0)} · nav_pitch`}
             value={`${fmt(s.pitch_tar, 1)}°`}
             pick={(p) => p.pitch_tar}
             mark="later"
             {...hit("pitch")}
           />
-          <path d="M 676 92 L 702 92" fill="none" stroke={COL.line} strokeWidth="1.5" markerEnd="url(#tecsArr)" />
-          <path d="M 676 238 L 702 238" fill="none" stroke={COL.line} strokeWidth="1.5" markerEnd="url(#tecsArr)" />
           <LoopLiveBox
-            x={702}
-            y={48}
-            w={186}
-            h={88}
+            x={548}
+            y={176}
+            w={160}
+            h={68}
             stroke={COL.cyan}
             title={t("plant")}
             sub={t("engine / air")}
-            value={`${fmt(s.aspd, 1)} m/s`}
+            value={s.aspd == null ? "—" : `${fmt(s.aspd, 1)} m/s`}
             pick={(p) => p.aspd}
             mark="struct"
             {...hit("plant")}
           />
           <LoopLiveBox
-            x={702}
-            y={194}
-            w={186}
-            h={88}
+            x={724}
+            y={176}
+            w={160}
+            h={68}
             stroke={COL.cyan}
             title={t("pitch loop")}
             sub="ATTITUDE.pitch"
@@ -615,7 +890,7 @@ export function TecsScheme({ onPause, embed }: { onPause: () => void; embed?: bo
           />
         </svg>
       </div>
-      <SchemeKey />
+
       <div className="loop-rest">
         <div className="loop-form">
           <div className="frow">
@@ -644,7 +919,7 @@ export function TecsScheme({ onPause, embed }: { onPause: () => void; embed?: bo
             <b>{fmt(w, 1)}</b>
           </div>
         </div>
-        <SchemeKnobs node={TECS} gains={knobs} picked={pick} quiet />
+        <SchemeKnobs node={knobNode} gains={knobs} picked={pick} quiet />
         <SchemeDoc lines={tecsDoc(t, pick)} href={TECS_WIKI} wiki={t("TECS speed/height")} />
       </div>
     </div>

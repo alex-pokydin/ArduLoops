@@ -455,6 +455,7 @@ html[lang="uk"] .loop-board.idle::after { content: "стоп"; }
   );
 }
 .loop { flex: 1; min-height: 0; display: flex; flex-direction: column; gap: 8px; overflow: hidden; }
+.loop .warn { flex: none; margin: 0; font-size: 11px; line-height: 1.35; color: var(--amber); }
 .loop.embed { flex: 0 1 auto; overflow: auto; max-height: 58%; }
 .loop-svg { width: 100%; height: auto; max-height: 240px; display: block; }
 .loop-traces { flex: 1; min-height: 140px; overflow: auto; display: flex; flex-direction: column; gap: 4px; }
@@ -463,6 +464,7 @@ html[lang="uk"] .loop-board.idle::after { content: "стоп"; }
   display: flex; justify-content: center; align-items: center; }
 .loop-board g[role="button"],
 .loop-svg g[role="button"] { cursor: pointer; }
+.loop-board g[role="button"]:hover { filter: brightness(1.18); }
 .loop-board > svg { width: auto; height: auto; max-width: 100%; max-height: 70vh; aspect-ratio: 900 / 330; display: block; }
 .loop-rest { flex: 1; min-height: 0; overflow-y: auto; display: flex; flex-direction: column; gap: 8px; }
 .loop-note { flex: none; margin: 0; font-size: 13px; color: var(--dim); }
@@ -698,7 +700,7 @@ button.hot { background: #6b2424; }
 .frame { background: #0c0e11; border-radius: 8px; padding: 4px 6px 2px; min-width: 0;
   border: 1px solid transparent; }
 .frame .cap { display: block; font-size: 10px; color: var(--dim); letter-spacing: 0.02em; }
-.frame svg { width: 100%; height: 64px; display: block; }
+.frame svg { width: 100%; height: 72px; display: block; }
 .frame.on.amber { border-color: #a8844a; }
 .frame.on.cyan { border-color: var(--cyan); }
 .frame.on.wool { border-color: var(--wool); }

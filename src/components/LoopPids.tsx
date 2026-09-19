@@ -420,6 +420,10 @@ export function LoopLiveBox({
   sub,
   value,
   pick,
+  pick2,
+  stroke2,
+  fit,
+  spanMin,
   subColor,
   picked,
   onPick,
@@ -434,6 +438,10 @@ export function LoopLiveBox({
   sub?: string;
   value: string;
   pick: (s: Sample) => number | null;
+  pick2?: (s: Sample) => number | null;
+  stroke2?: string;
+  fit?: "abs" | "band";
+  spanMin?: number;
   subColor?: string;
   picked?: boolean;
   onPick?: () => void;
@@ -442,7 +450,9 @@ export function LoopLiveBox({
   const sparkW = w - 12;
   const sparkH = 24;
   const vehicle = useVehicle();
-  const { ds } = sparkSeries(viewBuffer(vehicle), [pick], sparkW, sparkH);
+  const clip = useId().replace(/:/g, "");
+  const picks = pick2 ? [pick, pick2] : [pick];
+  const { ds } = sparkSeries(viewBuffer(vehicle), picks, sparkW, sparkH, { fit, spanMin });
   return (
     <g {...loopBoxHit(onPick)}>
       <LoopFrame x={x} y={y} w={w} h={h} color={stroke} mark={mark} picked={picked} />
@@ -457,8 +467,16 @@ export function LoopLiveBox({
           {sub}
         </text>
       ) : null}
-      <g transform={`translate(${x + 6} ${y + h - sparkH - 4})`}>
+      <defs>
+        <clipPath id={`spark-${clip}`}>
+          <rect x="0" y="0" width={sparkW} height={sparkH} rx="2" />
+        </clipPath>
+      </defs>
+      <g transform={`translate(${x + 6} ${y + h - sparkH - 4})`} clipPath={`url(#spark-${clip})`}>
         <line x1="0" y1={sparkH / 2} x2={sparkW} y2={sparkH / 2} stroke={PID_COL.line} strokeDasharray="3 3" />
+        {ds[1] ? (
+          <path d={ds[1]} fill="none" stroke={stroke2 ?? PID_COL.dim} strokeWidth="1.2" strokeDasharray="3 2" />
+        ) : null}
         {ds[0] ? <path d={ds[0]} fill="none" stroke={stroke} strokeWidth="1.6" /> : null}
       </g>
     </g>

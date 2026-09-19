@@ -116,6 +116,14 @@ export const uk: Record<string, string> = {
   "roll loop": "контур крену",
   "Looks a distance L1 ahead, asks for lateral accel, then bank via atan(a/g). Period smaller = tighter.":
     "Дивиться на відстань L1 уперед, просить бічне прискорення, потім крен через atan(a/g). Менший period — тугіший.",
+  "Circle of radius L1 meets the track. Nu from V to that point becomes bank.":
+    "Коло радіуса L1 зустрічає трек. Nu від V до цієї точки стає креном.",
+  "1 look ahead → 2 Nu → 3 accel → 4 bank. Solid left edge is a knob.":
+    "1 погляд уперед → 2 Nu → 3 прискорення → 4 крен. Суцільний лівий край — крутилка.",
+  "The circle of radius L1 is centred on the aircraft and meets the track at the L1 point. Nu is the angle from the velocity vector V to that point. PERIOD sets how long L1 is; it does not sit in the accel formula.":
+    "Коло радіуса L1 з центром на літаку зустрічає трек у точці L1. Nu — кут від вектора швидкості V до цієї точки. PERIOD задає довжину L1 і не входить у формулу прискорення.",
+  "Lateral acceleration a = K · V² / L1 · sin(Nu), then bank φ* = atan(a/g) = nav_roll. K = 4 · DAMPING². L1 = (1/π) · DAMPING · PERIOD · groundspeed, so the same PERIOD feels the same as speed changes.":
+    "Бічне прискорення a = K · V² / L1 · sin(Nu), далі крен φ* = atan(a/g) = nav_roll. K = 4 · DAMPING². L1 = (1/π) · DAMPING · PERIOD · шляхова швидкість — той самий PERIOD відчувається однаково на різних швидкостях.",
   groundspeed: "шляхова швидкість",
   "to L1 point": "на точку L1",
   "(1/pi)·DAMP·PERIOD·V": "(1/pi)·DAMP·PERIOD·V",
@@ -134,6 +142,10 @@ export const uk: Record<string, string> = {
   "without knobs": "без крутилок",
   "Throttle holds total energy. Pitch only trades height for speed. W is the mix, not a P.":
     "Газ тримає повну енергію. Тангаж лише міняє висоту на швидкість. W — суміш, не P.",
+  "1 height · 2 speed → W mix → 3 throttle adds, 4 pitch trades. Solid left edge is a knob.":
+    "1 висота · 2 швидкість → суміш W → 3 газ додає, 4 тангаж міняє. Суцільний лівий край — крутилка.",
+  add: "додає",
+  trade: "міняє",
   "V* not on this MAVLink sample": "V* немає на цьому MAVLink-зразку",
   "g · height": "g · висота",
   "½ V²": "½ V²",
@@ -170,8 +182,8 @@ export const uk: Record<string, string> = {
     "TECS (Total Energy Control System) узгоджує газ і тангаж, щоб тримати висоту й повітряну швидкість. У апарата дві механічні енергії: потенціальна (маса × g × висота) і кінетична (½ × маса × швидкість²). Опір завжди забирає енергію; повертає лише тяга або термік.",
   "Total energy is their sum. TECS sets throttle to hold that total. Pitch does not add energy — it trades height for speed. If you are high and slow, total energy can still be right: too much potential, not enough kinetic. Lower the nose to move energy into speed.":
     "Повна енергія — їхня сума. TECS ставить газ, щоб тримати цю суму. Тангаж енергії не додає — міняє висоту на швидкість. Якщо високо й повільно, повна енергія може бути правильною: забагато потенціалу, замало кінетики. Опустити ніс — перелити енергію в швидкість.",
-  "W (TECS_SPDWEIGHT) sits at the four-arrow crossing. It is how much pitch listens to speed vs height: 0 height, 1 both (stock), 2 speed (glider). STE does not use W. TECS_TIME_CONST is how quickly the energy error is chased — time, not a mix.":
-    "W (TECS_SPDWEIGHT) стоїть на перехресті чотирьох стрілок. Скільки тангаж слухає швидкість проти висоти: 0 висота, 1 обидва (сток), 2 швидкість (глайдер). STE від W не залежить. TECS_TIME_CONST — як швидко ловити помилку енергії: час, не суміш.",
+  "W (TECS_SPDWEIGHT) is the slider on the pitch trade: 0 height, 1 both (stock), 2 speed (glider). STE does not use W — throttle always holds the sum. TECS_TIME_CONST is how quickly the energy error is chased — time, not a mix.":
+    "W (TECS_SPDWEIGHT) — повзунок на обміні тангажу: 0 висота, 1 обидва (сток), 2 швидкість (глайдер). STE від W не залежить — газ завжди тримає суму. TECS_TIME_CONST — як швидко ловити помилку енергії: час, не суміш.",
   "Wiki: tune the pitch-to-servo loop in FBWA first. If height then oscillates, raise TECS_TIME_CONST (do not go past 10). TECS is live in AUTO / FBWB / CRUISE / RTL / LOITER, not FBWA or MANUAL.":
     "Wiki: спочатку контур тангаж→серво в FBWA. Якщо висота потім осцилює — піднімайте TECS_TIME_CONST (не вище 10). TECS живий в AUTO / FBWB / CRUISE / RTL / LOITER, не в FBWA і не в MANUAL.",
   "Height error becomes gravitational potential energy. TECS_CLMB_MAX is the best climb at THR_MAX and AIRSPEED_CRUISE. TECS_SINK_MIN / SINK_MAX are idle glide and the steepest safe descent. Measure them in FBWA; if they are optimistic, height will oscillate.":
@@ -182,8 +194,16 @@ export const uk: Record<string, string> = {
     "Потенціальна енергія = маса × g × висота. Підняти висоту коштує енергії; падіння її віддає. Стенд показує g · h (на одиницю маси). Це йде і в STE (газ), і через W в SEB (тангаж).",
   "Kinetic energy = ½ × mass × speed². Speeding up costs energy even at the same height. The stand shows ½ · V². This also feeds STE and, through W, SEB.":
     "Кінетична енергія = ½ × маса × швидкість². Розгін коштує енергії навіть на тій самій висоті. Стенд показує ½ · V². Це теж іде в STE і через W в SEB.",
-  "TECS_SPDWEIGHT: how much the pitch loop weights speed vs height errors. 0.0: pitch holds height and ignores speed. 2.0: pitch holds speed and ignores height (glider / soaring). 1.0: both. It is not a P. STE is always SPE + SKE. No effect without an airspeed estimate.":
-    "TECS_SPDWEIGHT: скільки контур тангажу важить помилки швидкості проти висоти. 0.0: тангаж тримає висоту і ігнорує швидкість. 2.0: тангаж тримає швидкість і ігнорує висоту (глайдер / soaring). 1.0: обидва. Це не P. STE завжди SPE + SKE. Без оцінки airspeed ефекту немає.",
+  "TECS_SPDWEIGHT (W) is not a P. It only weights the pitch trade (SEB). Throttle still holds total energy STE = SPE + SKE — W does not go into STE. Without an airspeed estimate W is forced to 0.":
+    "TECS_SPDWEIGHT (W) — це не P. Він лише зважує обмін тангажу (SEB). Газ і далі тримає повну енергію STE = SPE + SKE — W у STE не йде. Без оцінки airspeed W примусово 0.",
+  "A stick jab in FBWB is a climb-rate pulse — two TIME_CONST humps, the same at any W. Hold elevator for several seconds, or change speed with the throttle stick and leave elevator centered: W = 0 keeps height (speed sags), W = 2 keeps speed (height wanders).":
+    "Короткий тичок стика в FBWB — імпульс швидкості набору: два горби TIME_CONST, однакові на будь-якому W. Тримайте елеватор кілька секунд, або змініть швидкість стиком газу при нейтральному елеваторі: W = 0 тримає висоту (швидкість просідає), W = 2 тримає швидкість (висота гуляє).",
+  "0 — height. Pitch holds altitude and ignores speed. A powered plane in a valley, a landing pattern, or any flight where not sinking matters more than a few m/s of airspeed. Throttle then looks after speed, because pitch already took height.":
+    "0 — висота. Тангаж тримає висоту і ігнорує швидкість. Моторний борт в ущелині, на посадковому колі, або коли не просісти важливіше за кілька м/с airspeed. Газ тоді тримає швидкість — тангаж уже взяв висоту.",
+  "1 — both (stock). Pitch shares height and speed. Start here on a powered plane with an airspeed sensor in AUTO / FBWB / CRUISE / RTL. Usual cruise: stay on the altitude line without letting speed wander.":
+    "1 — обидва (сток). Тангаж ділить висоту й швидкість. Починайте звідси на моторному з датчиком airspeed в AUTO / FBWB / CRUISE / RTL. Звичайний круїз: тримати лінію висоти і не відпускати швидкість.",
+  "2 — speed. Pitch holds airspeed and ignores height. A glider, or soaring: climb from rising air (thermal, ridge, wave), not from the motor. Pitch keeps a safe glide speed; height comes from the air. Also when stall or overspeed would be worse than being off altitude.":
+    "2 — швидкість. Тангаж тримає airspeed і ігнорує висоту. Планер або парення (soaring): набір іде з висхідного повітря (термік, схил, хвиля), не з мотора. Тангаж тримає безпечну швидкість планування; висота приходить з повітря. Також коли звалювання чи перерозгін гірші за помилку висоти.",
   "The circle sits where the four arrows meet: height and speed each feed total energy and energy balance. Straight paths are each channel into itself; the diagonals are the cross.":
     "Кружок стоїть там, де зустрічаються чотири стрілки: висота й швидкість кожна годує і повну енергію, і баланс. Прямі — канал сам у себе; діагоналі — перехрес.",
   "Total energy = potential + kinetic. Throttle holds this total. More throttle: both higher and faster. TECS_TIME_CONST is the time constant of that chase (smaller = faster). TECS_THR_DAMP damps speed/height oscillation; TECS_INTEG_GAIN trims leftover error.":
@@ -702,6 +722,7 @@ export const uk: Record<string, string> = {
     "Внутрішній тюнінг у MANUAL нічого не робить — автопілот не в контурі. Перемкніть на FBWA.",
   "L1 + TECS": "L1 + TECS",
   "L1 bank": "крен L1",
+  "Nu → bank": "Nu → крен",
   "L1 looks at the track on the earth and asks for a bank. Not a roll PID.":
     "L1 дивиться трек на землі й просить крен. Це не roll PID.",
   "L1 track": "трек L1",
@@ -812,6 +833,7 @@ export const uk: Record<string, string> = {
   "lead term": "провідний член",
   loop: "контур",
   "m/s · scaler": "м/с · scaler",
+  "h · V": "h · V",
   "pitch + throttle": "тангаж + газ",
   rudder: "руль напряму",
   servo: "серво",
