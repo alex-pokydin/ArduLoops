@@ -26,15 +26,15 @@ const OPEN_LOOP = new Set(["psc_ne_pos", "psc_ne_vel", "psc_d_pos", "psc_d_vel",
 export function CopterLoopView({
   sel,
   axis,
-  onPause,
+  compact,
 }: {
   sel: string | null;
   axis: Axis;
-  onPause: () => void;
+  compact?: boolean;
 }) {
   const id = resolve(sel, axis);
   const loopAxis: Axis = id.startsWith("psc_d") ? "d" : id.startsWith("psc_ne") ? (axis === "d" || axis === "yaw" ? "roll" : axis) : axis === "d" ? "roll" : axis;
-  return <Loop sel={PID.has(id) ? id : "atc_rat"} axis={loopAxis} onPause={onPause} />;
+  return <Loop sel={PID.has(id) ? id : "atc_rat"} axis={loopAxis} compact={compact} />;
 }
 
 export function loopNeedsAxis(sel: string | null, axis: Axis): boolean {

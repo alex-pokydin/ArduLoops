@@ -1,7 +1,7 @@
 import { t } from "./i18n/i18n";
 import { TONE, TONE_HEX, traceValue, type Pane } from "./lib/traces";
 import { wrap180, type Axis } from "./mav/axis";
-import { MAX_T } from "./mav/store";
+import { getPlotSpan } from "./mav/store";
 import type { Sample } from "./mav/types";
 
 /** Stick gray, desired white, target amber, actual cyan. Error is the gap, not a 5th trace. */
@@ -12,6 +12,20 @@ export const TRACE = {
   actual: "#4fc3f7",
   gap: "rgba(255, 183, 77, 0.20)",
 } as const;
+
+function plotTick(span: number): number {
+  if (span <= 8) return 2;
+  if (span <= 15) return 5;
+  if (span <= 30) return 10;
+  return 15;
+}
+
+function plotGrid(span: number): number {
+  if (span <= 8) return 1;
+  if (span <= 15) return 5;
+  if (span <= 30) return 5;
+  return 10;
+}
 
 function size(c: HTMLCanvasElement): [number, number, number] {
   const dpr = window.devicePixelRatio || 1;
@@ -70,16 +84,19 @@ function plot(
   ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
   ctx.clearRect(0, 0, w, h);
   const padB = 16;
+  const span = getPlotSpan();
   const t1 = buf.length ? buf[buf.length - 1].t : 0;
-  const t0 = t1 - MAX_T;
-  const x = (t: number) => ((t - t0) / MAX_T) * w;
+  const t0 = t1 - span;
+  const x = (t: number) => ((t - t0) / span) * w;
   const y = (v: number) => (h - padB) / 2 - (v / (Math.abs(ymax) || 1)) * ((h - padB) * 0.42);
+  const grid = plotGrid(span);
+  const tick = plotTick(span);
 
   ctx.lineWidth = 1;
   ctx.setLineDash([]);
-  for (let dt = 1; dt < MAX_T; dt++) {
+  for (let dt = grid; dt < span; dt += grid) {
     const px = Math.round(x(t1 - dt)) + 0.5;
-    ctx.strokeStyle = dt % 2 === 0 ? "#2e3a46" : "#222a32";
+    ctx.strokeStyle = dt % tick === 0 ? "#2e3a46" : "#222a32";
     ctx.beginPath();
     ctx.moveTo(px, 0);
     ctx.lineTo(px, h - padB);
@@ -96,9 +113,9 @@ function plot(
   ctx.fillStyle = "#6b7884";
   ctx.font = "11px Segoe UI, system-ui, sans-serif";
   ctx.textBaseline = "top";
-  for (let dt = 0; dt <= MAX_T; dt += 2) {
+  for (let dt = 0; dt <= span; dt += tick) {
     const px = x(t1 - dt);
-    ctx.textAlign = dt === 0 ? "right" : dt === MAX_T ? "left" : "center";
+    ctx.textAlign = dt === 0 ? "right" : dt === span ? "left" : "center";
     ctx.fillText(dt === 0 ? t("now") : t("−{n} s", { n: dt }), Math.max(4, Math.min(w - 4, px)), h - 14);
   }
 
@@ -108,6 +125,7 @@ function plot(
     ctx.beginPath();
     let top = false;
     for (const p of buf) {
+      if (p.t < t0) continue;
       const v = ka(p);
       if (v == null) continue;
       if (!top) {
@@ -116,6 +134,7 @@ function plot(
       } else ctx.lineTo(x(p.t), y(v));
     }
     for (let i = buf.length - 1; i >= 0; i--) {
+      if (buf[i].t < t0) break;
       const v = kb(buf[i]);
       if (v == null) continue;
       ctx.lineTo(x(buf[i].t), y(v));
@@ -132,6 +151,7 @@ function plot(
     ctx.lineWidth = colors[i] === TRACE.stick ? 1.6 : 2.5;
     let started = false;
     for (const p of buf) {
+      if (p.t < t0) continue;
       const v = pick(p);
       if (v == null) continue;
       const px = x(p.t);
@@ -154,8 +174,9 @@ export function sparkSeries(
   opts?: { fit?: "abs" | "band"; spanMin?: number },
 ): { ds: string[]; ymax: number } {
   const mid = h / 2;
+  const span = getPlotSpan();
   const t1 = buf.length ? buf[buf.length - 1].t : 0;
-  const t0 = t1 - MAX_T;
+  const t0 = t1 - span;
   const vals: number[] = [];
   let ymax = 0.05;
   for (const p of buf) {
@@ -179,7 +200,7 @@ export function sparkSeries(
     const half = Math.max((hi - lo) / 2, minSpan / 2) * 1.25;
     yOf = (v: number) => mid - ((v - c0) / half) * (h * 0.42);
   }
-  const x = (t: number) => ((t - t0) / MAX_T) * w;
+  const x = (t: number) => ((t - t0) / span) * w;
   const ds = picks.map((pick) => {
     let d = "";
     let started = false;

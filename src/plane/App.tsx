@@ -1,27 +1,28 @@
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { Aside, type LogRow } from "../components/Aside";
 import { Scope } from "../components/Scope";
+import { Studio } from "../components/Studio";
 import { useT } from "../i18n/i18n";
+import { preferredLayoutWidth } from "../lib/layout";
 import { addLog } from "../log";
 import { axisLabel, type Axis } from "../mav/axis";
 import { PlaneAxisSwitch } from "./AxisSwitch";
-import { MODES, NODES } from "./cascade";
+import { LAYERS, MODES, NODES } from "./cascade";
+import { PlaneInspect } from "./Inspect";
 import { PlaneMap } from "./Map";
-import { PlaneLoopView, loopNeedsAxis } from "./LoopView";
-
-type Tab = "map" | "loop" | "scope";
+import { PlaneLoopView } from "./LoopView";
 
 export function PlaneApp({
   log,
-  onPause,
 }: {
   log: LogRow[];
-  onPause: () => void;
 }) {
   const t = useT();
-  const [tab, setTab] = useState<Tab>("map");
   const [sel, setSel] = useState<string | null>(null);
   const [axis, setAxis] = useState<Axis>("roll");
+  const [showAll, setShowAll] = useState(false);
+  const col1Default = useMemo(() => preferredLayoutWidth(LAYERS), []);
+  const loopAxis = axis === "d" ? "roll" : axis;
 
   function onAxis(next: Axis) {
     setAxis(next);
@@ -31,11 +32,6 @@ export function PlaneApp({
     addLog(t("Axis · {axis}", { axis: t(axisLabel(next)) }), "cmd");
   }
 
-  function go(next: Tab) {
-    setTab(next);
-    if (next === "map") setSel(null);
-  }
-
   function onPick(next: string | null) {
     setSel(next);
     if (next === "ptch_ang" || next === "ptch_rate" || next === "elevator") setAxis("pitch");
@@ -43,58 +39,29 @@ export function PlaneApp({
     else if (next === "rll_ang" || next === "rll_rate" || next === "aileron" || next === "ahrs") setAxis("roll");
   }
 
-  const showAxis = tab === "scope" || (tab === "loop" && loopNeedsAxis(sel, axis));
-
   return (
     <main>
       <section className="scope">
-        <nav className="tabs" aria-label={t("View")}>
-          {(
-            [
-              ["map", t("Map")],
-              ["loop", t("Loop")],
-              ["scope", t("Scope")],
-            ] as const
-          ).map(([id, label], i) => (
-            <span key={id}>
-              {i ? (
-                <span className="sep" aria-hidden="true">
-                  ·
-                </span>
-              ) : null}
-              <a
-                href={`#${id}`}
-                className={tab === id ? "on" : undefined}
-                aria-current={tab === id ? "page" : undefined}
-                onClick={(e) => {
-                  e.preventDefault();
-                  go(id);
-                }}
-              >
-                {label}
-              </a>
-            </span>
-          ))}
-          {showAxis ? <PlaneAxisSwitch axis={axis === "d" ? "roll" : axis} onAxis={onAxis} /> : null}
-        </nav>
-        {tab === "map" ? (
-          <PlaneMap sel={sel} onSel={onPick} />
-        ) : tab === "loop" ? (
-          <PlaneLoopView sel={sel} axis={axis === "d" ? "roll" : axis} onPause={onPause} />
-        ) : (
-          <Scope sel={sel} onSel={onPick} axis={axis === "d" ? "roll" : axis} onPause={onPause} />
-        )}
+        <Studio
+          frame="plane"
+          col1Default={col1Default}
+          toolbar={<PlaneAxisSwitch axis={loopAxis} onAxis={onAxis} />}
+          scheme={<PlaneMap sel={sel} onSel={onPick} showAll={showAll} onShowAll={setShowAll} />}
+          loop={(compact) => <PlaneLoopView sel={sel} axis={loopAxis} compact={compact} />}
+          scope={<Scope sel={sel} onSel={onPick} axis={loopAxis} />}
+        />
       </section>
       <Aside
         log={log}
         sel={sel}
         onSel={onPick}
-        axis={axis === "d" ? "roll" : axis}
+        axis={loopAxis}
         live3d={false}
         modes={MODES}
         nodes={NODES}
         presets={false}
         vehicle="plane"
+        inspect={<PlaneInspect sel={sel} onSel={onPick} showAll={showAll} />}
       />
     </main>
   );

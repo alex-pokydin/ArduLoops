@@ -1,11 +1,12 @@
-import { useEffect, useLayoutEffect, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState, useSyncExternalStore } from "react";
 import { useT } from "../i18n/i18n";
 import type { NodeDef } from "../lib/gains";
 import { CUSTOM_ID, ROLE_CLASS, TONE, traceId, traceValue, type CatalogTrace, type Pane } from "../lib/traces";
-import { isPaused } from "../mav/store";
+import { getPlotSpan, isPaused, subscribe } from "../mav/store";
 import type { Sample } from "../mav/types";
 import { useVehicle, useViewSample, viewBuffer } from "../mav/view";
 import { drawPane } from "../plot";
+import { PaneHead } from "./Studio";
 
 function digits(unit: string): number {
   if (unit.includes("%")) return 0;
@@ -20,7 +21,6 @@ function fmt(v: unknown, d: number): string {
 
 export function TracePanes({
   panes,
-  onPause,
   blocks,
   checked,
   near,
@@ -30,7 +30,6 @@ export function TracePanes({
   onToggleLine,
 }: {
   panes: Pane[];
-  onPause: () => void;
   blocks: NodeDef[];
   checked: string[];
   near: Set<string>;
@@ -46,6 +45,7 @@ export function TracePanes({
   const panesRef = useRef(panes);
   panesRef.current = panes;
   const paused = isPaused();
+  const span = useSyncExternalStore(subscribe, getPlotSpan, getPlotSpan);
   const frozen = !s.ok;
 
   useEffect(() => {
@@ -76,14 +76,25 @@ export function TracePanes({
       cancelAnimationFrame(raf);
       window.removeEventListener("resize", onResize);
     };
-  }, [vehicle, frozen, panes.length]);
+  }, [vehicle, frozen, panes.length, span]);
 
   if (!panes.length) {
-    return <p className="tune-empty">{t("This block has no live MAVLink trace on the stand yet.")}</p>;
+    return (
+      <>
+        <PaneHead>
+          <WatchPicker blocks={blocks} checked={checked} near={near} panes={panes} onToggle={onToggle} />
+        </PaneHead>
+        <p className="tune-empty">{t("This block has no live MAVLink trace on the stand yet.")}</p>
+      </>
+    );
   }
 
   return (
     <>
+      <PaneHead>
+        <WatchPicker blocks={blocks} checked={checked} near={near} panes={panes} onToggle={onToggle} />
+      </PaneHead>
+    <div className="plots">
       {panes.map((pane, i) => (
         <PaneBlock
           key={pane.custom ? "custom" : (pane.fromIds?.join("+") || pane.title) + pane.traces.map((tr) => traceId(tr)).join(",")}
@@ -92,13 +103,6 @@ export function TracePanes({
           sample={s}
           frozen={frozen}
           paused={paused}
-          pauseBtn={i === 0}
-          onPause={onPause}
-          watch={
-            i === 0
-              ? { blocks, checked, near, onToggle, panes }
-              : undefined
-          }
           lines={
             pane.custom
               ? { catalog, picked: customLines, onToggle: onToggleLine }
@@ -109,6 +113,7 @@ export function TracePanes({
           }}
         />
       ))}
+    </div>
     </>
   );
 }
@@ -340,9 +345,6 @@ function PaneBlock({
   sample,
   frozen,
   paused,
-  pauseBtn,
-  onPause,
-  watch,
   lines,
   canvasRef,
 }: {
@@ -351,15 +353,6 @@ function PaneBlock({
   sample: Sample;
   frozen: boolean;
   paused: boolean;
-  pauseBtn: boolean;
-  onPause: () => void;
-  watch?: {
-    blocks: NodeDef[];
-    checked: string[];
-    near: Set<string>;
-    panes: Pane[];
-    onToggle: (id: string, on: boolean) => void;
-  };
   lines?: {
     catalog: CatalogTrace[];
     picked: string[];
@@ -374,28 +367,14 @@ function PaneBlock({
     .filter(Boolean);
   const head = names.length ? names.join(" · ") : t(pane.title);
   return (
-    <>
+    <div className="plot-card">
       <div className="plot-head">
         <b title={names.length > 1 ? t("This plot is the live I/O of: {blocks}", { blocks: names.join(", ") }) : undefined}>
           {head}
         </b>
         <span>{t(pane.hint)}</span>
-        {watch ? (
-          <WatchPicker
-            blocks={watch.blocks}
-            checked={watch.checked}
-            near={watch.near}
-            panes={watch.panes}
-            onToggle={watch.onToggle}
-          />
-        ) : null}
         {lines ? (
           <LinePicker catalog={lines.catalog} picked={lines.picked} onToggle={lines.onToggle} />
-        ) : null}
-        {pauseBtn ? (
-          <button type="button" className={paused ? "pause-btn on" : "pause-btn"} onClick={onPause} title={t("Space")}>
-            {paused ? t("Resume") : t("Pause")}
-          </button>
         ) : null}
       </div>
       <div className={frozen ? "plot idle" : paused ? "plot paused" : "plot"}>
@@ -427,6 +406,6 @@ function PaneBlock({
           ) : null}
         </div>
       </div>
-    </>
+    </div>
   );
 }

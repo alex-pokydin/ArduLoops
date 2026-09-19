@@ -54,12 +54,10 @@ export function Scope({
   sel,
   onSel,
   axis,
-  onPause,
 }: {
   sel: string | null;
   onSel?: (id: string) => void;
   axis: Axis;
-  onPause: () => void;
 }) {
   const vehicle = useVehicle();
   const s = useViewSample();
@@ -113,7 +111,6 @@ export function Scope({
   return (
     <TracePanes
       panes={scopePanes(frame, watch, axis, catalog, lines)}
-      onPause={onPause}
       blocks={blocks}
       checked={watch}
       near={near}

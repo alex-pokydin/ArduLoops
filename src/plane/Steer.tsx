@@ -1,16 +1,15 @@
 import { useState } from "react";
 import { paramOf } from "../components/GainRow";
 import { LoopLiveBox } from "../components/LoopPids";
-import { namedGains, SchemeKey, SchemeKnobs, schemeHit } from "../components/SchemeKnobs";
+import { namedGains, SchemeKey, SchemeKnobs, loopCls, schemeHit } from "../components/SchemeKnobs";
+import { PaneHead } from "../components/Studio";
 import { useT } from "../i18n/i18n";
-import { isPaused } from "../mav/store";
 import { useViewSample } from "../mav/view";
 import { NODES, steerLive } from "./cascade";
 
-export function PlaneSteer({ onPause, embed }: { onPause: () => void; embed?: boolean }) {
+export function PlaneSteer({ embed, compact }: { embed?: boolean; compact?: boolean }) {
   const t = useT();
   const s = useViewSample();
-  const paused = isPaused();
   const node = NODES.find((n) => n.id === "steer")!;
   const live = steerLive(s, s.mode);
   const ceil = paramOf(s, "GROUND_STEER_ALT") ?? 5;
@@ -28,8 +27,8 @@ export function PlaneSteer({ onPause, embed }: { onPause: () => void; embed?: bo
   );
 
   return (
-    <div className={embed ? "loop embed" : "loop"}>
-      {live || !s.ok ? null : (
+    <div className={loopCls(compact, embed)}>
+      {live || !s.ok || compact ? null : (
         <p className="warn">
           {s.mode === "MANUAL"
             ? t("In MANUAL the ground steering loop is off — the stick is the wheel.")
@@ -38,13 +37,12 @@ export function PlaneSteer({ onPause, embed }: { onPause: () => void; embed?: bo
               })}
         </p>
       )}
-      <div className="plot-head">
+      <PaneHead>
         <b>{t("Ground steering · STEER2SRV")}</b>
-        <span>{t("Tracks heading on the runway. Every mode except MANUAL, only below GROUND_STEER_ALT.")}</span>
-        <button type="button" className={paused ? "pause-btn on" : "pause-btn"} onClick={onPause} title={t("Space")}>
-          {paused ? t("Resume") : t("Pause")}
-        </button>
-      </div>
+      </PaneHead>
+      {compact ? null : (
+        <p className="loop-lead">{t("Tracks heading on the runway. Every mode except MANUAL, only below GROUND_STEER_ALT.")}</p>
+      )}
       <div onClick={() => setPick(null)}>
       <svg className="loop-svg" viewBox="0 0 640 140" role="img" aria-label={t("Steer")}>
         <LoopLiveBox
@@ -88,7 +86,7 @@ export function PlaneSteer({ onPause, embed }: { onPause: () => void; embed?: bo
       </svg>
       </div>
       <SchemeKey />
-      <SchemeKnobs node={node} gains={knobs} picked={pick} />
+      {!compact ? <SchemeKnobs node={node} gains={knobs} picked={pick} /> : null}
     </div>
   );
 }

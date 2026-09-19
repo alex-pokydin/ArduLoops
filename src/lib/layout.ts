@@ -30,6 +30,24 @@ function rankPack(n: number, avail: number): { nodeW: number; gap: number } {
   };
 }
 
+/** CSS scale that fits `inner` into `box` (contain). 1 until the box is measured. */
+export function fitScale(boxW: number, boxH: number, innerW: number, innerH: number): number {
+  if (boxW <= 1 || boxH <= 1 || innerW <= 0 || innerH <= 0) return 1;
+  return Math.min(boxW / innerW, boxH / innerH);
+}
+
+export function preferredLayoutWidth(layers: LayerDef[]): number {
+  const padL = 96;
+  const padR = 14;
+  let maxSpan = 0;
+  for (const layer of layers) {
+    const n = layer.ids.length <= 1 ? 2 : layer.ids.length;
+    const { nodeW, gap } = rankPack(n, 2400);
+    maxSpan = Math.max(maxSpan, n * nodeW + Math.max(n - 1, 0) * gap);
+  }
+  return padL + maxSpan + padR + 24;
+}
+
 export function layoutRanks(
   layers: LayerDef[],
   width: number,

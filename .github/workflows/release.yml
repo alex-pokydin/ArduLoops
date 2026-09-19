@@ -9,7 +9,7 @@ on:
       tag:
         description: GitHub release tag to upload installers to
         required: true
-        default: "1.1.0"
+        default: "1.2.0"
 
 permissions:
   contents: write

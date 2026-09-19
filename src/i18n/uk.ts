@@ -58,6 +58,10 @@ export const uk: Record<string, string> = {
   Options: "Опції",
   Close: "Закрити",
   Language: "Мова",
+  "Plot window": "вікно графіка",
+  "How far back the traces go. The stand keeps up to a minute so a longer window already has history.":
+    "Як далеко назад ідуть графіки. Стенд тримає до хвилини, тож довше вікно вже має історію.",
+  "{n} s": "{n} с",
   Init: "Ініт",
   Export: "Експорт",
   "Init · {vehicle}": "Ініт · {vehicle}",
@@ -79,8 +83,8 @@ export const uk: Record<string, string> = {
   Link: "лінк",
   Stop: "стоп",
   Disconnect: "Від’єднати",
-  "Plots paused": "графіки на паузі",
-  "Plots running": "графіки далі",
+  "Display paused": "усе на паузі",
+  "Display running": "усе далі",
   "Link {url}": "лінк {url}",
   "Link off": "лінк вимкнено",
   "Init · disarm first": "ініт · спочатку disarm",
@@ -108,6 +112,9 @@ export const uk: Record<string, string> = {
   Plot: "графік",
   Layers: "шари",
   Loop: "контур",
+  Expand: "розгорнути",
+  Collapse: "згорнути",
+  "Resize columns": "ширина колонок",
   "L1 · track → bank": "L1 · трек → крен",
   "Not AC_PID. Cross-track error becomes a demanded bank for the roll loop. Period smaller = tighter turn.":
     "Не AC_PID. Помилка треку стає замовленим креном для roll-контуру. Менший period — тугіший розворот.",
@@ -678,8 +685,8 @@ export const uk: Record<string, string> = {
     "Кут тіла, градуси. Стік у FBWA — це кут, не поверхня.",
   "Click Navigate or Attitude on the left of the map. Open Rate for the FF loop, Energy for TECS limits, Steer for the runway.":
     "Клацніть Navigate або Attitude зліва на карті. Rate — контур FF, Energy — межі TECS, Steer — смуга.",
-  "Empty map shows every link this mode closes. Click a card for its in and out. Roll and pitch are two loops — not one block with an axis switch. Rate and Scope keep the axis buttons.":
-    "Порожня карта — усі зв’язки, які цей режим замикає. Клік по картці — лише вхід і вихід. Крен і тангаж — два контури, не один блок з перемикачем осі. Rate і Scope лишають кнопки осі.",
+  "Empty map shows every link this mode closes. Click a card for its in and out. Roll and pitch are two loops — not one block with an axis switch. Axis buttons sit above the scheme.":
+    "Порожня карта — усі зв’язки, які цей режим замикає. Клік по картці — лише вхід і вихід. Крен і тангаж — два контури, не один блок з перемикачем осі. Кнопки осі — над схемою.",
   "Click a card. Roll and pitch are two loops — not one block with an axis switch. Rate and Scope keep the axis buttons.":
     "Клацніть картку. Roll і pitch — два контури, не один блок з перемикачем осі. Кнопки осі лишаються на Rate і Scope.",
   "Copying RLL_RATE_P onto pitch will porpoise. Independent writes. Same FF-first order.":
@@ -1015,8 +1022,8 @@ export const uk: Record<string, string> = {
     "В AUTO / LOITER / RTL / GUIDED / TAKEOFF пише наземний трек і висоту, яку тримати. WP_RADIUS — наскільки близько «там»; WP_LOITER_RAD — коло.",
   "Reads cross-track error and asks the roll loop for a bank. Period is the main knob — smaller is a tighter turn. Live whenever nav is flying the line.":
     "Читає помилку треку й просить у контуру roll крен. Period — головний важіль: менше — тугіший розворот. Живий, коли nav веде лінію.",
-  "Shares height and airspeed: one energy, two outputs — desired pitch and throttle. Live in AUTO / FBWB / CRUISE / RTL / LOITER. Open Energy for limits and SPDWEIGHT.":
-    "Ділить висоту й airspeed: одна енергія, два виходи — бажаний тангаж і газ. Живий в AUTO / FBWB / CRUISE / RTL / LOITER. Відкрийте Energy для лімітів і SPDWEIGHT.",
+  "Shares height and airspeed: one energy, two outputs — desired pitch and throttle. Live in AUTO / FBWB / CRUISE / RTL / LOITER. Click this card for W and TIME_CONST; expand the scheme and click a block for extra limits.":
+    "Ділить висоту й airspeed: одна енергія, два виходи — бажаний тангаж і газ. Живий в AUTO / FBWB / CRUISE / RTL / LOITER. Клацніть цю картку для W і TIME_CONST; розгорніть схему й клікніть блок — додаткові ліміти.",
   "SPDWEIGHT 0 = pitch holds height; 2 = pitch holds speed (glider); 1 = mix. Tune pitch rate before TECS.":
     "SPDWEIGHT 0 = тангаж тримає висоту; 2 = тангаж тримає швидкість (планер); 1 = суміш. Спочатку pitch rate, потім TECS.",
   "Turns demanded bank into a roll-rate command. FBWA / TRAINING / STABILIZE / FBWB / CRUISE: the stick is the demand. AUTO: L1 writes the demand. TCONST is how fast that happens. If ANGLE_P is 0, P = 1/TCONST.":
@@ -1035,10 +1042,10 @@ export const uk: Record<string, string> = {
     "Виміряний attitude. Yaw-демпфер читає sin(цього крену), gyro z і бічне прискорення. Завжди міряє; демпфер бере це, коли yaw у контурі.",
   "The damper uses this bank now, even while the rate loop is still catching up.":
     "Демпфер бере цей крен зараз, навіть поки rate-контур ще наздоганяє.",
-  "Tracks heading on the ground and writes the nosewheel. Live in every mode except MANUAL, only below GROUND_STEER_ALT. Open the Steer tab.":
-    "Тримає курс на землі й пише носове колесо. Живий у всіх режимах крім MANUAL, лише нижче GROUND_STEER_ALT. Відкрийте вкладку Steer.",
-  "The throttle channel. TECS writes it in AUTO / FBWB / CRUISE / RTL / LOITER. In FBWA, ACRO and MANUAL the left stick is still throttle. Open Energy for the mix.":
-    "Канал газу. TECS пише його в AUTO / FBWB / CRUISE / RTL / LOITER. У FBWA, ACRO і MANUAL лівий стик лишається газом. Відкрийте Energy для суміші.",
+  "Tracks heading on the ground and writes the nosewheel. Live in every mode except MANUAL, only below GROUND_STEER_ALT. Click this card for the runway loop.":
+    "Тримає курс на землі й пише носове колесо. Живий у всіх режимах крім MANUAL, лише нижче GROUND_STEER_ALT. Клацніть цю картку — контур смуги.",
+  "The throttle channel. TECS writes it in AUTO / FBWB / CRUISE / RTL / LOITER. In FBWA, ACRO and MANUAL the left stick is still throttle. Click TECS for the mix.":
+    "Канал газу. TECS пише його в AUTO / FBWB / CRUISE / RTL / LOITER. У FBWA, ACRO і MANUAL лівий стик лишається газом. Клацніть TECS для суміші.",
   "If climb oscillates, pitch rate first, then TECS_TIME_CONST — do not hunt a throttle P.":
     "Якщо набір коливається — спочатку pitch rate, потім TECS_TIME_CONST. Не шукайте P газу.",
   "The roll surface. In the air, roll rate writes this channel. In MANUAL the stick writes it. Authority scales with airspeed² around SCALING_SPEED.":

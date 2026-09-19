@@ -3,12 +3,13 @@ import { GYRO_NOTCH, NODES as COPTER_NODES, nodesLiveIn as copterLive, pidTerms,
 import { t, useT } from "../i18n/i18n";
 import { axisTar, axisView, remapGainKey, type Axis } from "../mav/axis";
 import { LoopLiveBox, LoopPidBlock, LoopSumBlock, LoopFrame, loopBoxHit, type LoopMark } from "./LoopPids";
-import { SchemeKey, SchemeKnobs, schemeHit } from "./SchemeKnobs";
+import { SchemeKey, SchemeKnobs, loopCls, schemeHit } from "./SchemeKnobs";
 import { fmtGain, liveGain, paramOf, paramUi } from "./GainRow";
 import { isPaused } from "../mav/store";
 import { useVehicle, useViewSample } from "../mav/view";
 import { NODES as PLANE_NODES, nodesLiveIn as planeLive } from "../plane/cascade";
 import type { Sample } from "../mav/types";
+import { PaneHead } from "./Studio";
 
 const COL = {
   ink: "#e8eef4",
@@ -384,13 +385,13 @@ function Pill({
 export function Loop({
   sel,
   axis,
-  onPause,
   embed,
+  compact,
 }: {
   sel: string | null;
   axis: Axis;
-  onPause: () => void;
   embed?: boolean;
+  compact?: boolean;
 }) {
   const t = useT();
   const [extend, setExtend] = useState(false);
@@ -444,19 +445,16 @@ export function Loop({
   })();
 
   return (
-    <div className={embed ? "loop embed" : "loop"}>
-      {idle ? (
+    <div className={loopCls(compact, embed)}>
+      {idle && !compact ? (
         <p className="warn">
           {t("In {mode} this loop is not running: the autopilot is not turning it. You can inspect gains, but they will not change behaviour until the mode closes the loop.", {
             mode: s.mode || t("this mode"),
           })}
         </p>
       ) : null}
-      <div className="plot-head">
+      <PaneHead>
         <b>{t(node.title)}</b>
-        <span>
-          {t("A loop because the output is compared to the command again.")}
-        </span>
         <button
           type="button"
           className={extend ? "map-sw on hot" : "map-sw"}
@@ -466,10 +464,10 @@ export function Loop({
           <span className="track" aria-hidden="true" />
           {t("extend")}
         </button>
-        <button type="button" className={paused ? "pause-btn on" : "pause-btn"} onClick={onPause} title={t("Space")}>
-          {paused ? t("Resume") : t("Pause")}
-        </button>
-      </div>
+      </PaneHead>
+      {compact ? null : (
+        <p className="loop-lead">{t("A loop because the output is compared to the command again.")}</p>
+      )}
       {!regulator ? (
         <p className="loop-note">
           {t("This block is not a PID. Below is a closed regulator loop (the same one on the map with P / I / D). Pick angle → rate or rate → torque to see live numbers.")}
@@ -710,6 +708,7 @@ export function Loop({
         </svg>
       </div>
       <SchemeKey />
+      {!compact ? (
       <div className="loop-rest">
       <div className="loop-legend">
         <span>
@@ -752,6 +751,7 @@ export function Loop({
       />
       <p className="loop-cap">{cap}</p>
       </div>
+      ) : null}
     </div>
   );
 }

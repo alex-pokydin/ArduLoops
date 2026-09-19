@@ -66,9 +66,11 @@ HEARTBEAT.type mounts the shell. Empty frame until the vehicle speaks.
 
 ![Layers: Copter loop map](cascade.png)
 
-- **Layers** — PosControl (outer) vs Attitude (inner). Dimmed blocks are not closed in this mode
-- **Loop** — the selected card as a scheme (rate / angle = AC_PID, height and NE = PosControl P or PID). Axis buttons exist because **one** rate block serves roll, pitch, yaw and height
-- **Scope** — traces for any Watch set. Pause sits next to Watch; the list is every block this mode closes (rate: `PID_TUNING` desired vs achieved; angle: demand vs `ATTITUDE`)
+One page: **map** on the left, **loop** (the selected card as a scheme) top-right, **traces** bottom-right. Expand a pane for more room. **Pause** in the header freezes the picture; MAVLink still runs. Plot window (8–60 s) is in **Options**.
+
+- **Map** — PosControl (outer) vs Attitude (inner). Dimmed blocks are not closed in this mode
+- **Loop** — rate / angle = AC_PID, height and NE = PosControl P or PID. Axis buttons exist because **one** rate block serves roll, pitch, yaw and height
+- **Traces** — Watch any block this mode closes (rate: `PID_TUNING` desired vs achieved; angle: demand vs `ATTITUDE`)
 
 Tune rate in **Stabilize**. Wool / Stock / Sharp are feel presets on the stand, not a tuning protocol.
 
@@ -78,12 +80,14 @@ Wiki: [First Time Setup](https://ardupilot.org/copter/docs/initial-setup.html) �
 
 ![Map: Plane L1 and TECS](plane-map.png)
 
+Same layout as copter. Click a card — the scheme and traces follow it. Pause is in the header; plot window is in **Options**.
+
 - **Map** — command (stick + mission targets), L1 + TECS outside (not PosControl), roll/pitch angle and rate, yaw damper (AHRS roll, not RLL_RATE), ground steer, then throttle / nose and aileron / elevator / rudder. Empty map shows the mode’s live path; a card shows only its in and out. Roll and pitch are **separate cards**
-- **Loop** — the selected card as a scheme (rate = AC_PID + FF, L1 = track → bank, TECS = energy → pitch + throttle, yaw = damper, steer = runway)
+- **Loop** — rate = AC_PID + FF, L1 = track → bank, TECS = energy → pitch + throttle, yaw = damper, steer = runway. Click a TECS block on the expanded scheme for extra limits
 
 ![Loop: TECS energy scheme](plane-loop.png)
 
-- **Scope** — traces for any Watch set. Pause sits next to Watch; the list is every block this mode closes (rate: `PID_TUNING`; angle: `nav_roll` / `nav_pitch` vs `ATTITUDE`)
+- **Traces** — Watch any block this mode closes (rate: `PID_TUNING`; angle: `nav_roll` / `nav_pitch` vs `ATTITUDE`)
 
 Tune inner loops in **FBWA**, not MANUAL. Pitch numbers are independent of roll.
 

@@ -1,6 +1,7 @@
 import { useEffect, useState, type ReactNode } from "react";
 import { type Lang, useT, useLang, setLang } from "../i18n/i18n";
 import { APP_HTTP } from "../mav/link";
+import { PLOT_SPANS, getPlotSpan, setPlotSpan, type PlotSpan } from "../mav/store";
 
 export function LabDialog({
   open,
@@ -27,6 +28,7 @@ export function LabDialog({
   const initing = initTotal > 0;
   const pct = initing ? Math.min(100, Math.round((100 * initDone) / initTotal)) : 0;
   const [mcpCopied, setMcpCopied] = useState(false);
+  const [span, setSpan] = useState<PlotSpan>(getPlotSpan);
 
   async function copyMcp() {
     let text = JSON.stringify(
@@ -52,6 +54,10 @@ export function LabDialog({
       /* ignore */
     }
   }
+
+  useEffect(() => {
+    if (open) setSpan(getPlotSpan());
+  }, [open]);
 
   useEffect(() => {
     if (!open) return;
@@ -91,6 +97,27 @@ export function LabDialog({
             >
               <option value="uk">Українська</option>
               <option value="en">English</option>
+            </select>
+          </li>
+          <li className="opt">
+            <div className="opt-body">
+              <b>{t("Plot window")}</b>
+              <span>{t("How far back the traces go. The stand keeps up to a minute so a longer window already has history.")}</span>
+            </div>
+            <select
+              aria-label={t("Plot window")}
+              value={span}
+              onChange={(ev) => {
+                const n = Number(ev.target.value) as PlotSpan;
+                setSpan(n);
+                setPlotSpan(n);
+              }}
+            >
+              {PLOT_SPANS.map((n) => (
+                <option key={n} value={n}>
+                  {t("{n} s", { n })}
+                </option>
+              ))}
             </select>
           </li>
           <li className="opt">

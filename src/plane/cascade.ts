@@ -84,7 +84,7 @@ export const NODES: NodeDef[] = [
     kind: "energy mix",
     unit: "pitch + throttle",
     axes: "energy",
-    does: "Shares height and airspeed: one energy, two outputs — desired pitch and throttle. Live in AUTO / FBWB / CRUISE / RTL / LOITER. Open Energy for limits and SPDWEIGHT.",
+    does: "Shares height and airspeed: one energy, two outputs — desired pitch and throttle. Live in AUTO / FBWB / CRUISE / RTL / LOITER. Click this card for W and TIME_CONST; expand the scheme and click a block for extra limits.",
     trap: "SPDWEIGHT 0 = pitch holds height; 2 = pitch holds speed (glider); 1 = mix. Tune pitch rate before TECS.",
     live: ["alt", "aspd"],
     later: true,
@@ -225,7 +225,7 @@ export const NODES: NodeDef[] = [
     kind: "runway",
     unit: "wheel / rudder",
     axes: "steer",
-    does: "Tracks heading on the ground and writes the nosewheel. Live in every mode except MANUAL, only below GROUND_STEER_ALT. Open the Steer tab.",
+    does: "Tracks heading on the ground and writes the nosewheel. Live in every mode except MANUAL, only below GROUND_STEER_ALT. Click this card for the runway loop.",
     trap: "This is runway tracking, not flight yaw. If it fights you in the air, GROUND_STEER_ALT is too high.",
     later: true,
     gains: [
@@ -247,7 +247,7 @@ export const NODES: NodeDef[] = [
     kind: "PWM",
     unit: "% · throttle",
     axes: "energy",
-    does: "The throttle channel. TECS writes it in AUTO / FBWB / CRUISE / RTL / LOITER. In FBWA, ACRO and MANUAL the left stick is still throttle. Open Energy for the mix.",
+    does: "The throttle channel. TECS writes it in AUTO / FBWB / CRUISE / RTL / LOITER. In FBWA, ACRO and MANUAL the left stick is still throttle. Click TECS for the mix.",
     trap: "If climb oscillates, pitch rate first, then TECS_TIME_CONST — do not hunt a throttle P.",
     live: ["thr"],
     gains: [

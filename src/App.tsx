@@ -189,7 +189,7 @@ export function App() {
   function togglePause() {
     const next = !isPaused();
     setPaused(next);
-    addLog(next ? t("Plots paused") : t("Plots running"), "cmd");
+    addLog(next ? t("Display paused") : t("Display running"), "cmd");
   }
 
   function onLink(ev: FormEvent) {
@@ -295,6 +295,15 @@ export function App() {
               onPick={onShell}
             />
           </h1>
+          <button
+            type="button"
+            className={paused ? "pause-btn on" : "pause-btn"}
+            aria-pressed={paused}
+            onClick={togglePause}
+            title={t("Space")}
+          >
+            {paused ? t("Resume") : t("Pause")}
+          </button>
         </div>
         <p className="sub">
           {shell === "home"
@@ -424,15 +433,15 @@ export function App() {
         onInit={onLabInit}
         onSave={onLabSave}
       />
-      {shell === "home" ? (
+          {shell === "home" ? (
         <Disconnected />
       ) : plane ? (
         <VehicleView vehicle="plane">
-          <PlaneApp log={log} onPause={togglePause} />
+          <PlaneApp log={log} />
         </VehicleView>
       ) : (
         <VehicleView vehicle="copter">
-          <CopterApp log={log} onPause={togglePause} />
+          <CopterApp log={log} />
         </VehicleView>
       )}
     </div>

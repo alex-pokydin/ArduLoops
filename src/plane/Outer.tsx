@@ -1,7 +1,8 @@
 import { useState } from "react";
 import { paramOf } from "../components/GainRow";
 import { LoopFrame, LoopLiveBox, loopBoxHit, type LoopMark } from "../components/LoopPids";
-import { namedGains, SchemeDoc, SchemeKey, SchemeKnobs, schemeHit } from "../components/SchemeKnobs";
+import { namedGains, SchemeDoc, SchemeKey, SchemeKnobs, loopCls, schemeHit } from "../components/SchemeKnobs";
+import { PaneHead } from "../components/Studio";
 import { useT } from "../i18n/i18n";
 import { isPaused } from "../mav/store";
 import { useViewSample } from "../mav/view";
@@ -240,7 +241,7 @@ function TecsPlane() {
   );
 }
 
-export function L1Scheme({ onPause, embed }: { onPause: () => void; embed?: boolean }) {
+export function L1Scheme({ embed, compact }: { embed?: boolean; compact?: boolean }) {
   const t = useT();
   const s = useViewSample();
   const paused = isPaused();
@@ -283,22 +284,20 @@ export function L1Scheme({ onPause, embed }: { onPause: () => void; embed?: bool
   const vOn = pick === "gspd";
 
   return (
-    <div className={embed ? "loop embed" : "loop"}>
-      {live || !s.ok ? null : (
+    <div className={loopCls(compact, embed)}>
+      {live || !s.ok || compact ? null : (
         <p className="warn">
           {t("In {mode} this loop is not running: the autopilot is not turning it. You can inspect gains, but they will not change behaviour until the mode closes the loop.", {
             mode: s.mode || t("this mode"),
           })}
         </p>
       )}
-      <div className="plot-head">
+      <PaneHead>
         <b>{t("L1 · track → bank")}</b>
-        <span>{t("1 look ahead → 2 Nu → 3 accel → 4 bank. Solid left edge is a knob.")}</span>
-        <button type="button" className={paused ? "pause-btn on" : "pause-btn"} onClick={onPause} title={t("Space")}>
-          {paused ? t("Resume") : t("Pause")}
-        </button>
-      </div>
-      <SchemeKey />
+      </PaneHead>
+      {compact ? null : (
+        <p className="loop-lead">{t("1 look ahead → 2 Nu → 3 accel → 4 bank. Solid left edge is a knob.")}</p>
+      )}
       <div className={!s.ok ? "loop-board idle" : paused ? "loop-board paused" : "loop-board"} onClick={() => setPick(null)}>
         <svg viewBox="0 0 900 330" preserveAspectRatio="xMidYMid meet" role="img" aria-label={t("L1 track")}>
           <defs>
@@ -479,6 +478,8 @@ export function L1Scheme({ onPause, embed }: { onPause: () => void; embed?: bool
           />
         </svg>
       </div>
+      <SchemeKey />
+      {!compact ? (
       <div className="loop-rest">
         <div className="loop-form">
           <div className="frow">
@@ -515,6 +516,7 @@ export function L1Scheme({ onPause, embed }: { onPause: () => void; embed?: bool
       <SchemeKnobs node={knobNode} gains={knobs} picked={pick} quiet />
         <SchemeDoc lines={l1Doc(t, pick)} href={L1_WIKI} wiki={t("L1 navigation")} />
       </div>
+      ) : null}
     </div>
   );
 }
@@ -564,7 +566,7 @@ function sebOf(alt: number | null | undefined, v: number | null | undefined, w: 
   return (2 - w) * pe - w * ke;
 }
 
-export function TecsScheme({ onPause, embed }: { onPause: () => void; embed?: boolean }) {
+export function TecsScheme({ embed, compact }: { embed?: boolean; compact?: boolean }) {
   const t = useT();
   const s = useViewSample();
   const paused = isPaused();
@@ -612,22 +614,20 @@ export function TecsScheme({ onPause, embed }: { onPause: () => void; embed?: bo
   const addOn = pick === "ste" || pick === "thr";
 
   return (
-    <div className={embed ? "loop embed" : "loop"}>
-      {live || !s.ok ? null : (
+    <div className={loopCls(compact, embed)}>
+      {live || !s.ok || compact ? null : (
         <p className="warn">
           {t("In {mode} this loop is not running: the autopilot is not turning it. You can inspect gains, but they will not change behaviour until the mode closes the loop.", {
             mode: s.mode || t("this mode"),
           })}
         </p>
       )}
-      <div className="plot-head">
+      <PaneHead>
         <b>{t("TECS · energy → pitch + throttle")}</b>
-        <span>{t("1 height · 2 speed → W mix → 3 throttle adds, 4 pitch trades. Solid left edge is a knob.")}</span>
-        <button type="button" className={paused ? "pause-btn on" : "pause-btn"} onClick={onPause} title={t("Space")}>
-          {paused ? t("Resume") : t("Pause")}
-        </button>
-      </div>
-      <SchemeKey />
+      </PaneHead>
+      {compact ? null : (
+        <p className="loop-lead">{t("1 height · 2 speed → W mix → 3 throttle adds, 4 pitch trades. Solid left edge is a knob.")}</p>
+      )}
       <div className={!s.ok ? "loop-board idle" : paused ? "loop-board paused" : "loop-board"} onClick={() => setPick(null)}>
         <svg viewBox="0 0 900 300" preserveAspectRatio="xMidYMid meet" role="img" aria-label={t("TECS energy")}>
           <defs>
@@ -890,7 +890,8 @@ export function TecsScheme({ onPause, embed }: { onPause: () => void; embed?: bo
           />
         </svg>
       </div>
-
+      <SchemeKey />
+      {!compact ? (
       <div className="loop-rest">
         <div className="loop-form">
           <div className="frow">
@@ -922,6 +923,7 @@ export function TecsScheme({ onPause, embed }: { onPause: () => void; embed?: bo
         <SchemeKnobs node={knobNode} gains={knobs} picked={pick} quiet />
         <SchemeDoc lines={tecsDoc(t, pick)} href={TECS_WIKI} wiki={t("TECS speed/height")} />
       </div>
+      ) : null}
     </div>
   );
 }

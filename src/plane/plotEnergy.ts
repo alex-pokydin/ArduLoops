@@ -1,5 +1,5 @@
 import { TRACE } from "../plot";
-import { MAX_T } from "../mav/store";
+import { getPlotSpan } from "../mav/store";
 import type { Sample } from "../mav/types";
 
 function size(c: HTMLCanvasElement): [number, number, number] {
@@ -28,9 +28,10 @@ function stroke(
   ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
   ctx.clearRect(0, 0, w, h);
   const padB = 16;
+  const span = getPlotSpan();
   const t1 = buf.length ? buf[buf.length - 1].t : 0;
-  const t0 = t1 - MAX_T;
-  const x = (t: number) => ((t - t0) / MAX_T) * w;
+  const t0 = t1 - span;
+  const x = (t: number) => ((t - t0) / span) * w;
   const y = (v: number) => h - padB - (v / (Math.abs(ymax) || 1)) * (h - padB - 8);
 
   ctx.strokeStyle = "#3a4652";
@@ -56,6 +57,7 @@ function stroke(
   ctx.lineWidth = 2.2;
   let started = false;
   for (const p of buf) {
+    if (p.t < t0) continue;
     const v = pick(p);
     if (v == null || Number.isNaN(v)) continue;
     const px = x(p.t);

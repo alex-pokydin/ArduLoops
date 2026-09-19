@@ -2,11 +2,10 @@ import { useLayoutEffect, useMemo, useRef, useState } from "react";
 import {
   EDGES,
   NODES,
-  BAND_COPY,
-  BAND_LABEL,
   edgeLiveIn,
   edgeRoute,
   isBandId,
+  LAYERS,
   layoutCopter,
   nodeBand,
   nodesLiveIn,
@@ -17,29 +16,12 @@ import {
   type Band,
   type NodeDef,
 } from "../cascade";
+import { fitScale, preferredLayoutWidth } from "../lib/layout";
 import { FrameGuide } from "./FrameGuide";
-import { fmtGain, liveGain, paramUi } from "./GainRow";
 import { t, useT } from "../i18n/i18n";
 import { axisTar, axisView, type Axis } from "../mav/axis";
 import { useViewSample } from "../mav/view";
 import type { Sample } from "../mav/types";
-
-function liveBits(node: NodeDef, s: Sample, axis: Axis): string {
-  if (!node.live?.length) return "";
-  const v = axisView(s, axis);
-  const tar = axisTar(v);
-  const parts: string[] = [];
-  for (const k of node.live) {
-    if (k === "cmd") parts.push(t("stick {v}{unit}", { v: v.cmd.toFixed(1), unit: v.cmdUnit === "°/s" ? t("°/s") : v.cmdUnit }));
-    if (k === "tar") parts.push(t("target {v}°", { v: tar.toFixed(1) }));
-    if (k === "roll") parts.push(t("{name} {v}°", { name: t(v.name), v: v.ang.toFixed(1) }));
-    if (k === "des") parts.push(t("tar {v}°/s", { v: (v.des || 0).toFixed(1) }));
-    if (k === "rate") parts.push(t("rate {v}°/s", { v: v.rate.toFixed(1) }));
-    if (k === "alt" && s.alt != null) parts.push(t("AGL {v} m", { v: s.alt.toFixed(1) }));
-    if (k === "climb" && s.climb != null) parts.push(t("climb {v} m/s", { v: s.climb.toFixed(2) }));
-  }
-  return parts.join(" · ");
-}
 
 /** One figure on the map card. Outer PSC stays as units — we don't have NE pos/vel. */
 function cardLive(node: NodeDef, s: Sample, axis: Axis): string | null {
@@ -58,29 +40,6 @@ function cardLive(node: NodeDef, s: Sample, axis: Axis): string | null {
   return null;
 }
 
-function titleOf(id: string): string {
-  const title = NODES.find((n) => n.id === id)?.title ?? id;
-  return t(title);
-}
-
-function ParamList({ node, sample, axis }: { node: NodeDef; sample: Sample; axis: Axis }) {
-  if (!node.gains.length) return null;
-  return (
-    <div className="plist">
-      {node.gains.map((g) => {
-        const live = liveGain(g, sample, axis);
-        const v = paramUi(sample, g, axis);
-        return (
-          <div className="prow" key={g.key}>
-            <code>{live.name}</code>
-            <b>{v == null ? "—" : fmtGain(g, v, live.name)}</b>
-          </div>
-        );
-      })}
-    </div>
-  );
-}
-
 function rankFill(band: Band): string {
   if (band === "ends") return "#1a2428";
   if (band === "outer") return "#221c14";
@@ -97,17 +56,22 @@ export function Cascade({
   sel,
   onSel,
   axis,
+  showAll,
+  onShowAll,
 }: {
   sel: string | null;
   onSel: (id: string | null) => void;
   axis: Axis;
+  showAll: boolean;
+  onShowAll: (on: boolean) => void;
 }) {
   const t = useT();
   const s = useViewSample();
-  const [showAll, setShowAll] = useState(false);
   const wrapRef = useRef<HTMLDivElement>(null);
-  const [box, setBox] = useState({ w: 420, h: 0 });
-  const layout = useMemo(() => layoutCopter(box.w, box.h), [box]);
+  const prefW = useMemo(() => preferredLayoutWidth(LAYERS), []);
+  const [box, setBox] = useState({ w: 0, h: 0 });
+  const layout = useMemo(() => layoutCopter(prefW, 0), [prefW]);
+  const scale = fitScale(box.w, box.h, layout.width, layout.height);
   const modeKey = showAll ? "ALL" : s.mode;
   const live = !s.ok ? new Set<string>() : nodesLiveIn(modeKey);
   const band = isBandId(sel) ? sel : null;
@@ -137,15 +101,19 @@ export function Cascade({
     return () => ro.disconnect();
   }, []);
 
-  const incoming = EDGES.filter((e) => e.to === sel && edgeLiveIn(e, modeKey, live));
-  const outgoing = EDGES.filter((e) => e.from === sel && edgeLiveIn(e, modeKey, live));
-  const dimmed = node ? !live.has(node.id) : false;
-
   return (
     <div className="map-wrap">
       <div className="map-col">
-        <div className="cmap" ref={wrapRef} onClick={() => onSel(null)}>
-          <div className="cmap-inner" style={{ width: layout.width, height: layout.height }}>
+        <div className="cmap" onClick={() => onSel(null)}>
+          <div className="cmap-fit" ref={wrapRef}>
+            <div
+              className="cmap-shell"
+              style={{ width: layout.width * scale, height: layout.height * scale }}
+            >
+          <div
+            className="cmap-inner"
+            style={{ width: layout.width, height: layout.height, transform: `scale(${scale})` }}
+          >
             <svg className="cmap-edges" width={layout.width} height={layout.height} aria-hidden="true">
               <defs>
                 <marker id="arr" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto" markerUnits="userSpaceOnUse">
@@ -308,11 +276,24 @@ export function Cascade({
               );
             })}
           </div>
+            </div>
+          </div>
         </div>
+        <div className="cmap-bar">
         <div className="cmap-key" aria-hidden="true">
           <span className="k-tune">{t("tune · manuals")}</span>
           <span className="k-later">{t("sometimes · Loiter")}</span>
           {NODES.some((n) => !hasKnobs(n)) ? <span className="k-struct">{t("dashed · no knobs")}</span> : null}
+        </div>
+          <button
+            type="button"
+            className={showAll ? "map-sw on" : "map-sw"}
+            aria-pressed={showAll}
+            onClick={() => onShowAll(!showAll)}
+          >
+            <span className="track" aria-hidden="true" />
+            {t("all loops")}
+          </button>
         </div>
         <FrameGuide
           focus={
@@ -327,117 +308,6 @@ export function Cascade({
                   : node?.axes ?? null
           }
         />
-      </div>
-      <div className="inspect">
-        <div className="inspect-head">
-          <h2>{node ? t(node.title) : band ? t(BAND_LABEL[band]) : t("Why the loops are separate")}</h2>
-          <button
-            type="button"
-            className={showAll ? "map-sw on" : "map-sw"}
-            aria-pressed={showAll}
-            onClick={() => setShowAll((v) => !v)}
-          >
-            <span className="track" aria-hidden="true" />
-            {t("all loops")}
-          </button>
-        </div>
-        {node ? (
-          <>
-            <div className={"kind " + nodeBand(node.id)}>
-              {t(BAND_LABEL[nodeBand(node.id)])} · {t(node.unit)} · {t(node.kind)}
-              {isTuneNode(node)
-                ? ` · ${t("tune")}`
-                : isLaterNode(node)
-                  ? ` · ${t("sometimes")}`
-                  : hasKnobs(node)
-                    ? ""
-                    : ` · ${t("no knobs")}`}
-              {node.inner && axis !== "d" ? ` · ${t(axisView(s, axis).name)}` : ""}
-            </div>
-            {dimmed ? (
-              <p className="warn">
-                {t("In {mode} this loop is not running: the autopilot is not turning it. You can inspect gains, but they will not change behaviour until the mode closes the loop.", {
-                  mode: s.mode || t("this mode"),
-                })}
-              </p>
-            ) : null}
-            <p>{t(node.does)}</p>
-            {node.trap ? (
-              <p className="trap">
-                <b>{t("typical")}</b> {t(node.trap)}
-              </p>
-            ) : null}
-            {liveBits(node, s, axis) ? <div className="live">{liveBits(node, s, axis)}</div> : null}
-            <ParamList node={node} sample={s} axis={axis} />
-            {incoming.length ? (
-              <div className="io">
-                {t("In")}
-                {incoming.map((e) => (
-                  <div key={e.from + e.label}>
-                    {titleOf(e.from)} · <b>{t(e.label)}</b>
-                  </div>
-                ))}
-              </div>
-            ) : null}
-            {outgoing.length ? (
-              <div className="io">
-                {t("Out")}
-                {outgoing.map((e) => (
-                  <div key={e.to + e.label}>
-                    <b>{t(e.label)}</b> · {titleOf(e.to)}
-                  </div>
-                ))}
-              </div>
-            ) : null}
-          </>
-        ) : band ? (
-          <>
-            <div className={"kind " + band}>
-              {t(BAND_COPY[band].kind)} · {t(BAND_COPY[band].unit)}
-            </div>
-            <p>{t(BAND_COPY[band].does)}</p>
-            <p>{t(BAND_COPY[band].more)}</p>
-            <p className="trap">
-              <b>{t("typical")}</b> {t(BAND_COPY[band].trap)}
-            </p>
-            <div className="io">
-              {t("Loops")}
-              {NODES.filter((n) => nodeBand(n.id) === band).map((n) => (
-                <button type="button" key={n.id} onClick={() => onSel(n.id)}>
-                  {t(n.title)} · <b>{t(n.kind)}</b>
-                </button>
-              ))}
-            </div>
-          </>
-        ) : (
-          <>
-            <p>
-              {t("A letter on a card is a knob: P I D, or TC, ANGLE_MAX, hover. Left bar is first flight; the Loiter stack comes after attitude.")}
-            </p>
-            <p>
-              {t("The manuals tune attitude first: rate (Manual / QuikTune / AutoTune), then angle P, then stick feel (Input Shaping). PSC position loops are usually left at defaults.")}
-            </p>
-            <p>
-              {t("Autotune writes the same rate and angle blocks, from AltHold. If Loiter still weaves after that, NE velocity is the next knob — not Navigation.")}
-            </p>
-            <p>
-              {t("Stock Copter layers: PosControl (PSC) holds where to be, Attitude Control (ATC) holds the angle.")}
-            </p>
-            <p>
-              {t("Motors cannot “turn to 10°” — only thrust. Thrust difference makes torque. So the attitude regulator (ATC_ANG) does not spin motors: from angle error it computes how fast to rotate toward the target and sets a rate command for the next loop. The rate regulator does that job: °/s error → mixer torque.")}
-            </p>
-            <p>
-              {t("The boundary is lean: horizontal acceleration becomes desired roll and pitch. Then ATC works in the body (° and °/s). Vertical skips angle: Down acceleration (PSC_D_ACC) goes straight to throttle. Yaw is the same two inner loops: angle and rate.")}
-            </p>
-            <p className="io">
-              {t("WP, Loiter and Circle write targets for PosControl. Horizontal output is lean; vertical accel goes to throttle. Not shown: Plane, CC2_, FHLD, FOLL, heli.")}
-              {" "}
-              {!showAll
-                ? t("In {mode}, inactive blocks are not closed now.", { mode: s.mode })
-                : t("All stock layers are visible now.")}
-            </p>
-          </>
-        )}
       </div>
     </div>
   );

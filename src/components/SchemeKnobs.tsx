@@ -4,6 +4,12 @@ import type { Axis } from "../mav/axis";
 import { useViewSample } from "../mav/view";
 import { GainRow } from "./GainRow";
 
+export function loopCls(compact?: boolean, embed?: boolean): string {
+  if (compact) return "loop compact";
+  if (embed) return "loop embed";
+  return "loop";
+}
+
 export function namedGains(pools: Array<Iterable<Gain>>, keys: string[]): Gain[] {
   const all = pools.flatMap((p) => [...p]);
   const out: Gain[] = [];

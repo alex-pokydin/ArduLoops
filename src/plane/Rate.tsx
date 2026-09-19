@@ -1,10 +1,10 @@
 import { useState } from "react";
 import { paramOf } from "../components/GainRow";
 import { LoopLiveBox } from "../components/LoopPids";
-import { namedGains, SchemeKey, SchemeKnobs, schemeHit } from "../components/SchemeKnobs";
+import { namedGains, SchemeKey, SchemeKnobs, loopCls, schemeHit } from "../components/SchemeKnobs";
+import { PaneHead } from "../components/Studio";
 import { useT } from "../i18n/i18n";
 import { type Axis } from "../mav/axis";
-import { isPaused } from "../mav/store";
 import { useViewSample } from "../mav/view";
 import { NODES, nodesLiveIn } from "./cascade";
 
@@ -19,10 +19,9 @@ function fmt(v: number | null, d: number): string {
 }
 
 /** Yaw is YAW2SRV, not AC_PID. Roll/pitch Rate uses the shared Loop diagram. */
-export function PlaneRate({ axis, onPause, embed }: { axis: Axis; onPause: () => void; embed?: boolean }) {
+export function PlaneRate({ axis, embed, compact }: { axis: Axis; embed?: boolean; compact?: boolean }) {
   const t = useT();
   const s = useViewSample();
-  const paused = isPaused();
   const node = NODES.find((n) => n.id === "yaw_damp")!;
   const idle = s.ok && !nodesLiveIn(s.mode, s).has(node.id);
   const [pick, setPick] = useState<string | null>(null);
@@ -33,21 +32,20 @@ export function PlaneRate({ axis, onPause, embed }: { axis: Axis; onPause: () =>
   );
 
   return (
-    <div className={embed ? "loop embed" : "loop"}>
-      {idle ? (
+    <div className={loopCls(compact, embed)}>
+      {idle && !compact ? (
         <p className="warn">
           {t("In {mode} this loop is not running: the autopilot is not turning it. You can inspect gains, but they will not change behaviour until the mode closes the loop.", {
             mode: s.mode || t("this mode"),
           })}
         </p>
       ) : null}
-      <div className="plot-head">
+      <PaneHead>
         <b>{t("Yaw damper · rudder")}</b>
-        <span>{t("DAMP resists yaw rate; RLL coordinates from AHRS bank. Live in FBWA and the nav modes.")}</span>
-        <button type="button" className={paused ? "pause-btn on" : "pause-btn"} onClick={onPause} title={t("Space")}>
-          {paused ? t("Resume") : t("Pause")}
-        </button>
-      </div>
+      </PaneHead>
+      {compact ? null : (
+        <p className="loop-lead">{t("DAMP resists yaw rate; RLL coordinates from AHRS bank. Live in FBWA and the nav modes.")}</p>
+      )}
       <div onClick={() => setPick(null)}>
       <svg className="loop-svg" viewBox="0 0 640 220" role="img" aria-label={t("Rate")}>
         <LoopLiveBox
@@ -103,10 +101,14 @@ export function PlaneRate({ axis, onPause, embed }: { axis: Axis; onPause: () =>
       </svg>
       </div>
       <SchemeKey />
-      <SchemeKnobs node={node} axis={axis === "d" ? "roll" : axis} gains={knobs} picked={pick} />
-      <p className="frame-hint">
-        {t("In FBWA this is the rudder damper. Ground steering is the nosewheel, only below GROUND_STEER_ALT.")}
-      </p>
+      {!compact ? (
+        <>
+          <SchemeKnobs node={node} axis={axis === "d" ? "roll" : axis} gains={knobs} picked={pick} />
+          <p className="frame-hint">
+            {t("In FBWA this is the rudder damper. Ground steering is the nosewheel, only below GROUND_STEER_ALT.")}
+          </p>
+        </>
+      ) : null}
     </div>
   );
 }

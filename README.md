@@ -8,21 +8,23 @@ Disconnected copy is [`docs/start.md`](docs/start.md) (English) and [`docs/start
 
 ## Views
 
+After HEARTBEAT, copter and plane share **one page**: map on the left, the selected card as a **loop** scheme top-right, **traces** bottom-right. Expand a pane; drag the gutter (layout is kept). **Pause** next to the title freezes the picture while MAVLink still runs. Plot window (8–60 s) is in **Options** — the stand keeps up to a minute of samples so a longer window already has history.
+
 ### Disconnected
 
 How to Link, how to start SITL on this OS, official First Time Setup / Tuning, what is in or out of scope.
 
 ### Copter (after HEARTBEAT)
 
-**Layers** — PosControl (outer) vs Attitude (inner). Dimmed blocks are not closed in this mode.
+**Map** — PosControl (outer) vs Attitude (inner). Dimmed blocks are not closed in this mode. **All loops** sits on the map.
 
-![Layers: Copter loop map](docs/cascade.png)
+![Copter: map, loop and traces on one page](docs/cascade.png)
 
-**Loop** — the selected card as a scheme (rate / angle AC_PID, PosControl P or PID). Axis buttons exist because **one** rate block serves roll, pitch, yaw and height.
+**Loop** — the selected card as a scheme (rate / angle AC_PID, PosControl P or PID). Axis buttons exist because **one** rate block serves roll, pitch, yaw and height. Expand the pane for formulas and extra knobs.
 
 ![Loop: closed PID diagram](docs/loop.png)
 
-**Scope** — traces for any Watch set.
+**Traces** — Watch any block this mode closes. Custom Watch can pick any live field.
 
 ![Plot: angle we want and rate we command](docs/plot.png)
 
@@ -32,15 +34,15 @@ How to Link, how to start SITL on this OS, official First Time Setup / Tuning, w
 
 ![Map: Plane L1 and TECS](docs/plane-map.png)
 
-**Loop** — the selected card as a scheme (rate PID + FF, L1 track → bank, TECS energy → pitch + throttle).
+**Loop** — rate PID + FF, L1 track → bank, TECS energy → pitch + throttle, yaw damper, ground steer. Click a TECS block on the expanded scheme for extra limits.
 
 ![Loop: TECS energy scheme](docs/plane-loop.png)
 
-**Scope** — traces for any Watch set.
+**Traces** — Watch any block this mode closes (`PID_TUNING`, `nav_roll` / `nav_pitch` vs `ATTITUDE`).
 
 ### SITL rail
 
-**SITL** before the title opens a left rail. Pick copter or plane, **Start** — the app downloads official SITL if needed (Windows: Mission Planner sitl-exe; Linux x86_64: firmware `arducopter` / `arduplane`) and links `tcpout:127.0.0.1:5770`. Wind, GPS, RC fail, motors, IMU are `SIM_*` while the sim is live. **Reset** restores values from the start of the link.
+**SITL** before the title opens a left rail. Pick copter or plane, **Start** — the app downloads official SITL if needed (Windows: Mission Planner sitl-exe; Linux x86_64: firmware `arducopter` / `arduplane`) and links `tcpout:127.0.0.1:5770`. While it runs: **Start** becomes **Stop**, **Pause** / **Reset** sit next to speedup. Wind, GPS, RC fail, motors, IMU are `SIM_*`. **Reset** restores values from the start of the link.
 
 ![SITL: vehicle thumbs and start](docs/sitl.png)
 
@@ -86,7 +88,7 @@ GitHub Actions (`.github/workflows/release.yml`) builds Windows NSIS/MSI and Lin
 
 Release assets:
 
-- `ArduLoops_1.1.0_x64-setup.exe` / `ArduLoops_1.1.0_x64_en-US.msi` — Windows
+- `ArduLoops_1.2.0_x64-setup.exe` / `ArduLoops_1.2.0_x64_en-US.msi` — Windows
 - `.deb` / `.rpm` / `.AppImage` — Linux x86_64
 
 ## Options
@@ -94,6 +96,7 @@ Release assets:
 Gear in the header.
 
 - **Language** — English (default) or Ukrainian. The choice is kept in the browser.
+- **Plot window** — how far back traces go (8 / 15 / 30 / 60 s). The stand keeps a minute of samples even while the display is paused.
 - **Init** (when linked, disarmed) — write the lab stand dump. Frame class applies while disarmed (1 Hz).
 - **Export** — write live parameters to a `.parm` file.
 - **MCP** — copy a Cursor config. The running app already serves HTTP `127.0.0.1:8767`.

@@ -31,7 +31,7 @@ const RESP_GAINS = [
   { key: "TECS_RLL2THR", label: "R2T", min: 0, max: 30, step: 0.5, digits: 1 },
 ] as const;
 
-export function PlaneEnergy({ onPause }: { onPause: () => void }) {
+export function PlaneEnergy() {
   const t = useT();
   const vehicle = useVehicle();
   const s = useViewSample();
@@ -78,9 +78,6 @@ export function PlaneEnergy({ onPause }: { onPause: () => void }) {
         <span>
           {t("Height and airspeed share energy. Pitch and throttle do the work. SPDWEIGHT: 0 height, 2 speed, 1 both.")}
         </span>
-        <button type="button" className={paused ? "pause-btn on" : "pause-btn"} onClick={onPause} title={t("Space")}>
-          {paused ? t("Resume") : t("Pause")}
-        </button>
       </div>
       <div className={frozen ? "plot idle" : paused ? "plot paused" : "plot"}>
         <canvas ref={c1} />

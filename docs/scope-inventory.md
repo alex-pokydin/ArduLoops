@@ -59,4 +59,4 @@ Airspeed is a readout on inner-loop panes (the plant scaler), not a third trace 
 
 ## Fallback
 
-No card selected (plane Map empty): the old two-pane axis overview — angle, then rate — so Scope is never blank.
+No card selected: traces follow the default rate loop so the plot is never blank.

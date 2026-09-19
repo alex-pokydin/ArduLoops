@@ -83,6 +83,7 @@ export function Aside({
   presets = true,
   vehicle = "copter",
   knobs = true,
+  inspect,
 }: {
   log: LogRow[];
   sel: string | null;
@@ -94,6 +95,7 @@ export function Aside({
   presets?: boolean;
   vehicle?: "copter" | "plane";
   knobs?: boolean;
+  inspect?: ReactNode;
 }) {
   const t = useT();
   const s = useViewSample();
@@ -588,6 +590,7 @@ export function Aside({
             )}
           </>
         ) : null}
+      {inspect}
       <div className="log-label">{t("Log")}</div>
       <div className="log" ref={logEl}>
         {log.map((row, idx) => (
