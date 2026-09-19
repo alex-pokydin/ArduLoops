@@ -21,12 +21,10 @@ const MOTOR_BITS = [0, 1, 2, 3];
 export function SimRail({
   sample,
   open,
-  resetRef,
   onSitlLink,
 }: {
   sample: Sample;
   open: boolean;
-  resetRef: { current: (() => void) | null };
   onSitlLink: (url: string) => void;
 }) {
   const t = useT();
@@ -78,12 +76,10 @@ export function SimRail({
     addLog(t("Restore simulation defaults"), "cmd");
   }
 
-  resetRef.current = onReset;
-
   return (
     <aside className="sim-rail" aria-label={t("Simulation")} hidden={!open} inert={!open || undefined}>
       <div className="sim-body">
-        <SitlLaunch sample={sample} onSitlLink={onSitlLink} />
+        <SitlLaunch sample={sample} onSitlLink={onSitlLink} onReset={onReset} />
         {sitl
           ? SIM_GROUPS.map((g) => <SimSection key={g.id} group={g} sample={sample} />)
           : null}
@@ -180,9 +176,11 @@ function sitlLine(sample: Sample, t: (key: string, vars?: Record<string, string 
 function SitlLaunch({
   sample,
   onSitlLink,
+  onReset,
 }: {
   sample: Sample;
   onSitlLink: (url: string) => void;
+  onReset: () => void;
 }) {
   const t = useT();
   const [prefs, setPrefs] = useState(loadSitlPrefs);
@@ -219,21 +217,28 @@ function SitlLaunch({
   const speedTimer = useRef(0);
   const dragging = useRef(false);
   const [speed, setSpeed] = useState(prefs.speedup);
+  /** Firmware Range is 1–10; below 1 is wiki slow-mo. Tiny speedup is our pause. */
+  const simPaused = liveSpeed != null && liveSpeed < 0.5;
 
   useEffect(() => {
     if (dragging.current) return;
-    if (liveSpeed != null) {
+    if (liveSpeed != null && liveSpeed >= 0.5) {
       setSpeed(Math.min(10, Math.max(1, Math.round(liveSpeed))));
       return;
     }
     if (!running) setSpeed(prefs.speedup);
   }, [running, liveSpeed, prefs.speedup]);
 
+  function writeSpeed(v: number, log: string) {
+    send({ op: "param", name: "SIM_SPEEDUP", value: v });
+    addLog(log, "cmd");
+  }
+
   function onSpeed(v: number, logIt: boolean) {
     dragging.current = !logIt;
     setSpeed(v);
     setPref({ speedup: v });
-    if (liveSpeed == null) {
+    if (liveSpeed == null || simPaused) {
       if (logIt) dragging.current = false;
       return;
     }
@@ -250,7 +255,20 @@ function SitlLaunch({
     }
   }
 
+  function onSimPause() {
+    if (liveSpeed == null) return;
+    if (simPaused) {
+      writeSpeed(speed, `SIM_SPEEDUP ${speed}`);
+      return;
+    }
+    const keep = Math.min(10, Math.max(1, Math.round(liveSpeed)));
+    setSpeed(keep);
+    setPref({ speedup: keep });
+    writeSpeed(0.01, t("Pause") + " · SITL");
+  }
+
   const liveVehicle = sample.sitl_vehicle === "plane" ? "plane" : sample.sitl_vehicle === "copter" ? "copter" : "";
+  const live = running || isSitl(sample.params);
 
   return (
     <>
@@ -276,14 +294,14 @@ function SitlLaunch({
           );
         })}
       </div>
-      <div className="sim-actions">
-        <button type="button" disabled={busy || running} onClick={onStart}>
-          {t("Start")}
-        </button>
-        <button type="button" disabled={!busy && !running} onClick={onStop}>
-          {t("Stop")}
-        </button>
-      </div>
+      <button
+        type="button"
+        className={busy ? "sim-run busy" : running ? "sim-run stop" : "sim-run start"}
+        aria-pressed={busy || running}
+        onClick={busy || running ? onStop : onStart}
+      >
+        {busy || running ? t("Stop") : t("Start")}
+      </button>
       <p className="sim-status">{sitlLine(sample, t)}</p>
       <button
         type="button"
@@ -308,7 +326,7 @@ function SitlLaunch({
       />
     </details>
     <details className="sim-sec more" open>
-      <summary>{t("speedup")}</summary>
+      <summary>{t("speedup")}{simPaused ? " · " + t("Pause") : ""}</summary>
       <div className="srow wide">
         <input
           type="range"
@@ -316,12 +334,33 @@ function SitlLaunch({
           max={10}
           step={1}
           value={speed}
-          disabled={busy}
+          disabled={busy || simPaused}
           onPointerUp={(ev) => onSpeed(Number((ev.currentTarget as HTMLInputElement).value), true)}
           onInput={(ev) => onSpeed(Number((ev.target as HTMLInputElement).value), false)}
         />
-        <b>{speed}×</b>
+        <b>{simPaused ? t("Pause") : `${speed}×`}</b>
       </div>
+      {live ? (
+        <div className="sim-speed-btns">
+          <button
+            type="button"
+            className={simPaused ? "pause-btn on" : "pause-btn"}
+            disabled={busy || liveSpeed == null}
+            onClick={onSimPause}
+          >
+            {simPaused ? t("Resume") : t("Pause")}
+          </button>
+          <button
+            type="button"
+            className="pause-btn"
+            disabled={busy || !isSitl(sample.params)}
+            onClick={onReset}
+            title={t("Restore simulation defaults")}
+          >
+            {t("Reset")}
+          </button>
+        </div>
+      ) : null}
     </details>
     </>
   );

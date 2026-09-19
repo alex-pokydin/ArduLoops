@@ -7,9 +7,9 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use mavlink::ardupilotmega::{
     MavAutopilot, MavCmd, MavMessage, MavModeFlag, MavParamType, MavType, PidTuningAxis,
     ATTITUDE_DATA, ATTITUDE_TARGET_DATA, COMMAND_LONG_DATA, GLOBAL_POSITION_INT_DATA, HEARTBEAT_DATA,
-    NAV_CONTROLLER_OUTPUT_DATA, PARAM_REQUEST_READ_DATA, PARAM_SET_DATA, PARAM_VALUE_DATA,
-    PID_TUNING_DATA, RC_CHANNELS_DATA, RC_CHANNELS_OVERRIDE_DATA, RC_CHANNELS_RAW_DATA,
-    REQUEST_DATA_STREAM_DATA, STATUSTEXT_DATA, VFR_HUD_DATA,
+    NAV_CONTROLLER_OUTPUT_DATA, PARAM_REQUEST_LIST_DATA, PARAM_REQUEST_READ_DATA, PARAM_SET_DATA,
+    PARAM_VALUE_DATA, PID_TUNING_DATA, RC_CHANNELS_DATA, RC_CHANNELS_OVERRIDE_DATA,
+    RC_CHANNELS_RAW_DATA, REQUEST_DATA_STREAM_DATA, STATUSTEXT_DATA, VFR_HUD_DATA,
 };
 use mavlink::{MavConnection, MavHeader};
 use serde::{Deserialize, Serialize};
@@ -449,6 +449,8 @@ pub enum Cmd {
     },
     #[serde(rename = "param_read")]
     ParamRead { name: String },
+    #[serde(rename = "params_list")]
+    ParamsList,
     #[serde(rename = "reboot")]
     Reboot,
     #[serde(rename = "sitl_start")]
@@ -949,7 +951,18 @@ fn request_streams(conn: &dyn MavConnection<MavMessage>, st: &LinkState) {
     }
 }
 
+fn request_param_list(conn: &dyn MavConnection<MavMessage>, st: &LinkState) {
+    send_msg(
+        conn,
+        &MavMessage::PARAM_REQUEST_LIST(PARAM_REQUEST_LIST_DATA {
+            target_system: st.target_system,
+            target_component: st.target_component,
+        }),
+    );
+}
+
 fn request_params(conn: &dyn MavConnection<MavMessage>, st: &LinkState) {
+    request_param_list(conn, st);
     for name in PARAM_WATCH.iter().chain(LAB_PARAMS.iter()) {
         send_msg(
             conn,
@@ -1163,6 +1176,7 @@ fn apply_cmd(
                 }),
             );
         }
+        Cmd::ParamsList => request_param_list(conn, st),
         Cmd::Init { params } => {
             if st.sample.armed {
                 return;

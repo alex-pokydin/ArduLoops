@@ -1,5 +1,5 @@
 import { t } from "./i18n/i18n";
-import type { Pane } from "./lib/traces";
+import { TONE, TONE_HEX, traceValue, type Pane } from "./lib/traces";
 import { wrap180, type Axis } from "./mav/axis";
 import { MAX_T } from "./mav/store";
 import type { Sample } from "./mav/types";
@@ -61,10 +61,10 @@ function plot(
   ctx: CanvasRenderingContext2D,
   c: HTMLCanvasElement,
   buf: Sample[],
-  series: Array<keyof Sample>,
+  picks: Array<(p: Sample) => number | null>,
   ymax: number,
   colors: string[],
-  gap?: [keyof Sample, keyof Sample],
+  gap?: [(p: Sample) => number | null, (p: Sample) => number | null],
 ): void {
   const [w, h, dpr] = size(c);
   ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
@@ -108,16 +108,16 @@ function plot(
     ctx.beginPath();
     let top = false;
     for (const p of buf) {
-      const v = p[ka];
-      if (typeof v !== "number" || Number.isNaN(v)) continue;
+      const v = ka(p);
+      if (v == null) continue;
       if (!top) {
         ctx.moveTo(x(p.t), y(v));
         top = true;
       } else ctx.lineTo(x(p.t), y(v));
     }
     for (let i = buf.length - 1; i >= 0; i--) {
-      const v = buf[i][kb];
-      if (typeof v !== "number" || Number.isNaN(v)) continue;
+      const v = kb(buf[i]);
+      if (v == null) continue;
       ctx.lineTo(x(buf[i].t), y(v));
     }
     if (top) {
@@ -126,14 +126,14 @@ function plot(
       ctx.fill();
     }
   }
-  series.forEach((key, i) => {
+  picks.forEach((pick, i) => {
     ctx.beginPath();
     ctx.strokeStyle = colors[i];
     ctx.lineWidth = colors[i] === TRACE.stick ? 1.6 : 2.5;
     let started = false;
     for (const p of buf) {
-      const v = p[key];
-      if (typeof v !== "number" || Number.isNaN(v)) continue;
+      const v = pick(p);
+      if (v == null) continue;
       const px = x(p.t);
       const py = y(v);
       if (!started) {
@@ -187,6 +187,33 @@ function nums(buf: Sample[], key: keyof Sample): number[] {
   });
 }
 
+function keyPick(key: keyof Sample) {
+  return (p: Sample) => {
+    const v = p[key];
+    return typeof v === "number" && Number.isFinite(v) ? v : null;
+  };
+}
+
+function plotKeys(
+  ctx: CanvasRenderingContext2D,
+  c: HTMLCanvasElement,
+  buf: Sample[],
+  keys: Array<keyof Sample>,
+  ymax: number,
+  colors: string[],
+  gap?: [keyof Sample, keyof Sample],
+) {
+  plot(
+    ctx,
+    c,
+    buf,
+    keys.map(keyPick),
+    ymax,
+    colors,
+    gap ? [keyPick(gap[0]), keyPick(gap[1])] : undefined,
+  );
+}
+
 export function drawPane(
   c: HTMLCanvasElement,
   ctx: CanvasRenderingContext2D,
@@ -194,11 +221,27 @@ export function drawPane(
   pane: Pane,
 ): void {
   const drawn = pane.unwrap ? unwrapHeading(buf) : buf;
-  const series = pane.traces.map((tr) => tr.key);
-  const colors = pane.traces.map((tr) => TRACE[tr.role]);
-  const span =
-    Math.max(pane.spanMin, ...series.flatMap((key) => nums(drawn, key).map(Math.abs))) * 1.25;
-  plot(ctx, c, drawn, series, span, colors, pane.gap);
+  const picks = pane.traces.map((tr) => (p: Sample) => traceValue(p, tr));
+  const colors = pane.custom
+    ? pane.traces.map((_, i) => TONE_HEX[TONE[i % TONE.length]])
+    : pane.traces.map((tr) => TRACE[tr.role]);
+  let span = pane.spanMin;
+  for (const p of drawn) {
+    for (const pick of picks) {
+      const v = pick(p);
+      if (v != null) span = Math.max(span, Math.abs(v));
+    }
+  }
+  const gap = pane.gap
+    ? ([(p: Sample) => {
+        const v = p[pane.gap![0]];
+        return typeof v === "number" && Number.isFinite(v) ? v : null;
+      }, (p: Sample) => {
+        const v = p[pane.gap![1]];
+        return typeof v === "number" && Number.isFinite(v) ? v : null;
+      }] as [(p: Sample) => number | null, (p: Sample) => number | null])
+    : undefined;
+  plot(ctx, c, drawn, picks, span * 1.25, colors, gap);
 }
 
 export function drawScope(
@@ -213,11 +256,11 @@ export function drawScope(
     const alts = nums(buf, "alt");
     const tars = nums(buf, "alt_tar");
     const span = Math.max(1, ...alts.map(Math.abs), ...tars.map(Math.abs)) * 1.25;
-    plot(x1, c1, buf, ["alt_tar", "alt"], span, [TRACE.target, TRACE.actual], ["alt_tar", "alt"]);
+    plotKeys(x1, c1, buf, ["alt_tar", "alt"], span, [TRACE.target, TRACE.actual], ["alt_tar", "alt"]);
     const climbs = nums(buf, "climb");
     const dens = nums(buf, "climb_des");
     const rspan = Math.max(0.5, ...climbs.map(Math.abs), ...dens.map(Math.abs)) * 1.25;
-    plot(x2, c2, buf, ["climb_des", "climb"], rspan, [TRACE.target, TRACE.actual], ["climb_des", "climb"]);
+    plotKeys(x2, c2, buf, ["climb_des", "climb"], rspan, [TRACE.target, TRACE.actual], ["climb_des", "climb"]);
     return;
   }
   if (axis === "yaw") {
@@ -226,11 +269,11 @@ export function drawScope(
     const tars = nums(drawn, "yaw_tar");
     const cmds = nums(drawn, "yaw_cmd");
     const span = Math.max(5, ...angs.map(Math.abs), ...tars.map(Math.abs), ...cmds.map(Math.abs)) * 1.25;
-    plot(x1, c1, drawn, ["yaw_cmd", "yaw_tar", "yaw"], span, [TRACE.stick, TRACE.target, TRACE.actual], ["yaw_tar", "yaw"]);
+    plotKeys(x1, c1, drawn, ["yaw_cmd", "yaw_tar", "yaw"], span, [TRACE.stick, TRACE.target, TRACE.actual], ["yaw_tar", "yaw"]);
     const rates = nums(buf, "yaw_rate");
     const dens = nums(buf, "yaw_des");
     const rspan = Math.max(12, ...rates.map(Math.abs), ...dens.map(Math.abs)) * 1.25;
-    plot(x2, c2, buf, ["yaw_des", "yaw_rate"], rspan, [TRACE.target, TRACE.actual], ["yaw_des", "yaw_rate"]);
+    plotKeys(x2, c2, buf, ["yaw_des", "yaw_rate"], rspan, [TRACE.target, TRACE.actual], ["yaw_des", "yaw_rate"]);
     return;
   }
   const angK = axis === "pitch" ? "pitch" : "roll";
@@ -242,9 +285,9 @@ export function drawScope(
   const cmds = nums(buf, cmdK);
   const tars = nums(buf, tarK);
   const span = Math.max(5, ...angs.map(Math.abs), ...cmds.map(Math.abs), ...tars.map(Math.abs)) * 1.25;
-  plot(x1, c1, buf, [cmdK, tarK, angK], span, [TRACE.stick, TRACE.target, TRACE.actual], [tarK, angK]);
+  plotKeys(x1, c1, buf, [cmdK, tarK, angK], span, [TRACE.stick, TRACE.target, TRACE.actual], [tarK, angK]);
   const rates = nums(buf, rateK);
   const dens = nums(buf, desK);
   const rspan = Math.max(12, ...rates.map(Math.abs), ...dens.map(Math.abs)) * 1.25;
-  plot(x2, c2, buf, [desK, rateK], rspan, [TRACE.target, TRACE.actual], [desK, rateK]);
+  plotKeys(x2, c2, buf, [desK, rateK], rspan, [TRACE.target, TRACE.actual], [desK, rateK]);
 }

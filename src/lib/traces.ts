@@ -4,7 +4,9 @@ import type { Sample } from "../mav/types";
 export type TraceRole = "stick" | "desired" | "target" | "actual";
 
 export type Trace = {
-  key: keyof Sample;
+  key?: keyof Sample;
+  /** Board PARAM_VALUE name — plotted from sample.params. */
+  param?: string;
   role: TraceRole;
   /** MAVLink / field name — shown as-is. */
   label: string;
@@ -21,7 +23,31 @@ export type Pane = {
   hud?: Array<"aspd" | "gspd">;
   /** Cascade cards that share this MAVLink plot. */
   fromIds?: string[];
+  /** Free mix of catalog lines; colors cycle, one shared scale. */
+  custom?: boolean;
 };
+
+export const CUSTOM_ID = "custom";
+
+export type CatalogTrace = Trace & {
+  id: string;
+  group: "live" | "param";
+  unit: string;
+};
+
+export const TONE = ["g", "w", "a", "c", "p", "o", "h"] as const;
+export type Tone = (typeof TONE)[number];
+export const TONE_HEX: Record<Tone, string> = {
+  g: "#6b7884",
+  w: "rgba(255,255,255,0.92)",
+  a: "#ffb74d",
+  c: "#4fc3f7",
+  p: "#6b8cff",
+  o: "#81c784",
+  h: "#ef5350",
+};
+
+const UNWRAP_KEYS = new Set<string>(["yaw", "yaw_tar", "yaw_cmd", "hdg"]);
 
 export const ROLE_CLASS: Record<TraceRole, string> = {
   stick: "g",
@@ -29,6 +55,103 @@ export const ROLE_CLASS: Record<TraceRole, string> = {
   target: "a",
   actual: "c",
 };
+
+const LIVE_FIELDS: Array<{ key: keyof Sample; label: string; unit: string; role: TraceRole }> = [
+  { key: "roll", label: "ATTITUDE.roll", unit: "°", role: "actual" },
+  { key: "pitch", label: "ATTITUDE.pitch", unit: "°", role: "actual" },
+  { key: "yaw", label: "ATTITUDE.yaw", unit: "°", role: "actual" },
+  { key: "rate", label: "PID_TUNING.achieved (roll)", unit: "°/s", role: "actual" },
+  { key: "pitch_rate", label: "PID_TUNING.achieved (pitch)", unit: "°/s", role: "actual" },
+  { key: "yaw_rate", label: "PID_TUNING.achieved (yaw)", unit: "°/s", role: "actual" },
+  { key: "des", label: "PID_TUNING.desired (roll)", unit: "°/s", role: "target" },
+  { key: "pitch_des", label: "PID_TUNING.desired (pitch)", unit: "°/s", role: "target" },
+  { key: "yaw_des", label: "PID_TUNING.desired (yaw)", unit: "°/s", role: "target" },
+  { key: "p", label: "PID_TUNING.P (roll)", unit: "", role: "desired" },
+  { key: "i", label: "PID_TUNING.I (roll)", unit: "", role: "desired" },
+  { key: "d", label: "PID_TUNING.D (roll)", unit: "", role: "desired" },
+  { key: "pitch_p", label: "PID_TUNING.P (pitch)", unit: "", role: "desired" },
+  { key: "pitch_i", label: "PID_TUNING.I (pitch)", unit: "", role: "desired" },
+  { key: "pitch_d", label: "PID_TUNING.D (pitch)", unit: "", role: "desired" },
+  { key: "yaw_p", label: "PID_TUNING.P (yaw)", unit: "", role: "desired" },
+  { key: "yaw_i", label: "PID_TUNING.I (yaw)", unit: "", role: "desired" },
+  { key: "yaw_d", label: "PID_TUNING.D (yaw)", unit: "", role: "desired" },
+  { key: "cmd", label: "RC roll", unit: "°", role: "stick" },
+  { key: "pitch_cmd", label: "RC pitch", unit: "°", role: "stick" },
+  { key: "yaw_cmd", label: "RC yaw", unit: "°", role: "stick" },
+  { key: "thr_cmd", label: "RC throttle", unit: "%", role: "stick" },
+  { key: "tar", label: "nav_roll / ATTITUDE_TARGET.roll", unit: "°", role: "target" },
+  { key: "pitch_tar", label: "nav_pitch / ATTITUDE_TARGET.pitch", unit: "°", role: "target" },
+  { key: "yaw_tar", label: "ATTITUDE_TARGET.yaw", unit: "°", role: "target" },
+  { key: "alt", label: "GLOBAL_POSITION_INT.relative_alt", unit: "m", role: "actual" },
+  { key: "alt_tar", label: "NAV_CONTROLLER_OUTPUT.alt_error → AGL", unit: "m", role: "target" },
+  { key: "climb", label: "GLOBAL_POSITION_INT.vz", unit: "m/s", role: "actual" },
+  { key: "climb_des", label: "climb demand", unit: "m/s", role: "target" },
+  { key: "aspd", label: "VFR_HUD.airspeed", unit: "m/s", role: "actual" },
+  { key: "gspd", label: "VFR_HUD.groundspeed", unit: "m/s", role: "actual" },
+  { key: "hdg", label: "VFR_HUD.heading", unit: "°", role: "target" },
+  { key: "thr_out", label: "VFR_HUD.throttle", unit: "%", role: "actual" },
+  { key: "att_hz", label: "ATT Hz", unit: "Hz", role: "actual" },
+  { key: "gain_p", label: "ATC_RAT_RLL_P", unit: "", role: "actual" },
+  { key: "gain_i", label: "ATC_RAT_RLL_I", unit: "", role: "actual" },
+  { key: "gain_d", label: "ATC_RAT_RLL_D", unit: "", role: "actual" },
+  { key: "input_tc", label: "ATC_INPUT_TC", unit: "s", role: "actual" },
+  { key: "acc_max", label: "ATC_ACC_R_MAX", unit: "°/s²", role: "actual" },
+  { key: "rate_max", label: "ATC_RATE_R_MAX", unit: "°/s", role: "actual" },
+];
+
+export function traceId(tr: Trace): string {
+  return tr.param ? "p:" + tr.param : String(tr.key ?? "");
+}
+
+export function traceValue(s: Sample, tr: Trace): number | null {
+  if (tr.param) {
+    const v = s.params?.[tr.param];
+    return typeof v === "number" && Number.isFinite(v) ? v : null;
+  }
+  if (tr.key) {
+    const v = s[tr.key];
+    return typeof v === "number" && Number.isFinite(v) ? v : null;
+  }
+  return null;
+}
+
+export function liveTraces(): CatalogTrace[] {
+  return LIVE_FIELDS.map((f) => ({
+    id: String(f.key),
+    key: f.key,
+    label: f.label,
+    unit: f.unit,
+    role: f.role,
+    group: "live",
+  }));
+}
+
+export function paramTraces(params: Record<string, number>): CatalogTrace[] {
+  return Object.keys(params)
+    .sort((a, b) => a.localeCompare(b))
+    .map((name) => ({
+      id: "p:" + name,
+      param: name,
+      label: name,
+      unit: "",
+      role: "actual" as const,
+      group: "param" as const,
+    }));
+}
+
+export function customCatalog(params: Record<string, number>): CatalogTrace[] {
+  return [...liveTraces(), ...paramTraces(params)];
+}
+
+export function resolveLine(id: string, catalog: CatalogTrace[]): CatalogTrace | undefined {
+  const hit = catalog.find((tr) => tr.id === id);
+  if (hit) return hit;
+  if (id.startsWith("p:")) {
+    const name = id.slice(2);
+    return { id, param: name, label: name, unit: "", role: "actual", group: "param" };
+  }
+  return liveTraces().find((tr) => tr.id === id);
+}
 
 export type Frame = "copter" | "plane";
 
@@ -226,16 +349,30 @@ export function panesOf(frame: Frame, sel: string | null, axis: Axis): Pane[] {
   return panes.length ? panes : overview(frame, a);
 }
 
+export function customPane(picked: CatalogTrace[]): Pane {
+  const units = [...new Set(picked.map((tr) => tr.unit).filter(Boolean))];
+  return {
+    title: "Custom",
+    hint: "Any live field or parameter. Mixed units share one scale.",
+    unit: units.length === 1 ? units[0] : "",
+    traces: picked.map(({ key, param, role, label }) => ({ key, param, role, label })),
+    spanMin: 1,
+    unwrap: picked.some((tr) => UNWRAP_KEYS.has(String(tr.key))),
+    custom: true,
+  };
+}
+
 /** Stack panes for several cards. Identical MAVLink traces collapse; names join. */
 export function panesForIds(frame: Frame, ids: string[], axis: Axis): Pane[] {
   const a = axis === "d" && frame === "plane" ? "roll" : axis;
-  if (!ids.length) return overview(frame, a);
+  const cardIds = ids.filter((id) => id !== CUSTOM_ID);
+  if (!cardIds.length) return overview(frame, a);
   const seen = new Map<string, Pane>();
   const out: Pane[] = [];
-  for (const id of ids) {
+  for (const id of cardIds) {
     const panes = frame === "copter" ? copterPanes(id, a) : planePanes(id, a);
     for (const pane of panes) {
-      const sig = pane.traces.map((tr) => tr.key).join(",") + "|" + pane.unit;
+      const sig = pane.traces.map((tr) => tr.param ?? tr.key).join(",") + "|" + pane.unit;
       const hit = seen.get(sig);
       if (hit) {
         if (!hit.fromIds) hit.fromIds = [];

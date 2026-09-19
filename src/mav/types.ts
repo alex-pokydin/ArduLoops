@@ -129,6 +129,7 @@ export type Cmd =
   | { op: "disconnect" }
   | { op: "init"; params: Record<string, number> }
   | { op: "param_read"; name: string }
+  | { op: "params_list" }
   | { op: "reboot" }
   | { op: "sitl_start"; vehicle: "copter" | "plane"; wipe: boolean; home: string; speedup: number }
   | { op: "sitl_stop" };

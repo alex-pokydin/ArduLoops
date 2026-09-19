@@ -33,6 +33,7 @@ function stamp(): string {
 }
 
 type Shell = "home" | "copter" | "plane";
+const SHELLS: Shell[] = ["home", "copter", "plane"];
 
 function frameFromUrl(): Shell | null {
   if (typeof window === "undefined") return null;
@@ -61,6 +62,61 @@ function isWaitDetail(detail: string | undefined): boolean {
   return /^чекаємо HEARTBEAT \(/i.test(detail || "") || /^Waiting HEARTBEAT \(/i.test(detail || "");
 }
 
+function ShellPicker({
+  value,
+  idle,
+  title,
+  onPick,
+}: {
+  value: Shell;
+  idle: boolean;
+  title: string;
+  onPick: (next: Shell) => void;
+}) {
+  const t = useT();
+  const box = useRef<HTMLDetailsElement>(null);
+  useEffect(() => {
+    const onPtr = (ev: PointerEvent) => {
+      const el = box.current;
+      if (!el?.open) return;
+      if (ev.target instanceof Node && el.contains(ev.target)) return;
+      el.open = false;
+    };
+    window.addEventListener("pointerdown", onPtr);
+    return () => window.removeEventListener("pointerdown", onPtr);
+  }, []);
+  return (
+    <details
+      ref={box}
+      className={idle ? "hdr-shell idle" : "hdr-shell"}
+      onKeyDown={(ev) => {
+        if (ev.code === "Space") ev.stopPropagation();
+      }}
+    >
+      <summary aria-label={t("View")} title={title}>
+        {value === "home" ? t("Home") : t(value)}
+      </summary>
+      <div className="hdr-shell-menu" role="listbox" aria-label={t("View")}>
+        {SHELLS.map((v) => (
+          <button
+            key={v}
+            type="button"
+            role="option"
+            aria-selected={value === v}
+            className={value === v ? "on" : undefined}
+            onClick={() => {
+              onPick(v);
+              if (box.current) box.current.open = false;
+            }}
+          >
+            {v === "home" ? t("Home") : t(v)}
+          </button>
+        ))}
+      </div>
+    </details>
+  );
+}
+
 export function App() {
   const t = useT();
   const s = useSyncExternalStore(subscribe, getSnapshot, getSnapshot);
@@ -71,7 +127,6 @@ export function App() {
   const [labOpen, setLabOpen] = useState(false);
   const [sitlOpen, setSitlOpen] = useState(false);
   const [pick, setPick] = useState<Shell | null>(() => frameFromUrl());
-  const sitlReset = useRef<(() => void) | null>(null);
   const linkCombo = useRef<HTMLDivElement | null>(null);
   const paused = isPaused();
   const live: Shell | null = s.ok && (s.frame === "plane" || s.frame === "copter") ? s.frame : null;
@@ -93,7 +148,7 @@ export function App() {
     const onKey = (ev: KeyboardEvent) => {
       if (ev.code !== "Space") return;
       const tag = (ev.target as HTMLElement | null)?.tagName;
-      if (tag && /INPUT|TEXTAREA|BUTTON|SELECT/.test(tag)) return;
+      if (tag && /INPUT|TEXTAREA|BUTTON|SELECT|SUMMARY/.test(tag)) return;
       ev.preventDefault();
       togglePause();
     };
@@ -213,22 +268,10 @@ export function App() {
         >
           {t("SITL")}
         </button>
-        {sitlOpen ? (
-          <button
-            type="button"
-            className="sitl-btn"
-            disabled={!isSitl(s.params)}
-            onClick={() => sitlReset.current?.()}
-            title={t("Restore simulation defaults")}
-          >
-            {t("Reset")}
-          </button>
-        ) : null}
       </div>
       <SimRail
         sample={s}
         open={sitlOpen}
-        resetRef={sitlReset}
         onSitlLink={(url) => {
           setLinkUrl(url);
           saveLink(url);
@@ -239,10 +282,9 @@ export function App() {
           <h1>
             ArduLoops
             <span className="hdr-dot" aria-hidden="true">·</span>
-            <select
-              className={shellAlive || shell === "home" ? "hdr-shell" : "hdr-shell idle"}
+            <ShellPicker
               value={shell}
-              aria-label={t("View")}
+              idle={!(shellAlive || shell === "home")}
               title={
                 shell === "home"
                   ? t("View")
@@ -250,12 +292,8 @@ export function App() {
                     ? t("View")
                     : t("Idle · this frame is not on the link")
               }
-              onChange={(ev) => onShell(ev.target.value as Shell)}
-            >
-              <option value="home">{t("Home")}</option>
-              <option value="copter">{t("copter")}</option>
-              <option value="plane">{t("plane")}</option>
-            </select>
+              onPick={onShell}
+            />
           </h1>
         </div>
         <p className="sub">

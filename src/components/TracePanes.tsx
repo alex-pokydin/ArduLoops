@@ -1,7 +1,7 @@
-import { useEffect, useRef } from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { useT } from "../i18n/i18n";
 import type { NodeDef } from "../lib/gains";
-import { ROLE_CLASS, type Pane } from "../lib/traces";
+import { CUSTOM_ID, ROLE_CLASS, TONE, traceId, traceValue, type CatalogTrace, type Pane } from "../lib/traces";
 import { isPaused } from "../mav/store";
 import type { Sample } from "../mav/types";
 import { useVehicle, useViewSample, viewBuffer } from "../mav/view";
@@ -25,6 +25,9 @@ export function TracePanes({
   checked,
   near,
   onToggle,
+  catalog,
+  customLines,
+  onToggleLine,
 }: {
   panes: Pane[];
   onPause: () => void;
@@ -32,6 +35,9 @@ export function TracePanes({
   checked: string[];
   near: Set<string>;
   onToggle: (id: string, on: boolean) => void;
+  catalog: CatalogTrace[];
+  customLines: string[];
+  onToggleLine: (id: string, on: boolean) => void;
 }) {
   const t = useT();
   const vehicle = useVehicle();
@@ -80,7 +86,7 @@ export function TracePanes({
     <>
       {panes.map((pane, i) => (
         <PaneBlock
-          key={(pane.fromIds?.join("+") || pane.title) + pane.traces.map((tr) => tr.key).join(",")}
+          key={pane.custom ? "custom" : (pane.fromIds?.join("+") || pane.title) + pane.traces.map((tr) => traceId(tr)).join(",")}
           pane={pane}
           blocks={blocks}
           sample={s}
@@ -91,6 +97,11 @@ export function TracePanes({
           watch={
             i === 0
               ? { blocks, checked, near, onToggle, panes }
+              : undefined
+          }
+          lines={
+            pane.custom
+              ? { catalog, picked: customLines, onToggle: onToggleLine }
               : undefined
           }
           canvasRef={(el) => {
@@ -122,9 +133,11 @@ function WatchPicker({
 }) {
   const t = useT();
   const box = useRef<HTMLDetailsElement>(null);
-  const n = checked.length;
-  const plots = panes.length;
-  const primary = blocks.find((b) => checked.includes(b.id));
+  const customOn = checked.includes(CUSTOM_ID);
+  const ids = checked.filter((id) => id !== CUSTOM_ID);
+  const n = ids.length;
+  const plots = panes.filter((p) => !p.custom).length;
+  const primary = blocks.find((b) => ids.includes(b.id));
   const label =
     n === 0
       ? t("Watch")
@@ -180,6 +193,142 @@ function WatchPicker({
         ) : (
           <p>{t("No vehicle yet")}</p>
         )}
+        <hr />
+        <label className={customOn ? "on" : undefined}>
+          <input
+            type="checkbox"
+            checked={customOn}
+            onChange={(ev) => onToggle(CUSTOM_ID, ev.target.checked)}
+          />
+          <span>{t("Custom")}</span>
+          <i>{t("pick any live line")}</i>
+        </label>
+      </div>
+    </details>
+  );
+}
+
+function menuPlace(el: HTMLElement): { up: boolean; max: number } {
+  const r = (el.querySelector("summary") ?? el).getBoundingClientRect();
+  const gap = 8;
+  const pad = 4;
+  const below = window.innerHeight - r.bottom - pad - gap;
+  const above = r.top - pad - gap;
+  const up = below < 280 && above > below;
+  return { up, max: Math.max(180, Math.floor(up ? above : below)) };
+}
+
+function LinePicker({
+  catalog,
+  picked,
+  onToggle,
+}: {
+  catalog: CatalogTrace[];
+  picked: string[];
+  onToggle: (id: string, on: boolean) => void;
+}) {
+  const t = useT();
+  const box = useRef<HTMLDetailsElement>(null);
+  const qRef = useRef<HTMLInputElement>(null);
+  const [q, setQ] = useState("");
+  const [open, setOpen] = useState(false);
+  const [place, setPlace] = useState({ up: false, max: 420 });
+  const n = picked.length;
+  const needle = q.trim().toLowerCase();
+  const visible = needle
+    ? catalog.filter((tr) => tr.label.toLowerCase().includes(needle) || tr.id.toLowerCase().includes(needle))
+    : catalog;
+  const live = visible.filter((tr) => tr.group === "live");
+  const params = visible.filter((tr) => tr.group === "param");
+
+  useLayoutEffect(() => {
+    if (!open) return;
+    const el = box.current;
+    if (!el) return;
+    const fit = () => setPlace(menuPlace(el));
+    fit();
+    window.addEventListener("resize", fit);
+    return () => window.removeEventListener("resize", fit);
+  }, [open]);
+
+  useEffect(() => {
+    const onPtr = (ev: PointerEvent) => {
+      const el = box.current;
+      if (!el?.open) return;
+      if (ev.target instanceof Node && el.contains(ev.target)) return;
+      el.open = false;
+    };
+    window.addEventListener("pointerdown", onPtr);
+    return () => window.removeEventListener("pointerdown", onPtr);
+  }, []);
+
+  return (
+    <details
+      ref={box}
+      className="watch-sel"
+      onToggle={(ev) => {
+        const on = ev.currentTarget.open;
+        setOpen(on);
+        if (on) {
+          setPlace(menuPlace(ev.currentTarget));
+          queueMicrotask(() => qRef.current?.focus());
+        } else setQ("");
+      }}
+      onKeyDown={(ev) => {
+        if (ev.code === "Space") ev.stopPropagation();
+      }}
+    >
+      <summary title={t("Live lines on this sample")}>
+        {n ? t("{n} lines", { n }) : t("Lines")}
+      </summary>
+      <div
+        className={place.up ? "watch-menu lines up" : "watch-menu lines"}
+        style={{ maxHeight: place.max }}
+        role="group"
+        aria-label={t("Live lines on this sample")}
+      >
+        <input
+          ref={qRef}
+          className="watch-search"
+          value={q}
+          spellCheck={false}
+          placeholder={t("Search")}
+          aria-label={t("Search")}
+          onChange={(ev) => setQ(ev.target.value)}
+          onKeyDown={(ev) => ev.stopPropagation()}
+        />
+        <div className="watch-list">
+          {live.length ? (
+            <div>
+              <p>{t("Live")} · {live.length}</p>
+              {live.map((tr) => {
+                const on = picked.includes(tr.id);
+                return (
+                  <label key={tr.id} className={on ? "on" : undefined}>
+                    <input type="checkbox" checked={on} onChange={(ev) => onToggle(tr.id, ev.target.checked)} />
+                    <span>{tr.label}</span>
+                    {tr.unit ? <i>{tr.unit}</i> : null}
+                  </label>
+                );
+              })}
+            </div>
+          ) : null}
+          {params.length ? (
+            <div>
+              <p>{t("Parameters")} · {params.length}</p>
+              {params.map((tr) => {
+                const on = picked.includes(tr.id);
+                return (
+                  <label key={tr.id} className={on ? "on" : undefined}>
+                    <input type="checkbox" checked={on} onChange={(ev) => onToggle(tr.id, ev.target.checked)} />
+                    <span>{tr.label}</span>
+                  </label>
+                );
+              })}
+            </div>
+          ) : null}
+          {!visible.length ? <p>{needle ? t("No matches") : t("No vehicle yet")}</p> : null}
+        </div>
       </div>
     </details>
   );
@@ -194,6 +343,7 @@ function PaneBlock({
   pauseBtn,
   onPause,
   watch,
+  lines,
   canvasRef,
 }: {
   pane: Pane;
@@ -208,6 +358,11 @@ function PaneBlock({
     checked: string[];
     near: Set<string>;
     panes: Pane[];
+    onToggle: (id: string, on: boolean) => void;
+  };
+  lines?: {
+    catalog: CatalogTrace[];
+    picked: string[];
     onToggle: (id: string, on: boolean) => void;
   };
   canvasRef: (el: HTMLCanvasElement | null) => void;
@@ -234,6 +389,9 @@ function PaneBlock({
             onToggle={watch.onToggle}
           />
         ) : null}
+        {lines ? (
+          <LinePicker catalog={lines.catalog} picked={lines.picked} onToggle={lines.onToggle} />
+        ) : null}
         {pauseBtn ? (
           <button type="button" className={paused ? "pause-btn on" : "pause-btn"} onClick={onPause} title={t("Space")}>
             {paused ? t("Resume") : t("Pause")}
@@ -245,10 +403,10 @@ function PaneBlock({
       </div>
       <div className="caption">
         <div className="legend">
-          {pane.traces.map((tr) => (
-            <span key={tr.key}>
-              <i className={ROLE_CLASS[tr.role]} />
-              {tr.label} <b>{fmt(sample[tr.key], d)}</b>
+          {pane.traces.map((tr, i) => (
+            <span key={traceId(tr)}>
+              <i className={pane.custom ? TONE[i % TONE.length] : ROLE_CLASS[tr.role]} />
+              {tr.label} <b>{fmt(traceValue(sample, tr), d)}</b>
             </span>
           ))}
           {pane.gap ? (
