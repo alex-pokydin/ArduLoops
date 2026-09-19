@@ -1,4 +1,4 @@
-import { useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
+import { useLayoutEffect, useMemo, useRef, useState } from "react";
 import {
   EDGES,
   NODES,
@@ -10,9 +10,10 @@ import {
   layoutCopter,
   nodeBand,
   nodesLiveIn,
-  pidTerms,
   isTuneNode,
   isLaterNode,
+  cardMarks,
+  hasKnobs,
   type Band,
   type NodeDef,
 } from "../cascade";
@@ -20,7 +21,7 @@ import { FrameGuide } from "./FrameGuide";
 import { fmtGain, liveGain, paramUi } from "./GainRow";
 import { t, useT } from "../i18n/i18n";
 import { axisTar, axisView, type Axis } from "../mav/axis";
-import { getSnapshot, subscribe } from "../mav/store";
+import { useViewSample } from "../mav/view";
 import type { Sample } from "../mav/types";
 
 function liveBits(node: NodeDef, s: Sample, axis: Axis): string {
@@ -102,13 +103,13 @@ export function Cascade({
   axis: Axis;
 }) {
   const t = useT();
-  const s = useSyncExternalStore(subscribe, getSnapshot, getSnapshot);
+  const s = useViewSample();
   const [showAll, setShowAll] = useState(false);
   const wrapRef = useRef<HTMLDivElement>(null);
-  const [width, setWidth] = useState(420);
-  const layout = useMemo(() => layoutCopter(width), [width]);
+  const [box, setBox] = useState({ w: 420, h: 0 });
+  const layout = useMemo(() => layoutCopter(box.w, box.h), [box]);
   const modeKey = showAll ? "ALL" : s.mode;
-  const live = nodesLiveIn(modeKey);
+  const live = !s.ok ? new Set<string>() : nodesLiveIn(modeKey);
   const band = isBandId(sel) ? sel : null;
   const node = band ? null : NODES.find((n) => n.id === sel) ?? null;
   const boxById = useMemo(() => {
@@ -129,7 +130,7 @@ export function Cascade({
   useLayoutEffect(() => {
     const el = wrapRef.current;
     if (!el) return;
-    const sync = () => setWidth(el.clientWidth);
+    const sync = () => setBox({ w: el.clientWidth, h: el.clientHeight });
     sync();
     const ro = new ResizeObserver(sync);
     ro.observe(el);
@@ -265,7 +266,8 @@ export function Cascade({
               if (!box) return null;
               const on = live.has(n.id);
               const inBand = band != null && nodeBand(n.id) === band;
-              const pid = pidTerms(n);
+              const marks = cardMarks(n);
+              const knobs = hasKnobs(n);
               const tune = isTuneNode(n);
               const later = isLaterNode(n);
               const cls = [
@@ -273,8 +275,8 @@ export function Cascade({
                 nodeBand(n.id),
                 sel === n.id ? "sel" : inBand || neighbors.has(n.id) ? "rel" : "",
                 !on || (band != null && !inBand) ? "dim" : "",
-                pid.length ? "has-pid" : "",
-                tune ? "tune" : later ? "later" : pid.length ? "" : "struct",
+                marks.length ? "has-pid" : "",
+                !knobs ? "struct" : tune ? "tune" : later ? "later" : "",
                 axis === "d" && n.axes === "d" ? "d-on" : "",
               ]
                 .filter(Boolean)
@@ -293,9 +295,9 @@ export function Cascade({
                     onSel(n.id === sel ? null : n.id);
                   }}
                 >
-                  {pid.length ? (
+                  {marks.length ? (
                     <span className="pid" aria-hidden="true">
-                      {pid.map((k) => (
+                      {marks.map((k) => (
                         <span key={k}>{k}</span>
                       ))}
                     </span>
@@ -310,7 +312,7 @@ export function Cascade({
         <div className="cmap-key" aria-hidden="true">
           <span className="k-tune">{t("tune · manuals")}</span>
           <span className="k-later">{t("sometimes · Loiter")}</span>
-          <span className="k-struct">{t("not a regulator")}</span>
+          {NODES.some((n) => !hasKnobs(n)) ? <span className="k-struct">{t("dashed · no knobs")}</span> : null}
         </div>
         <FrameGuide
           focus={
@@ -347,9 +349,9 @@ export function Cascade({
                 ? ` · ${t("tune")}`
                 : isLaterNode(node)
                   ? ` · ${t("sometimes")}`
-                  : pidTerms(node).length
+                  : hasKnobs(node)
                     ? ""
-                    : ` · ${t("not a regulator")}`}
+                    : ` · ${t("no knobs")}`}
               {node.inner && axis !== "d" ? ` · ${t(axisView(s, axis).name)}` : ""}
             </div>
             {dimmed ? (
@@ -410,6 +412,9 @@ export function Cascade({
         ) : (
           <>
             <p>
+              {t("A letter on a card is a knob: P I D, or TC, ANGLE_MAX, hover. Left bar is first flight; the Loiter stack comes after attitude.")}
+            </p>
+            <p>
               {t("The manuals tune attitude first: rate (Manual / QuikTune / AutoTune), then angle P, then stick feel (Input Shaping). PSC position loops are usually left at defaults.")}
             </p>
             <p>
@@ -425,7 +430,7 @@ export function Cascade({
               {t("The boundary is lean: horizontal acceleration becomes desired roll and pitch. Then ATC works in the body (° and °/s). Vertical skips angle: Down acceleration (PSC_D_ACC) goes straight to throttle. Yaw is the same two inner loops: angle and rate.")}
             </p>
             <p className="io">
-              {t("There is no separate horizontal-acceleration PID. WP, Loiter and Circle set targets; they are not regulators. Not shown: Plane, CC2_, FHLD, FOLL, heli.")}
+              {t("WP, Loiter and Circle write targets for PosControl. Horizontal output is lean; vertical accel goes to throttle. Not shown: Plane, CC2_, FHLD, FOLL, heli.")}
               {" "}
               {!showAll
                 ? t("In {mode}, inactive blocks are not closed now.", { mode: s.mode })

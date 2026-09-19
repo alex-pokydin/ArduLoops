@@ -1,8 +1,10 @@
 import { useEffect, useRef, useState } from "react";
-import type { Gain, NodeDef } from "../cascade";
+import type { Gain, NodeDef } from "../lib/gains";
 import { addLog } from "../log";
 import { gainKeysForAxis, remapGainKey, type Axis } from "../mav/axis";
 import { send } from "../mav/cmd";
+import { getLatest } from "../mav/store";
+import { frameLive, useVehicle } from "../mav/view";
 import type { Sample } from "../mav/types";
 
 export function paramOf(s: Sample, key: string): number | null {
@@ -51,7 +53,23 @@ export function fmtGain(g: Gain, v: number, name = g.key): string {
   if (/_SMAX$/.test(name) || /_FF$/.test(name)) {
     if (v <= 0) return "off";
   }
-  if (name === "MOT_THST_HOVER") return `${Math.round(v * 100)}%`;
+  if (name === "MOT_THST_HOVER" || name === "TRIM_THROTTLE" || name === "THR_MAX" || name === "THR_MIN") {
+    if (name === "MOT_THST_HOVER") return `${Math.round(v * 100)}%`;
+    return `${v.toFixed(g.digits)}%`;
+  }
+  if (
+    name === "AIRSPEED_CRUISE" ||
+    name === "AIRSPEED_MIN" ||
+    name === "AIRSPEED_MAX" ||
+    name === "SCALING_SPEED" ||
+    name === "TECS_CLMB_MAX" ||
+    name === "TECS_SINK_MIN" ||
+    name === "TECS_SINK_MAX"
+  ) {
+    return `${v.toFixed(g.digits)} m/s`;
+  }
+  if (/TCONST$/.test(name) || name === "TECS_TIME_CONST") return `${v.toFixed(g.digits)} s`;
+  if (name === "GROUND_STEER_ALT") return `${v.toFixed(g.digits)} m`;
   if (name === "PILOT_SPD_DN" || name === "PILOT_SPEED_DN") {
     if (v <= 0) return "up";
     return `${v.toFixed(g.digits)} m/s`;
@@ -86,6 +104,7 @@ export function GainRow({
   axis?: Axis;
 }) {
   const live = liveGain(gain, sample, axis);
+  const vehicle = useVehicle();
   const readKey = live.name;
   const writeKeys = gain.legacy
     ? [live.name]
@@ -101,9 +120,10 @@ export function GainRow({
   }, [remote]);
 
   function push(v: number, logIt: boolean) {
+    if (!frameLive(vehicle, getLatest())) return;
     setLocal(v);
     const fire = () => {
-      if (gain.tune && axis !== "yaw" && axis !== "d") {
+      if (gain.tune && sample.frame !== "plane" && axis !== "yaw" && axis !== "d") {
         const p = gain.tune === "p" ? v : paramOf(sample, "ATC_RAT_RLL_P") ?? 0.135;
         const i = gain.tune === "i" ? v : paramOf(sample, "ATC_RAT_RLL_I") ?? 0.135;
         const d = gain.tune === "d" ? v : paramOf(sample, "ATC_RAT_RLL_D") ?? 0.0036;
@@ -142,6 +162,7 @@ export function GainRow({
         max={gain.max}
         step={gain.step}
         value={shown}
+        disabled={!frameLive(vehicle, sample)}
         title={`${readKey} · ${node.param}`}
         onPointerDown={() => {
           dragging.current = true;

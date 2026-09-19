@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { useT } from "../i18n/i18n";
 import { addLog } from "../log";
 import { send } from "../mav/cmd";
+import { SITL_LINK } from "../mav/link";
 import {
   catalogDef,
   isSitl,
@@ -21,10 +22,12 @@ export function SimRail({
   sample,
   open,
   resetRef,
+  onSitlLink,
 }: {
   sample: Sample;
   open: boolean;
   resetRef: { current: (() => void) | null };
+  onSitlLink: (url: string) => void;
 }) {
   const t = useT();
   const params = sample.params || {};
@@ -72,7 +75,7 @@ export function SimRail({
       if (v == null) continue;
       send({ op: "param", name, value: v });
     }
-    addLog(t("Restore SITL defaults"), "cmd");
+    addLog(t("Restore simulation defaults"), "cmd");
   }
 
   resetRef.current = onReset;
@@ -80,15 +83,247 @@ export function SimRail({
   return (
     <aside className="sim-rail" aria-label={t("Simulation")} hidden={!open} inert={!open || undefined}>
       <div className="sim-body">
-        {!sample.ok ? (
-          <p className="sim-empty">{t("No link")}</p>
-        ) : !sitl ? (
-          <p className="sim-empty">{t("Not SITL — these parameters only exist in simulation.")}</p>
-        ) : (
-          SIM_GROUPS.map((g) => <SimSection key={g.id} group={g} sample={sample} />)
-        )}
+        <SitlLaunch sample={sample} onSitlLink={onSitlLink} />
+        {sitl
+          ? SIM_GROUPS.map((g) => <SimSection key={g.id} group={g} sample={sample} />)
+          : null}
       </div>
     </aside>
+  );
+}
+
+const SITL_PREF = "arduloops.sitl";
+const DEFAULT_HOME = "-35.363261,149.165230,584,353";
+
+type SitlPrefs = {
+  vehicle: "copter" | "plane";
+  wipe: boolean;
+  home: string;
+  speedup: number;
+};
+
+function loadSitlPrefs(): SitlPrefs {
+  try {
+    const raw = JSON.parse(localStorage.getItem(SITL_PREF) || "");
+    const vehicle = raw.vehicle === "plane" ? "plane" : "copter";
+    const wipe = !!raw.wipe;
+    const home = typeof raw.home === "string" && raw.home.trim() ? raw.home.trim() : DEFAULT_HOME;
+    const speedup = Math.min(10, Math.max(1, Math.round(Number(raw.speedup) || 1)));
+    return { vehicle, wipe, home, speedup };
+  } catch {
+    return { vehicle: "copter", wipe: false, home: DEFAULT_HOME, speedup: 1 };
+  }
+}
+
+function saveSitlPrefs(p: SitlPrefs): void {
+  try {
+    localStorage.setItem(SITL_PREF, JSON.stringify(p));
+  } catch {
+    /* ignore */
+  }
+}
+
+function SitlThumb({ kind }: { kind: "copter" | "plane" }) {
+  if (kind === "copter") {
+    return (
+      <svg viewBox="0 0 96 72" aria-hidden="true">
+        <g fill="currentColor" fillOpacity="0.14" stroke="currentColor" strokeWidth="1.7" strokeLinejoin="round">
+          <line x1="24" y1="16" x2="72" y2="56" fill="none" />
+          <line x1="72" y1="16" x2="24" y2="56" fill="none" />
+          <circle cx="24" cy="16" r="11" />
+          <circle cx="72" cy="16" r="11" />
+          <circle cx="24" cy="56" r="11" />
+          <circle cx="72" cy="56" r="11" />
+          <rect x="38" y="28" width="20" height="16" rx="3" />
+          <polygon points="48,17 42,29 54,29" />
+        </g>
+      </svg>
+    );
+  }
+  return (
+    <svg viewBox="0 0 96 72" aria-hidden="true">
+      <g fill="currentColor" fillOpacity="0.16" stroke="currentColor" strokeWidth="1.7" strokeLinejoin="round">
+        <polygon points="48,5 43,18 53,18" />
+        <rect x="44.5" y="16" width="7" height="46" rx="2" />
+        <polygon points="6,36 48,27 90,36 48,41" />
+        <polygon points="32,56 48,52 64,56 48,62" />
+      </g>
+    </svg>
+  );
+}
+
+function sitlLine(sample: Sample, t: (key: string, vars?: Record<string, string | number>) => string): string {
+  const phase = sample.sitl_phase || "idle";
+  const vehicle = sample.sitl_vehicle === "plane" ? "plane" : "copter";
+  const detail = sample.sitl_detail || "";
+  const load =
+    sample.sitl_running && (sample.sitl_rss_mb || 0) > 0
+      ? " · " +
+        t("{cpu}% · {ram} MB", {
+          cpu: Math.round(sample.sitl_cpu || 0),
+          ram: Math.round(sample.sitl_rss_mb || 0),
+        })
+      : "";
+  if (phase === "download") return t("Downloading {file}", { file: detail || "SITL" });
+  if (phase === "start") return t("Starting {vehicle}…", { vehicle: t(vehicle) });
+  if (phase === "run") {
+    const hb = sample.frame === "plane" || sample.frame === "copter" ? sample.frame : "";
+    if (sample.ok && hb === vehicle) {
+      return t("Running {vehicle} · tcp 5770", { vehicle: t(vehicle) }) + load;
+    }
+    return t("Waiting for HEARTBEAT on 5770") + load;
+  }
+  if (phase === "error") return t("SITL error: {err}", { err: detail || "?" });
+  return t("SITL stopped");
+}
+
+function SitlLaunch({
+  sample,
+  onSitlLink,
+}: {
+  sample: Sample;
+  onSitlLink: (url: string) => void;
+}) {
+  const t = useT();
+  const [prefs, setPrefs] = useState(loadSitlPrefs);
+  const phase = sample.sitl_phase || "idle";
+  const running = !!sample.sitl_running;
+  const busy = phase === "download" || phase === "start";
+
+  function setPref(next: Partial<SitlPrefs>) {
+    setPrefs((p) => {
+      const merged = { ...p, ...next };
+      saveSitlPrefs(merged);
+      return merged;
+    });
+  }
+
+  function onStart() {
+    onSitlLink(SITL_LINK);
+    send({
+      op: "sitl_start",
+      vehicle: prefs.vehicle,
+      wipe: prefs.wipe,
+      home: prefs.home,
+      speedup: prefs.speedup,
+    });
+    addLog(t("Start") + " · " + t(prefs.vehicle), "cmd");
+  }
+
+  function onStop() {
+    send({ op: "sitl_stop" });
+    addLog(t("Stop"), "cmd");
+  }
+
+  const liveSpeed = sample.params?.SIM_SPEEDUP;
+  const speedTimer = useRef(0);
+  const dragging = useRef(false);
+  const [speed, setSpeed] = useState(prefs.speedup);
+
+  useEffect(() => {
+    if (dragging.current) return;
+    if (liveSpeed != null) {
+      setSpeed(Math.min(10, Math.max(1, Math.round(liveSpeed))));
+      return;
+    }
+    if (!running) setSpeed(prefs.speedup);
+  }, [running, liveSpeed, prefs.speedup]);
+
+  function onSpeed(v: number, logIt: boolean) {
+    dragging.current = !logIt;
+    setSpeed(v);
+    setPref({ speedup: v });
+    if (liveSpeed == null) {
+      if (logIt) dragging.current = false;
+      return;
+    }
+    const fire = () => {
+      send({ op: "param", name: "SIM_SPEEDUP", value: v });
+      if (logIt) addLog(`SIM_SPEEDUP ${v}`, "cmd");
+    };
+    window.clearTimeout(speedTimer.current);
+    if (logIt) {
+      dragging.current = false;
+      fire();
+    } else {
+      speedTimer.current = window.setTimeout(fire, 70);
+    }
+  }
+
+  const liveVehicle = sample.sitl_vehicle === "plane" ? "plane" : sample.sitl_vehicle === "copter" ? "copter" : "";
+
+  return (
+    <>
+    <div className="sim-launch">
+      <div className="sim-pick" role="group" aria-label={t("Simulation")}>
+        {(["copter", "plane"] as const).map((v) => {
+          const on = prefs.vehicle === v;
+          const live = running && liveVehicle === v;
+          const spin = busy && liveVehicle === v;
+          return (
+            <button
+              key={v}
+              type="button"
+              className={[on && "on", live && "live", spin && "busy"].filter(Boolean).join(" ") || undefined}
+              disabled={busy || running}
+              aria-pressed={on}
+              onClick={() => setPref({ vehicle: v })}
+            >
+              {live || spin ? <span className="pip" aria-hidden="true" /> : null}
+              <SitlThumb kind={v} />
+              <b>{t(v)}</b>
+            </button>
+          );
+        })}
+      </div>
+      <div className="sim-actions">
+        <button type="button" disabled={busy || running} onClick={onStart}>
+          {t("Start")}
+        </button>
+        <button type="button" disabled={!busy && !running} onClick={onStop}>
+          {t("Stop")}
+        </button>
+      </div>
+      <p className="sim-status">{sitlLine(sample, t)}</p>
+      <button
+        type="button"
+        className={`map-sw sim-tog${prefs.wipe ? " on hot" : ""}`}
+        aria-pressed={prefs.wipe}
+        disabled={busy || running}
+        onClick={() => setPref({ wipe: !prefs.wipe })}
+      >
+        <span className="track" aria-hidden="true" />
+        {t("Wipe")}
+      </button>
+    </div>
+    <details className="sim-sec more" open>
+      <summary>{t("home")}</summary>
+      <input
+        className="sim-home"
+        value={prefs.home}
+        spellCheck={false}
+        disabled={busy || running}
+        onChange={(ev) => setPref({ home: ev.target.value })}
+        title={t("home")}
+      />
+    </details>
+    <details className="sim-sec more" open>
+      <summary>{t("speedup")}</summary>
+      <div className="srow wide">
+        <input
+          type="range"
+          min={1}
+          max={10}
+          step={1}
+          value={speed}
+          disabled={busy}
+          onPointerUp={(ev) => onSpeed(Number((ev.currentTarget as HTMLInputElement).value), true)}
+          onInput={(ev) => onSpeed(Number((ev.target as HTMLInputElement).value), false)}
+        />
+        <b>{speed}×</b>
+      </div>
+    </details>
+    </>
   );
 }
 

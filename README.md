@@ -1,38 +1,54 @@
 # ArduLoops
 
-A live stand for **reading ArduPilot copter loops**. Link a SITL (or any MAVLink) vehicle, then watch target vs actual, which loops the current mode closes, and how a PID loop is wired.
+A live stand for **seeing ArduPilot loops** — copter and plane. Until a vehicle is linked, the app shows a **disconnected landing** (not a fake copter). HEARTBEAT then mounts the matching shell. **SITL** in the header starts an official sitl-exe from the left rail.
 
-We want an angle. We do not command the angle — we command the rate that takes us there.
+The wiki is the protocol. This stand shows which loops the current mode actually closes.
+
+Disconnected copy is [`docs/start.md`](docs/start.md) (English) and [`docs/start.uk.md`](docs/start.uk.md). Home renders that markdown, including the screenshots.
 
 ## Views
 
-### Plot
+### Disconnected
 
-Angle we want (°) and rate we command (°/s). Legend maps colour to **stick / target / actual**. Pause with the button or Space.
+How to Link, how to start SITL on this OS, official First Time Setup / Tuning, what is in or out of scope.
 
-![Plot: angle we want and rate we command](docs/plot.png)
+### Copter (after HEARTBEAT)
 
-### Layers
-
-Stock Copter map: PosControl (outer) holds *where to be*, Attitude Control (inner) holds the angle. Inactive blocks in the current mode are dimmed. Click a block to inspect gains.
+**Layers** — PosControl (outer) vs Attitude (inner). Dimmed blocks are not closed in this mode.
 
 ![Layers: Copter loop map](docs/cascade.png)
 
-### Loop
-
-Closed regulator: setpoint → error → P/I/D → plant → actual, with feedback. Same P/I/D as the selected block on the map. Pause with the button or Space. **Extend** paints the extra AC_PID boxes in red.
+**Loop** — the selected card as a scheme (rate / angle AC_PID, PosControl P or PID). Axis buttons exist because **one** rate block serves roll, pitch, yaw and height.
 
 ![Loop: closed PID diagram](docs/loop.png)
 
-### SITL
+**Scope** — traces for any Watch set.
 
-**SITL** before the title opens a left rail (header and the rest of the UI shift right). Wind, GPS, RC fail, motors, IMU, compass, baro, battery, and sim speed — `SIM_*` on SITL only. **Reset** restores the values from the start of the link.
+![Plot: angle we want and rate we command](docs/plot.png)
+
+### Plane (after HEARTBEAT)
+
+**Map** — L1 + TECS outside, roll and pitch as **two cards**, yaw damper from AHRS roll, ground steer, then throttle / nose and aileron / elevator / rudder. Empty map shows the live path.
+
+![Map: Plane L1 and TECS](docs/plane-map.png)
+
+**Loop** — the selected card as a scheme (rate PID + FF, L1 track → bank, TECS energy → pitch + throttle).
+
+![Loop: TECS energy scheme](docs/plane-loop.png)
+
+**Scope** — traces for any Watch set.
+
+### SITL rail
+
+**SITL** before the title opens a left rail. Pick copter or plane, **Start** — the app downloads sitl-exe if needed and links `tcpout:127.0.0.1:5770`. Wind, GPS, RC fail, motors, IMU are `SIM_*` while the sim is live. **Reset** restores values from the start of the link.
+
+![SITL: vehicle thumbs and start](docs/sitl.png)
 
 ## Requirements
 
 - [Node.js](https://nodejs.org/) (for the UI)
 - [Rust](https://rustup.rs/) (MAVLink; browser and desktop)
-- An ArduPilot vehicle on MAVLink — typically [SITL](https://ardupilot.org/dev/docs/sitl-simulator-software-in-the-loop.html) on `tcpout:127.0.0.1:5763`
+- An ArduPilot vehicle on MAVLink — in-app **SITL**, or [SITL](https://ardupilot.org/dev/docs/sitl-simulator-software-in-the-loop.html) you start yourself. With `--no-mavproxy`, Link `tcpout:127.0.0.1:5760`. With MAVProxy, often `tcpout:127.0.0.1:5763`.
 
 ## Run in the browser
 
@@ -41,41 +57,42 @@ npm install
 npm run dev
 ```
 
-Open [http://127.0.0.1:5173](http://127.0.0.1:5173). Vite is the page; a headless Rust process owns MAVLink and HTTP `127.0.0.1:8767`. No installer, no Tauri window.
+Open [http://127.0.0.1:5173](http://127.0.0.1:5173). `dev` starts Vite and the headless MAVLink process (`127.0.0.1:8767`).
+
+`?frame=plane` or `?frame=copter` still previews that shell without a link.
 
 Paste a connection string and click **Link**:
 
 | URL | Typical use |
 | --- | --- |
-| `tcpout:127.0.0.1:5763` | SITL default (ArduLoops connects out) |
-| `tcpout:127.0.0.1:5762` | SITL second GCS — use if 5763 is already taken |
-| `tcp:host:port` | TCP inbound |
-| `udpin:0.0.0.0:14550` | UDP listen (GCS-style) |
+| `tcpout:127.0.0.1:5770` | In-app SITL |
+| `tcpout:127.0.0.1:5760` | SITL with `--no-mavproxy` (SERIAL0) |
+| `tcpout:127.0.0.1:5763` | Extra SITL GCS / MAVProxy first extra |
+| `tcpout:127.0.0.1:5762` | If 5763 is already taken |
+| `udpin:0.0.0.0:14550` | UDP listen (GCS-style). Vehicle must send here; close other GCS first. |
+| `udpout:127.0.0.1:14550` | UDP client, when the vehicle listens |
 
-Each SITL TCP port accepts **one** GCS. Do not run `npm run dev` and the desktop app against the same port at once — the second instance will try `5762`.
-
-Raise throttle in Stabilize if the craft is sitting on the ground — otherwise the stick barely moves attitude.
+Each SITL TCP port accepts **one** GCS. Do not run `npm run dev` and the desktop app against the same port at once.
 
 ## Desktop
 
 ```bash
-npm run desktop    # Tauri window, same UI
-npm run build      # Windows installers
+npm run build      # Windows installers (same UI as `dev`)
 ```
 
 `npm run build` writes:
 
-- `src-tauri/target/release/bundle/nsis/ArduLoops_0.4.0_x64-setup.exe`
-- `src-tauri/target/release/bundle/msi/ArduLoops_0.4.0_x64_en-US.msi`
+- `src-tauri/target/release/bundle/nsis/ArduLoops_1.0.0_x64-setup.exe`
+- `src-tauri/target/release/bundle/msi/ArduLoops_1.0.0_x64_en-US.msi`
 
 ## Options
 
 Gear in the header.
 
 - **Language** — English (default) or Ukrainian. The choice is kept in the browser.
-- **Init** (when linked, disarmed) — write the lab stand dump (ArduPilot SITL `copter.parm` + Quad X / failsafe / `GCS_PID_MASK` / stock ATC). Frame class applies while disarmed (1 Hz). Init does not reboot: Mission Planner SITL often restarts with `-w` and comes back as `Frame: UNSUPPORTED`.
+- **Init** (when linked, disarmed) — write the lab stand dump. Frame class applies while disarmed (1 Hz).
 - **Export** — write live parameters to a `.parm` file.
-- **MCP** — copy a Cursor config. The running app already serves HTTP `127.0.0.1:8767`. Cursor launches `arduloops.exe --mcp`; that process is not a second MAVLink link.
+- **MCP** — copy a Cursor config. The running app already serves HTTP `127.0.0.1:8767`.
 
 ## MCP
 
@@ -104,6 +121,7 @@ npm run cli -- mode STABILIZE
 
 ## Notes
 
-- Built for **Copter**. The Plane layers view (RLL_ / PTCH_ / L1 / TECS) is still a stub.
-- Presets **Wool / Stock / Sharp** illustrate feel on the stand. They are not a tuning protocol.
+- Copter: `ATC_*` / `PSC_*`. Plane: `RLL_*` / `PTCH_*` / `YAW2SRV_*` / `NAVL1_*` / `TECS_*` / `STEER2SRV_*`.
+- Out of scope: QuadPlane, autoland flare, full harmonic-notch wizard, Mission Planner’s full tree, log FFT.
+- Copter presets **Wool / Stock / Sharp** are feel on the stand, not a tuning protocol.
 - Do not bump `mavlink` in `src-tauri/Cargo.toml` (stay on **0.13.1**).

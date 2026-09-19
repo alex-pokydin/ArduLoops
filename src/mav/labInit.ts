@@ -1,7 +1,7 @@
 import standCopter from "./stand-copter.parm?raw";
 import standPlane from "./stand-plane.parm?raw";
 
-/** Stock SITL dump + lab overlay. No sensor IDs. */
+/** Stock stand dump + lab overlay. No sensor IDs. */
 export function parseParmFile(
   text: string,
   allow?: Record<string, number>,
@@ -45,7 +45,7 @@ function fmtNum(v: number): string {
 
 export function formatParm(params: Record<string, number>): string {
   const lines = [
-    "# ArduLoops · SITL stand (stock copter.parm + lab overlay)",
+    "# ArduLoops · stand (stock copter.parm + lab overlay)",
     "# Init writes this dump. FRAME_CLASS applies live (no reboot).",
     "",
   ];

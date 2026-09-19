@@ -96,14 +96,24 @@ const BRIDGE: Record<string, string> = {
 
 /** Map live Sample.detail (often still Ukrainian from the bridge) to a display string. */
 export function tDetail(detail: string | undefined): string {
-  if (!detail) return t("SITL not found");
+  if (!detail) return t("No link");
   const mapped = BRIDGE[detail];
   if (mapped) return t(mapped);
+  const busy = detail.match(/^порт зайнятий \((.+)\)$/i) || detail.match(/^port in use \((.+)\)$/i);
+  if (busy) {
+    return t("UDP port in use ({url}). Close Mission Planner / QGC.", { url: busy[1] });
+  }
+  const wait = detail.match(/^чекаємо HEARTBEAT \((.+)\)$/i) || detail.match(/^Waiting HEARTBEAT \((.+)\)$/i);
+  if (wait) {
+    return t("Waiting for HEARTBEAT on {url}…", { url: wait[1] });
+  }
   const mav = detail.match(/^немає MAVLink \((.+)\)$/i) || detail.match(/^No MAVLink \((.+)\)$/i);
   if (mav) return mav[1];
-  const hb = detail.match(/HEARTBEAT \((.+)\)$/i);
+  const hb = detail.match(/^немає HEARTBEAT \((.+)\)$/i) || detail.match(/^No HEARTBEAT \((.+)\)$/i);
   if (hb) {
-    return t("No HEARTBEAT on {url}. Another GCS may already hold this port.", { url: hb[1] });
+    return t("No HEARTBEAT on {url}. Close the other GCS, or if the vehicle listens try udpout:host:port.", {
+      url: hb[1],
+    });
   }
   if (detail.includes("ATTITUDE")) return t("No ATTITUDE, reconnect");
   return detail;

@@ -1,15 +1,13 @@
 import { useEffect, useRef, useState, useSyncExternalStore, type FormEvent } from "react";
-import { Aside, type LogRow } from "./components/Aside";
-import { Cascade } from "./components/Cascade";
+import { type LogRow } from "./components/Aside";
+import { Disconnected } from "./components/Disconnected";
 import { LabDialog } from "./components/LabDialog";
-import { Loop } from "./components/Loop";
-import { PlaneStub } from "./components/PlaneStub";
-import { Scope } from "./components/Scope";
 import { SimRail } from "./components/SimRail";
-import { useT } from "./i18n/i18n";
+import { CopterApp } from "./copter/App";
+import { tDetail, useT } from "./i18n/i18n";
 import { addLog, setLogHandler } from "./log";
 import { send } from "./mav/cmd";
-import { loadLink, saveLink } from "./mav/link";
+import { loadLink, loadLinkHistory, rememberLink, saveLink } from "./mav/link";
 import {
   downloadParm,
   LAB_KEYS,
@@ -18,10 +16,10 @@ import {
   runtimeLabParams,
   saveLabSnapshot,
 } from "./mav/labInit";
-import { axisLabel, type Axis } from "./mav/axis";
 import { isSitl } from "./mav/sim";
-import { AxisSwitch } from "./components/AxisSwitch";
 import { getSnapshot, isPaused, setPaused, startStream, subscribe } from "./mav/store";
+import { VehicleView } from "./mav/view";
+import { PlaneApp } from "./plane/App";
 
 function stamp(): string {
   const d = new Date();
@@ -34,6 +32,22 @@ function stamp(): string {
   );
 }
 
+type Shell = "home" | "copter" | "plane";
+
+function frameFromUrl(): Shell | null {
+  if (typeof window === "undefined") return null;
+  const f = new URLSearchParams(window.location.search).get("frame");
+  if (f === "copter" || f === "plane") return f;
+  return null;
+}
+
+function writeFrameUrl(shell: Shell) {
+  const u = new URL(window.location.href);
+  if (shell === "home") u.searchParams.delete("frame");
+  else u.searchParams.set("frame", shell);
+  window.history.replaceState({}, "", u);
+}
+
 function isIdleDetail(detail: string | undefined): boolean {
   return (
     detail === "відключено" ||
@@ -43,19 +57,27 @@ function isIdleDetail(detail: string | undefined): boolean {
   );
 }
 
+function isWaitDetail(detail: string | undefined): boolean {
+  return /^чекаємо HEARTBEAT \(/i.test(detail || "") || /^Waiting HEARTBEAT \(/i.test(detail || "");
+}
+
 export function App() {
   const t = useT();
   const s = useSyncExternalStore(subscribe, getSnapshot, getSnapshot);
-  const [tab, setTab] = useState<"scope" | "map" | "loop">("scope");
-  const [sel, setSel] = useState<string | null>("atc_rat");
-  const [axis, setAxis] = useState<Axis>("roll");
-  const [live3d, setLive3d] = useState(false);
   const [log, setLog] = useState<LogRow[]>([]);
   const [linkUrl, setLinkUrl] = useState(loadLink);
+  const [linkHist, setLinkHist] = useState(loadLinkHistory);
+  const [linkMenu, setLinkMenu] = useState(false);
   const [labOpen, setLabOpen] = useState(false);
   const [sitlOpen, setSitlOpen] = useState(false);
+  const [pick, setPick] = useState<Shell | null>(() => frameFromUrl());
   const sitlReset = useRef<(() => void) | null>(null);
+  const linkCombo = useRef<HTMLDivElement | null>(null);
   const paused = isPaused();
+  const live: Shell | null = s.ok && (s.frame === "plane" || s.frame === "copter") ? s.frame : null;
+  const shell: Shell = pick ?? live ?? "home";
+  const plane = shell === "plane";
+  const shellAlive = shell !== "home" && live === shell;
 
   useEffect(() => {
     setLogHandler((msg, kind) => {
@@ -78,6 +100,36 @@ export function App() {
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
   }, [paused]);
+
+  useEffect(() => {
+    const onPop = () => setPick(frameFromUrl());
+    window.addEventListener("popstate", onPop);
+    return () => window.removeEventListener("popstate", onPop);
+  }, []);
+
+  useEffect(() => {
+    if (!s.ok) return;
+    const url = (s.detail || "").trim();
+    if (!/^(tcpout|tcp:|udp)/i.test(url)) return;
+    setLinkHist(rememberLink(url));
+    setLinkUrl((prev) => (prev === url ? prev : url));
+  }, [s.ok, s.detail]);
+
+  useEffect(() => {
+    if (!linkMenu) return;
+    const onDoc = (ev: MouseEvent) => {
+      if (!linkCombo.current?.contains(ev.target as Node)) setLinkMenu(false);
+    };
+    const onKey = (ev: KeyboardEvent) => {
+      if (ev.key === "Escape") setLinkMenu(false);
+    };
+    document.addEventListener("mousedown", onDoc);
+    window.addEventListener("keydown", onKey);
+    return () => {
+      document.removeEventListener("mousedown", onDoc);
+      window.removeEventListener("keydown", onKey);
+    };
+  }, [linkMenu]);
 
   function togglePause() {
     const next = !isPaused();
@@ -131,32 +183,22 @@ export function App() {
     addLog(t("Stand · wrote {n} of {total}", { n, total: LAB_KEYS.length }), "ok");
   }
 
-  function onAxis(next: Axis) {
-    setAxis(next);
-    setSel((id) => {
-      if (next === "d") {
-        if (id?.startsWith("psc_d") || id === "pilot" || id === "nav" || id === "motors") return id;
-        return "psc_d_pos";
-      }
-      if (id?.startsWith("psc_d")) return "atc_rat";
-      return id;
-    });
-    addLog(t("Axis · {axis}", { axis: t(axisLabel(next)) }), "cmd");
-  }
-
-  function onLive3d(on: boolean) {
-    setLive3d(on);
-    addLog(on ? t("Model · 3D") : t("Model · one axis"), "cmd");
-  }
-
   const hz = s.att_hz || 0;
   const linked = s.ok;
+  const sitl = isSitl(s.params) || !!s.sitl_running;
+  const sourceKnown = sitl || Object.keys(s.params || {}).length > 0;
   const initDone = s.init_done || 0;
   const initTotal = s.init_total || 0;
   const initPct = initTotal > 0 ? Math.min(100, Math.round((100 * initDone) / initTotal)) : 0;
-  const linkBad = !linked && !isIdleDetail(s.detail);
-  const frameName = s.frame ? t(s.frame) : "";
-  const linkHint = "tcpout:host:port, tcp:host:port, udpin:0.0.0.0:14550";
+  const linkWait = isWaitDetail(s.detail);
+  const linkBad = !linked && !isIdleDetail(s.detail) && !linkWait;
+  const linkHint = "tcpout:host:port, tcp:host:port, udpin:0.0.0.0:14550, udpout:host:port";
+
+  function onShell(next: Shell) {
+    setPick(next);
+    writeFrameUrl(next);
+    addLog(next === "home" ? t("Home") : t(next), "cmd");
+  }
 
   return (
     <div className={sitlOpen ? "app sitl-open" : "app"}>
@@ -177,28 +219,91 @@ export function App() {
             className="sitl-btn"
             disabled={!isSitl(s.params)}
             onClick={() => sitlReset.current?.()}
-            title={t("Restore SITL defaults")}
+            title={t("Restore simulation defaults")}
           >
             {t("Reset")}
           </button>
         ) : null}
       </div>
-      <SimRail sample={s} open={sitlOpen} resetRef={sitlReset} />
+      <SimRail
+        sample={s}
+        open={sitlOpen}
+        resetRef={sitlReset}
+        onSitlLink={(url) => {
+          setLinkUrl(url);
+          saveLink(url);
+        }}
+      />
       <header>
         <div className="hdr-title">
-          <h1>ArduLoops{frameName ? ` · ${frameName}` : ""}</h1>
+          <h1>
+            ArduLoops
+            <span className="hdr-dot" aria-hidden="true">·</span>
+            <select
+              className={shellAlive || shell === "home" ? "hdr-shell" : "hdr-shell idle"}
+              value={shell}
+              aria-label={t("View")}
+              title={
+                shell === "home"
+                  ? t("View")
+                  : shellAlive
+                    ? t("View")
+                    : t("Idle · this frame is not on the link")
+              }
+              onChange={(ev) => onShell(ev.target.value as Shell)}
+            >
+              <option value="home">{t("Home")}</option>
+              <option value="copter">{t("copter")}</option>
+              <option value="plane">{t("plane")}</option>
+            </select>
+          </h1>
         </div>
         <p className="sub">
-          {s.frame === "plane"
-            ? t("The wing layers view is still a stub. RLL_ / PTCH_ / L1 / TECS will appear later.")
-            : t("We want an angle. We don't command the angle — we command the rate that takes us there.")}
+          {shell === "home"
+            ? t("Link a vehicle. HEARTBEAT picks copter or plane. The wiki is the protocol — this stand shows the loops.")
+            : !shellAlive
+              ? plane
+                ? t("No plane on this link. Grey until HEARTBEAT says plane.")
+                : t("No copter on this link. Grey until HEARTBEAT says copter.")
+              : plane
+                ? t("We want an angle. The stick does not move the servo — FF does, scaled by airspeed.")
+                : t("We want an angle. We don't command the angle — we command the rate that takes us there.")}
         </p>
         <div className="hdr-right">
           {linked ? (
             <div className="link on">
-              <span className="status" title={s.detail || undefined}>
-                <b>{t("Link")}</b>
-                {hz ? ` · ATT ${hz} Hz` : ""}
+              <span
+                className="status"
+                title={
+                  [
+                    s.detail,
+                    live ? `HEARTBEAT ${live}` : null,
+                    sourceKnown ? (sitl ? t("SITL") : t("board")) : null,
+                  ]
+                    .filter(Boolean)
+                    .join(" · ") || undefined
+                }
+              >
+                {live ? (
+                  <button
+                    type="button"
+                    className={shell === live ? "frame-go on" : "frame-go"}
+                    aria-current={shell === live ? "page" : undefined}
+                    title={t("Show {frame}", { frame: t(live) })}
+                    onClick={() => {
+                      if (shell !== live) onShell(live);
+                    }}
+                  >
+                    {t(live)}
+                  </button>
+                ) : null}
+                {sourceKnown ? (
+                  <>
+                    {live ? " · " : ""}
+                    <span className={sitl ? "src sitl" : "src board"}>{sitl ? t("SITL") : t("board")}</span>
+                  </>
+                ) : null}
+                {hz ? `${live || sourceKnown ? " · " : ""}ATT ${hz} Hz` : ""}
               </span>
               <button type="button" onClick={onDisconnect} title={t("Disconnect")}>
                 {t("Stop")}
@@ -206,16 +311,47 @@ export function App() {
             </div>
           ) : (
             <form className="link" onSubmit={onLink}>
-              <input
-                className={linkBad ? "bad" : undefined}
-                value={linkUrl}
-                onChange={(ev) => setLinkUrl(ev.target.value)}
-                spellCheck={false}
-                aria-invalid={linkBad || undefined}
-                aria-label="MAVLink"
-                title={linkHint}
-                placeholder="tcpout:127.0.0.1:5763"
-              />
+              <div className="link-combo" ref={linkCombo}>
+                <input
+                  className={linkBad ? "bad" : undefined}
+                  value={linkUrl}
+                  onChange={(ev) => setLinkUrl(ev.target.value)}
+                  spellCheck={false}
+                  autoComplete="off"
+                  aria-invalid={linkBad || undefined}
+                  aria-label="MAVLink"
+                  title={linkBad || linkWait ? tDetail(s.detail) : linkHint}
+                  placeholder="tcpout:127.0.0.1:5763"
+                />
+                {linkHist.length ? (
+                  <button
+                    type="button"
+                    className={linkMenu ? "link-hist on" : "link-hist"}
+                    aria-label={t("Recent links")}
+                    aria-expanded={linkMenu}
+                    aria-haspopup="listbox"
+                    title={t("Recent links")}
+                    onClick={() => setLinkMenu((on) => !on)}
+                  />
+                ) : null}
+                {linkMenu && linkHist.length ? (
+                  <ul className="link-menu" role="listbox">
+                    {linkHist.map((u) => (
+                      <li key={u} role="option" aria-selected={u === linkUrl}>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setLinkUrl(u);
+                            setLinkMenu(false);
+                          }}
+                        >
+                          {u}
+                        </button>
+                      </li>
+                    ))}
+                  </ul>
+                ) : null}
+              </div>
               <button type="submit">{t("Link")}</button>
             </form>
           )}
@@ -250,62 +386,17 @@ export function App() {
         onInit={onLabInit}
         onSave={onLabSave}
       />
-      <main>
-        <section className="scope">
-          <nav className="tabs" aria-label={t("View")}>
-            <a
-              href="#scope"
-              className={tab === "scope" ? "on" : undefined}
-              aria-current={tab === "scope" ? "page" : undefined}
-              onClick={(e) => {
-                e.preventDefault();
-                setTab("scope");
-              }}
-            >
-              {t("Plot")}
-            </a>
-            <span className="sep" aria-hidden="true">
-              ·
-            </span>
-            <a
-              href="#map"
-              className={tab === "map" ? "on" : undefined}
-              aria-current={tab === "map" ? "page" : undefined}
-              onClick={(e) => {
-                e.preventDefault();
-                setTab("map");
-              }}
-            >
-              {t("Layers")}
-            </a>
-            <span className="sep" aria-hidden="true">
-              ·
-            </span>
-            <a
-              href="#loop"
-              className={tab === "loop" ? "on" : undefined}
-              aria-current={tab === "loop" ? "page" : undefined}
-              onClick={(e) => {
-                e.preventDefault();
-                setTab("loop");
-              }}
-            >
-              {t("Loop")}
-            </a>
-            <AxisSwitch axis={axis} onAxis={onAxis} live3d={live3d} onLive3d={onLive3d} />
-          </nav>
-          {s.frame === "plane" && tab !== "scope" ? (
-            <PlaneStub />
-          ) : tab === "scope" ? (
-            <Scope axis={axis} onPause={togglePause} />
-          ) : tab === "map" ? (
-            <Cascade sel={sel} onSel={setSel} axis={axis} />
-          ) : (
-            <Loop sel={sel} axis={axis} onPause={togglePause} />
-          )}
-        </section>
-        <Aside log={log} sel={sel} onSel={setSel} axis={axis} live3d={live3d} />
-      </main>
+      {shell === "home" ? (
+        <Disconnected />
+      ) : plane ? (
+        <VehicleView vehicle="plane">
+          <PlaneApp log={log} onPause={togglePause} />
+        </VehicleView>
+      ) : (
+        <VehicleView vehicle="copter">
+          <CopterApp log={log} onPause={togglePause} />
+        </VehicleView>
+      )}
     </div>
   );
 }

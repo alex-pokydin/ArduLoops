@@ -41,6 +41,12 @@ export type Sample = {
   climb_des: number | null;
   /** Throttle stick throw, % (−100…+100). 0 = mid / no override. */
   thr_cmd: number;
+  /** VFR_HUD airspeed m/s. Plane plant scaler. */
+  aspd: number | null;
+  gspd: number | null;
+  hdg: number | null;
+  /** VFR_HUD throttle 0…100. */
+  thr_out: number | null;
   att_hz: number;
   rx: string;
   /** HEARTBEAT.type → copter | plane. Empty until the vehicle speaks. */
@@ -50,6 +56,12 @@ export type Sample = {
   texts?: string[];
   init_done?: number;
   init_total?: number;
+  sitl_phase?: string;
+  sitl_detail?: string;
+  sitl_vehicle?: string;
+  sitl_running?: boolean;
+  sitl_cpu?: number;
+  sitl_rss_mb?: number;
 };
 
 export const EMPTY: Sample = {
@@ -93,6 +105,10 @@ export const EMPTY: Sample = {
   climb: null,
   climb_des: null,
   thr_cmd: 0,
+  aspd: null,
+  gspd: null,
+  hdg: null,
+  thr_out: null,
   att_hz: 0,
   rx: "",
   frame: "",
@@ -113,4 +129,6 @@ export type Cmd =
   | { op: "disconnect" }
   | { op: "init"; params: Record<string, number> }
   | { op: "param_read"; name: string }
-  | { op: "reboot" };
+  | { op: "reboot" }
+  | { op: "sitl_start"; vehicle: "copter" | "plane"; wipe: boolean; home: string; speedup: number }
+  | { op: "sitl_stop" };

@@ -1,6 +1,7 @@
 import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from "react";
 import { useT } from "../i18n/i18n";
 import type { Axis } from "../mav/axis";
+import { createCraftView, type CraftView, type CraftViewCam } from "./craft3d";
 
 const MSG_MS = 60_000;
 const SEV = /^(EMERGENCY|ALERT|CRITICAL|ERROR|WARNING|NOTICE|INFO|DEBUG)\s+/i;
@@ -12,141 +13,20 @@ function msgTone(text: string): string {
   return "";
 }
 
-function clamp(v: number): number {
-  return Math.max(-50, Math.min(50, v));
+type PlaneCam = "rear" | "side" | "top";
+
+function viewCam(vehicle: "copter" | "plane", cam: PlaneCam, axis: Axis, live3d: boolean): CraftViewCam {
+  if (live3d) return "iso";
+  if (vehicle === "plane") return cam;
+  if (axis === "pitch" || axis === "d") return "side";
+  if (axis === "yaw") return "top";
+  return "rear";
 }
 
-function att(roll: number, pitch: number, yaw: number): string {
-  return `rotateZ(${clamp(roll)}deg) rotateX(${-clamp(pitch)}deg) rotateY(${-clamp(yaw)}deg)`;
-}
-
-function pose(roll: number, pitch: number, yaw: number, live3d: boolean, axis: Axis): string {
-  if (live3d) return att(roll, pitch, Math.max(-35, Math.min(35, yaw)));
-  if (axis === "d") return "rotateZ(0deg)";
-  if (axis === "pitch") return `rotateZ(${clamp(-pitch)}deg)`;
-  if (axis === "yaw") return `rotateZ(${yaw}deg)`;
-  return `rotateZ(${clamp(roll)}deg)`;
-}
-
-function QuadSide({ kind }: { kind: "act" | "tar" }) {
-  if (kind === "tar") {
-    return (
-      <svg className="quad-svg tar" viewBox="0 0 200 120" aria-hidden="true">
-        <g fill="none" stroke="rgba(255,255,255,0.7)" strokeWidth="2" strokeLinecap="round">
-          <line x1="50" y1="46" x2="84" y2="56" />
-          <line x1="50" y1="76" x2="84" y2="64" />
-          <line x1="122" y1="56" x2="152" y2="46" />
-          <line x1="122" y1="64" x2="152" y2="76" />
-          <rect x="78" y="52" width="40" height="16" rx="3" />
-          <polygon points="118,52 144,60 118,68" />
-          <circle cx="48" cy="44" r="7" />
-          <circle cx="46" cy="78" r="9" />
-          <circle cx="154" cy="44" r="7" />
-          <circle cx="156" cy="78" r="9" />
-        </g>
-      </svg>
-    );
-  }
-  return (
-    <svg className="quad-svg act" viewBox="0 0 200 120" aria-hidden="true">
-      <g fill="#4fc3f7" stroke="#4fc3f7" strokeWidth="2" strokeLinecap="round">
-        <line x1="50" y1="46" x2="84" y2="56" fill="none" />
-        <line x1="50" y1="76" x2="84" y2="64" fill="none" />
-        <line x1="122" y1="56" x2="152" y2="46" fill="none" />
-        <line x1="122" y1="64" x2="152" y2="76" fill="none" />
-        <rect x="78" y="52" width="40" height="16" rx="3" fill="#1a1e24" stroke="#4fc3f7" />
-        <polygon points="118,52 144,60 118,68" fill="#4fc3f7" stroke="#4fc3f7" />
-        <circle cx="48" cy="44" r="7" fill="#1a1e24" />
-        <circle cx="46" cy="78" r="9" fill="#1a1e24" />
-        <circle cx="154" cy="44" r="7" fill="#1a1e24" />
-        <circle cx="156" cy="78" r="9" fill="#1a1e24" />
-        <line x1="34" y1="44" x2="62" y2="44" fill="none" />
-        <line x1="30" y1="78" x2="62" y2="78" fill="none" />
-        <line x1="140" y1="44" x2="168" y2="44" fill="none" />
-        <line x1="140" y1="78" x2="172" y2="78" fill="none" />
-      </g>
-    </svg>
-  );
-}
-
-function Quad({ kind }: { kind: "act" | "tar" }) {
-  if (kind === "tar") {
-    return (
-      <svg className="quad-svg tar" viewBox="0 0 200 120" aria-hidden="true">
-        <g fill="none" stroke="rgba(255,255,255,0.7)" strokeWidth="2" strokeLinecap="round">
-          <line x1="58" y1="46" x2="88" y2="58" />
-          <line x1="142" y1="46" x2="112" y2="58" />
-          <line x1="52" y1="80" x2="88" y2="64" />
-          <line x1="148" y1="80" x2="112" y2="64" />
-          <rect x="88" y="52" width="24" height="16" rx="3" />
-          <circle cx="54" cy="44" r="7" />
-          <circle cx="146" cy="44" r="7" />
-          <circle cx="48" cy="82" r="9" />
-          <circle cx="152" cy="82" r="9" />
-        </g>
-      </svg>
-    );
-  }
-  return (
-    <svg className="quad-svg act" viewBox="0 0 200 120" aria-hidden="true">
-      <g fill="#4fc3f7" stroke="#4fc3f7" strokeWidth="2" strokeLinecap="round">
-        <line x1="58" y1="46" x2="88" y2="58" fill="none" />
-        <line x1="142" y1="46" x2="112" y2="58" fill="none" />
-        <line x1="52" y1="80" x2="88" y2="64" fill="none" />
-        <line x1="148" y1="80" x2="112" y2="64" fill="none" />
-        <rect x="88" y="52" width="24" height="16" rx="3" fill="#1a1e24" stroke="#4fc3f7" />
-        <circle cx="54" cy="44" r="7" fill="#1a1e24" />
-        <circle cx="146" cy="44" r="7" fill="#1a1e24" />
-        <circle cx="48" cy="82" r="9" fill="#1a1e24" />
-        <circle cx="152" cy="82" r="9" fill="#1a1e24" />
-        <line x1="40" y1="44" x2="68" y2="44" fill="none" />
-        <line x1="132" y1="44" x2="160" y2="44" fill="none" />
-        <line x1="32" y1="82" x2="64" y2="82" fill="none" />
-        <line x1="136" y1="82" x2="168" y2="82" fill="none" />
-      </g>
-    </svg>
-  );
-}
-
-function QuadTop({ kind }: { kind: "act" | "tar" }) {
-  if (kind === "tar") {
-    return (
-      <svg className="quad-svg tar" viewBox="0 0 200 120" aria-hidden="true">
-        <g fill="none" stroke="rgba(255,255,255,0.7)" strokeWidth="2" strokeLinecap="round">
-          <line x1="58" y1="28" x2="88" y2="52" />
-          <line x1="142" y1="28" x2="112" y2="52" />
-          <line x1="58" y1="92" x2="88" y2="68" />
-          <line x1="142" y1="92" x2="112" y2="68" />
-          <rect x="88" y="48" width="24" height="24" rx="3" />
-          <polygon points="100,36 108,48 92,48" />
-          <circle cx="52" cy="24" r="8" />
-          <circle cx="148" cy="24" r="8" />
-          <circle cx="52" cy="96" r="8" />
-          <circle cx="148" cy="96" r="8" />
-        </g>
-      </svg>
-    );
-  }
-  return (
-    <svg className="quad-svg act" viewBox="0 0 200 120" aria-hidden="true">
-      <g fill="#4fc3f7" stroke="#4fc3f7" strokeWidth="2" strokeLinecap="round">
-        <line x1="58" y1="28" x2="88" y2="52" fill="none" />
-        <line x1="142" y1="28" x2="112" y2="52" fill="none" />
-        <line x1="58" y1="92" x2="88" y2="68" fill="none" />
-        <line x1="142" y1="92" x2="112" y2="68" fill="none" />
-        <rect x="88" y="48" width="24" height="24" rx="3" fill="#1a1e24" stroke="#4fc3f7" />
-        <polygon points="100,36 108,48 92,48" />
-        <circle cx="52" cy="24" r="8" fill="#1a1e24" />
-        <circle cx="148" cy="24" r="8" fill="#1a1e24" />
-        <circle cx="52" cy="96" r="8" fill="#1a1e24" />
-        <circle cx="148" cy="96" r="8" fill="#1a1e24" />
-        <line x1="40" y1="24" x2="64" y2="24" fill="none" />
-        <line x1="136" y1="24" x2="160" y2="24" fill="none" />
-        <line x1="40" y1="96" x2="64" y2="96" fill="none" />
-        <line x1="136" y1="96" x2="160" y2="96" fill="none" />
-      </g>
-    </svg>
-  );
+export function camStickAxis(cam: PlaneCam): Axis {
+  if (cam === "side") return "pitch";
+  if (cam === "top") return "yaw";
+  return "roll";
 }
 
 export function Craft({
@@ -163,6 +43,9 @@ export function Craft({
   axis,
   live3d,
   status,
+  vehicle = "copter",
+  alive = true,
+  onCam,
 }: {
   roll: number;
   pitch: number;
@@ -177,13 +60,63 @@ export function Craft({
   axis: Axis;
   live3d: boolean;
   status: string;
+  vehicle?: "copter" | "plane";
+  alive?: boolean;
+  onCam?: (cam: PlaneCam) => void;
 }) {
   const t = useT();
+  const [cam, setCam] = useState<PlaneCam>("rear");
   const [ticker, setTicker] = useState("");
   const [overflow, setOverflow] = useState(0);
   const prevStatus = useRef<string | undefined>(undefined);
   const msgBox = useRef<HTMLDivElement>(null);
   const msgLine = useRef<HTMLSpanElement>(null);
+  const glRef = useRef<HTMLCanvasElement>(null);
+  const viewRef = useRef<CraftView | null>(null);
+  const view = viewCam(vehicle, cam, axis, live3d);
+  const [topish, setTopish] = useState(false);
+  const top = topish;
+  const aliveRef = useRef(alive);
+  aliveRef.current = alive;
+
+  useEffect(() => {
+    onCam?.(cam);
+  }, [cam, onCam]);
+
+  useLayoutEffect(() => {
+    const canvas = glRef.current;
+    if (!canvas) return;
+    const craft = createCraftView(canvas, { onBackdrop: setTopish });
+    viewRef.current = craft;
+    craft.setAlive(aliveRef.current);
+    const host = canvas.parentElement ?? canvas;
+    const ro = new ResizeObserver(() => craft.resize());
+    ro.observe(host);
+    craft.resize();
+    return () => {
+      ro.disconnect();
+      craft.dispose();
+      viewRef.current = null;
+    };
+  }, []);
+
+  useLayoutEffect(() => {
+    viewRef.current?.setCam(view);
+  }, [view]);
+
+  useLayoutEffect(() => {
+    const craft = viewRef.current;
+    if (!craft) return;
+    craft.setVehicle(vehicle);
+    craft.setAlive(alive);
+    craft.setGrounded(alive && grounded);
+    if (alive) {
+      craft.setPose({ roll, pitch, yaw }, { roll: tarRoll, pitch: tarPitch, yaw: tarYaw });
+    } else {
+      craft.setPose({ roll: 0, pitch: 0, yaw: 0 }, { roll: 0, pitch: 0, yaw: 0 });
+    }
+  }, [vehicle, alive, grounded, roll, pitch, yaw, tarRoll, tarPitch, tarYaw]);
+
   useEffect(() => {
     const next = status.trim();
     if (prevStatus.current === undefined) {
@@ -211,23 +144,47 @@ export function Craft({
     const extra = line.scrollWidth - box.clientWidth;
     setOverflow(extra > 2 ? extra : 0);
   }, [ticker]);
-  const side = !live3d && (axis === "pitch" || axis === "d");
-  const top = !live3d && axis === "yaw";
-  const Body = side ? QuadSide : top ? QuadTop : Quad;
-  const cap = grounded
-    ? t("On the ground")
-    : live3d
+
+  const viewCap =
+    live3d
       ? "3D"
-      : axis === "d"
+      : axis === "d" && vehicle === "copter"
         ? t("side view · height")
-        : side
+        : view === "side"
           ? t("side view")
-          : top
+          : view === "top"
             ? t("top view")
             : t("rear view");
+  const cap = !alive ? t("Idle") : grounded ? t("On the ground") : viewCap;
   return (
-    <div className={grounded ? "craft grounded" : top ? "craft top" : "craft"}>
-      <span className="cap">{cap}</span>
+    <div className={[!alive ? "craft idle" : grounded ? "craft grounded" : "craft", top ? "top" : ""].filter(Boolean).join(" ")}>
+      {vehicle === "plane" && alive ? (
+        <div className="craft-cams" role="group" aria-label={t("Camera")}>
+          {(["rear", "side", "top"] as const).map((id) => (
+            <button
+              key={id}
+              type="button"
+              className={cam === id ? "on" : undefined}
+              aria-pressed={cam === id}
+              title={
+                id === "rear"
+                  ? t("rear view")
+                  : id === "side"
+                    ? t("side view")
+                    : t("top view")
+              }
+              onClick={() => {
+                setCam(id);
+                viewRef.current?.setCam(id);
+              }}
+            >
+              {id === "rear" ? t("rear") : id === "side" ? t("side") : t("top")}
+            </button>
+          ))}
+        </div>
+      ) : (
+        <span className="cap">{cap}</span>
+      )}
       <div className="alt-read">
         <b>
           {alt == null || Number.isNaN(alt) ? "—" : alt.toFixed(1)}
@@ -252,7 +209,9 @@ export function Craft({
               <rect width="200" height="120" fill="#1b2018" />
               <line x1="100" y1="8" x2="100" y2="112" stroke="#2a3326" strokeWidth="1" />
               <line x1="8" y1="60" x2="192" y2="60" stroke="#2a3326" strokeWidth="1" />
-              <text x="100" y="18" textAnchor="middle" fill="#6b7884" fontSize="9">N</text>
+              <text x="100" y="18" textAnchor="middle" fill="#6b7884" fontSize="9">
+                N
+              </text>
             </>
           ) : (
             <>
@@ -270,14 +229,13 @@ export function Craft({
             </>
           )}
         </svg>
-      </div>
-      <div className="craft-stage">
-        <div className="att tar" style={{ transform: pose(tarRoll, tarPitch, tarYaw, live3d, axis) }}>
-          <Body kind="tar" />
-        </div>
-        <div className="att act" style={{ transform: pose(roll, pitch, yaw, live3d, axis) }}>
-          <Body kind="act" />
-        </div>
+        <canvas
+          ref={glRef}
+          className="craft-gl"
+          tabIndex={0}
+          title={t("Drag to orbit. Buttons snap the view.")}
+          aria-label={t("Drag to orbit. Buttons snap the view.")}
+        />
       </div>
       {ticker ? (
         <div

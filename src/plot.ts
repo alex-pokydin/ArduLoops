@@ -1,4 +1,5 @@
 import { t } from "./i18n/i18n";
+import type { Pane } from "./lib/traces";
 import { wrap180, type Axis } from "./mav/axis";
 import { MAX_T } from "./mav/store";
 import type { Sample } from "./mav/types";
@@ -26,20 +27,33 @@ function size(c: HTMLCanvasElement): [number, number, number] {
 }
 
 function unwrapHeading(buf: Sample[]): Sample[] {
+  return unwrapKeys(buf, ["yaw", "yaw_tar", "yaw_cmd", "hdg"]);
+}
+
+function unwrapKeys(buf: Sample[], keys: Array<keyof Sample>): Sample[] {
   if (!buf.length) return buf;
-  let prevA = buf[0].yaw || 0;
-  let prevT = typeof buf[0].yaw_tar === "number" ? buf[0].yaw_tar : prevA;
-  let accA = prevA;
-  let accT = prevT;
+  const acc: Partial<Record<string, number>> = {};
+  const prev: Partial<Record<string, number>> = {};
+  for (const key of keys) {
+    const v = buf[0][key];
+    if (typeof v === "number" && !Number.isNaN(v)) {
+      acc[key] = v;
+      prev[key] = v;
+    }
+  }
   return buf.map((p, i) => {
-    if (i === 0) return { ...p, yaw: accA, yaw_tar: accT };
-    const a = p.yaw || 0;
-    const t = typeof p.yaw_tar === "number" ? p.yaw_tar : a;
-    accA += wrap180(a - prevA);
-    accT += wrap180(t - prevT);
-    prevA = a;
-    prevT = t;
-    return { ...p, yaw: accA, yaw_tar: accT };
+    if (i === 0) return p;
+    const next = { ...p };
+    for (const key of keys) {
+      const raw = p[key];
+      const last = prev[key];
+      if (typeof raw !== "number" || Number.isNaN(raw) || last == null) continue;
+      const a = (acc[key] ?? raw) + wrap180(raw - last);
+      acc[key] = a;
+      prev[key] = raw;
+      (next as unknown as Record<string, unknown>)[key] = a;
+    }
+    return next;
   });
 }
 
@@ -115,7 +129,7 @@ function plot(
   series.forEach((key, i) => {
     ctx.beginPath();
     ctx.strokeStyle = colors[i];
-    ctx.lineWidth = key === "cmd" || key === "pitch_cmd" || key === "yaw_cmd" || key === "thr_cmd" ? 1.6 : 2.5;
+    ctx.lineWidth = colors[i] === TRACE.stick ? 1.6 : 2.5;
     let started = false;
     for (const p of buf) {
       const v = p[key];
@@ -171,6 +185,20 @@ function nums(buf: Sample[], key: keyof Sample): number[] {
     const v = p[key];
     return typeof v === "number" && !Number.isNaN(v) ? v : 0;
   });
+}
+
+export function drawPane(
+  c: HTMLCanvasElement,
+  ctx: CanvasRenderingContext2D,
+  buf: Sample[],
+  pane: Pane,
+): void {
+  const drawn = pane.unwrap ? unwrapHeading(buf) : buf;
+  const series = pane.traces.map((tr) => tr.key);
+  const colors = pane.traces.map((tr) => TRACE[tr.role]);
+  const span =
+    Math.max(pane.spanMin, ...series.flatMap((key) => nums(drawn, key).map(Math.abs))) * 1.25;
+  plot(ctx, c, drawn, series, span, colors, pane.gap);
 }
 
 export function drawScope(

@@ -1,6 +1,6 @@
 [package]
 name = "arduloops"
-version = "0.4.0"
+version = "1.0.0"
 description = "ArduLoops"
 authors = ["IAMPM"]
 edition = "2021"
@@ -29,3 +29,4 @@ log = "0.4"
 tauri = { version = "2.11.3", optional = true , features = [] }
 tauri-plugin-log = { version = "2", optional = true }
 mavlink = { version = "0.13.1", default-features = true, features = ["ardupilotmega"] }
+ureq = { version = "2.12.1", default-features = false, features = ["tls"] }

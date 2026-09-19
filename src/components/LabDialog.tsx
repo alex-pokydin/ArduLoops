@@ -116,7 +116,7 @@ export function LabDialog({
                   <span>
                     {initing
                       ? t("Init · {done}/{total}", { done: initDone, total: initTotal })
-                      : t("Stock SITL dump + lab. Writes the stand — arm-ready.")}
+                      : t("Stock dump + lab. Writes the stand — arm-ready.")}
                   </span>
                   {initing ? (
                     <div
@@ -134,7 +134,7 @@ export function LabDialog({
                   type="button"
                   onClick={onInit}
                   disabled={initing}
-                  title={t("Write the lab stand dump so a blank SITL can arm.")}
+                  title={t("Write the lab stand dump so a blank board can arm.")}
                 >
                   {initing ? `${pct}%` : t("Init")}
                 </button>

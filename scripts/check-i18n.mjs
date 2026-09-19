@@ -32,7 +32,7 @@ for (const file of walk(root)) {
   while ((m = tRe.exec(src))) used.add(m[1].replace(/\\"/g, '"'));
 }
 
-for (const rel of ["cascade.ts", "mav/axis.ts"]) {
+for (const rel of ["cascade.ts", "mav/axis.ts", "plane/cascade.ts"]) {
   const src = readFileSync(join(root, rel), "utf8");
   const re = /(?:title|kind|unit|does|trap|more|name|rateName):\s*"((?:\\.|[^"\\])*)"/g;
   let m;
@@ -41,23 +41,31 @@ for (const rel of ["cascade.ts", "mav/axis.ts"]) {
   }
 }
 {
+  const src = readFileSync(join(root, "lib/traces.ts"), "utf8");
+  const re = /(?:title|hint):\s*"((?:\\.|[^"\\])*)"/g;
+  let m;
+  while ((m = re.exec(src))) used.add(m[1]);
+}
+{
   const src = readFileSync(join(root, "mav/sim.ts"), "utf8");
   const re = /(?:title|label):\s*"((?:\\.|[^"\\])*)"/g;
   let m;
   while ((m = re.exec(src))) used.add(m[1]);
 }
 {
-  const src = readFileSync(join(root, "cascade.ts"), "utf8");
-  const re = /(?:EDGES|LAYERS|BAND_LABEL)[\s\S]*?;/g;
-  const blocks = src.match(re) || [];
-  const lab = /label:\s*"((?:\\.|[^"\\])*)"/g;
-  for (const block of blocks) {
-    lab.lastIndex = 0;
-    let m;
-    while ((m = lab.exec(block))) used.add(m[1]);
-  }
-  for (const m of src.matchAll(/ends:\s*"((?:\\.|[^"\\])*)"|outer:\s*"((?:\\.|[^"\\])*)"|inner:\s*"((?:\\.|[^"\\])*)"/g)) {
-    used.add(m[1] || m[2] || m[3]);
+  for (const rel of ["cascade.ts", "plane/cascade.ts"]) {
+    const src = readFileSync(join(root, rel), "utf8");
+    const re = /(?:EDGES|LAYERS|BAND_LABEL)[\s\S]*?;/g;
+    const blocks = src.match(re) || [];
+    const lab = /label:\s*"((?:\\.|[^"\\])*)"/g;
+    for (const block of blocks) {
+      lab.lastIndex = 0;
+      let m;
+      while ((m = lab.exec(block))) used.add(m[1]);
+    }
+    for (const m of src.matchAll(/ends:\s*"((?:\\.|[^"\\])*)"|outer:\s*"((?:\\.|[^"\\])*)"|inner:\s*"((?:\\.|[^"\\])*)"/g)) {
+      used.add(m[1] || m[2] || m[3]);
+    }
   }
 }
 

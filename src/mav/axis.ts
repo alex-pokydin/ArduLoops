@@ -1,4 +1,4 @@
-import type { Gain } from "../cascade";
+import type { Gain } from "../lib/gains";
 import type { Sample } from "./types";
 
 export type Axis = "roll" | "pitch" | "yaw" | "d";

@@ -2,6 +2,8 @@ mod cli;
 mod http;
 mod link;
 mod mcp;
+mod sitl;
+mod udp;
 
 pub fn wants_mcp(args: &[String]) -> bool {
     matches!(args.first().map(String::as_str), Some("mcp" | "--mcp"))
@@ -20,9 +22,11 @@ pub fn run_cli(args: &[String]) -> i32 {
 fn spawn_backend(rx: std::sync::mpsc::Receiver<Cmd>, tx_http: Sender<Cmd>, on_sample: OnSample) {
     let latest = Arc::new(Mutex::new(Sample::empty()));
     let url = Arc::new(Mutex::new(String::new()));
+    let sitl = sitl::SitlCtl::new();
     let latest_http = latest.clone();
+    let sitl_loop = sitl.clone();
     std::thread::spawn(move || http::serve(HTTP_ADDR, latest_http, tx_http));
-    std::thread::spawn(move || link::run_loop(on_sample, rx, latest, url));
+    std::thread::spawn(move || link::run_loop(on_sample, rx, latest, url, sitl_loop));
 }
 
 pub fn run_bridge() {

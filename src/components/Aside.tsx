@@ -1,13 +1,15 @@
-import { useEffect, useRef, useState, useSyncExternalStore, type ReactNode } from "react";
-import { NODES } from "../cascade";
+import { useEffect, useRef, useState, type ReactNode } from "react";
+import { NODES as COPTER_NODES } from "../cascade";
 import { tDetail, useT } from "../i18n/i18n";
 import { addLog } from "../log";
 import { axisView, type Axis } from "../mav/axis";
 import { send } from "../mav/cmd";
-import { getBuffer, getSnapshot, subscribe } from "../mav/store";
+import { getLatest } from "../mav/store";
+import { frameLive, useViewSample, viewBuffer } from "../mav/view";
 import type { Sample } from "../mav/types";
+import type { NodeDef } from "../lib/gains";
 import { GainRow } from "./GainRow";
-import { Craft } from "./Craft";
+import { Craft, camStickAxis } from "./Craft";
 
 type Feel = { kind: string; title: string; hint: string; axis?: Axis };
 
@@ -17,9 +19,49 @@ const PRESET = {
   hot: { p: 0.675, i: 0.135, d: 0.0036 },
 };
 
-const MODES = ["STABILIZE", "ALT_HOLD", "LOITER", "POSHOLD", "ACRO", "LAND", "RTL"];
+const COPTER_MODES = ["STABILIZE", "ALT_HOLD", "LOITER", "POSHOLD", "ACRO", "LAND", "RTL"];
 
 export type LogRow = { t: string; msg: string; kind: string };
+
+const STATUS_KIND: Record<string, "ok" | "bad" | "dim"> = {
+  EMERGENCY: "bad",
+  ALERT: "bad",
+  CRITICAL: "bad",
+  ERROR: "bad",
+  WARNING: "bad",
+  NOTICE: "ok",
+  INFO: "dim",
+  DEBUG: "dim",
+};
+
+/** `texts` is newest-first. Return newly prepended rows, oldest first. */
+function freshStatus(curr: string[], prev: string[]): string[] {
+  if (!curr.length) return [];
+  if (!prev.length) {
+    const seen = new Set<string>();
+    const uniq: string[] = [];
+    for (const raw of curr.slice().reverse()) {
+      if (seen.has(raw)) continue;
+      seen.add(raw);
+      uniq.push(raw);
+    }
+    return uniq;
+  }
+  for (let i = 0; i <= curr.length; i++) {
+    const rest = curr.slice(i);
+    if (rest.length <= prev.length && rest.every((v, j) => v === prev[j])) {
+      return curr.slice(0, i).reverse();
+    }
+  }
+  return curr.slice().reverse();
+}
+
+function logStatus(raw: string): void {
+  const sp = raw.indexOf(" ");
+  const sev = sp > 0 ? raw.slice(0, sp) : "";
+  const kind = STATUS_KIND[sev];
+  addLog(kind ? raw.slice(sp + 1) : raw, kind || "dim");
+}
 
 function stdev(xs: number[]): number {
   const m = xs.reduce((a, b) => a + b, 0) / xs.length;
@@ -36,21 +78,33 @@ export function Aside({
   onSel,
   axis,
   live3d,
+  modes = COPTER_MODES,
+  nodes = COPTER_NODES,
+  presets = true,
+  vehicle = "copter",
+  knobs = true,
 }: {
   log: LogRow[];
   sel: string | null;
   onSel: (id: string) => void;
   axis: Axis;
   live3d: boolean;
+  modes?: string[];
+  nodes?: NodeDef[];
+  presets?: boolean;
+  vehicle?: "copter" | "plane";
+  knobs?: boolean;
 }) {
   const t = useT();
-  const s = useSyncExternalStore(subscribe, getSnapshot, getSnapshot);
+  const s = useViewSample();
+  const alive = s.ok;
   const [p, setP] = useState(0.135);
   const [, setI] = useState(0.135);
   const [, setD] = useState(0.0036);
   const [, setTc] = useState(0.1);
   const [, setAcc] = useState(1100);
   const [, setRmax] = useState(0);
+  const [planeCam, setPlaneCam] = useState<"rear" | "side" | "top">("rear");
   const [feel, setFeel] = useState<Feel>({
     kind: "ok",
     title: "—",
@@ -74,9 +128,27 @@ export function Aside({
     ok: null as boolean | null,
     att: null as boolean | null,
     grounded: null as boolean | null,
+    texts: [] as string[],
   });
 
   useEffect(() => {
+    const texts = s.texts || [];
+    if (!alive) {
+      prev.current.texts = texts.slice();
+      if (prev.current.ok) {
+        addLog(t("No link · {detail}", { detail: tDetail(s.detail) }), "bad");
+        prev.current.ok = false;
+      }
+      setFeel({
+        kind: "idle",
+        title: "Idle",
+        hint:
+          vehicle === "plane"
+            ? "No plane on this link. Grey until HEARTBEAT says plane."
+            : "No copter on this link. Grey until HEARTBEAT says copter.",
+      });
+      return;
+    }
     if (Date.now() >= holdUntil.current && !dragging.current) {
       if (s.gain_p != null) setP(s.gain_p);
       if (s.gain_i != null) setI(s.gain_i);
@@ -116,14 +188,19 @@ export function Aside({
     if (prev.current.grounded !== null && prev.current.grounded !== grounded) {
       addLog(
         grounded
-          ? t("On the ground · AGL < 2 m, sticks barely rotate the craft")
+          ? vehicle === "plane" || s.frame === "plane"
+            ? t("On the runway. MANUAL is the stick on the surface.")
+            : t("On the ground · AGL < 2 m, sticks barely rotate the craft")
           : t("Airborne"),
         grounded ? "bad" : "ok",
       );
     }
     prev.current.grounded = grounded;
+    const nextTexts = s.texts || [];
+    for (const raw of freshStatus(nextTexts, prev.current.texts)) logStatus(raw);
+    prev.current.texts = nextTexts.slice();
     classify(s, axis);
-  }, [s, axis]);
+  }, [s, axis, vehicle, alive]);
 
   useEffect(() => {
     const el = logEl.current;
@@ -131,15 +208,33 @@ export function Aside({
   }, [log]);
 
   function classify(_s: Sample, ax: Axis) {
+    const plane = vehicle === "plane" || _s.frame === "plane";
+    if (plane) {
+      if (_s.alt != null && !Number.isNaN(_s.alt) && _s.alt < 2) {
+        setFeel({
+          kind: "gnd",
+          title: "On the ground",
+          hint: "On the runway. MANUAL is the stick on the surface.",
+        });
+        return;
+      }
+      setFeel({
+        kind: "ok",
+        title: "Tune in FBWA",
+        axis: ax,
+        hint: "FBWA. Stick is an angle — FF, scaled by airspeed, moves the servo.",
+      });
+      return;
+    }
     if (_s.alt != null && !Number.isNaN(_s.alt) && _s.alt < 2) {
       setFeel({
         kind: "gnd",
         title: "On the ground",
-        hint: "SITL is sitting. Raise throttle — otherwise the stick will not move the craft.",
+        hint: "The craft is sitting. Raise throttle — otherwise the stick will not move it.",
       });
       return;
     }
-    const last = getBuffer().slice(-80);
+    const last = viewBuffer(vehicle).slice(-80);
     const angs = last.map((p) => axisView(p, ax).ang || 0);
     const rates = last.map((p) => axisView(p, ax).rate || 0);
     const cmds = last.map((p) => axisView(p, ax).cmd || 0);
@@ -228,6 +323,7 @@ export function Aside({
   }
 
   function pushStick(immediate: boolean) {
+    if (!frameLive(vehicle, getLatest())) return;
     const fire = () => send({ op: "stick", ...rc.current });
     if (immediate) {
       window.clearTimeout(stickTimer.current);
@@ -328,9 +424,10 @@ export function Aside({
       u1();
       u2();
     };
-  }, []);
+  }, [vehicle]);
 
   function applyPreset(name: "wool" | "stock" | "hot") {
+    if (!frameLive(vehicle, getLatest())) return;
     const pset = PRESET[name];
     holdUntil.current = Date.now() + 1500;
     send({ op: "preset", name });
@@ -361,7 +458,7 @@ export function Aside({
     onSel("atc_rat");
   }
 
-  const modeOptions = MODES.includes(s.mode) || s.mode === "?" ? MODES : [...MODES, s.mode];
+  const modeOptions = modes.includes(s.mode) || s.mode === "?" ? modes : [...modes, s.mode];
   const alt = s.alt;
   const grounded = alt != null && !Number.isNaN(alt) && alt < 2;
   let altLabel: ReactNode = t("AGL height");
@@ -381,15 +478,16 @@ export function Aside({
     } else altLabel = t("Holding");
   }
 
-  const tuneNode = NODES.find((n) => n.id === sel) ?? NODES.find((n) => n.id === "atc_rat") ?? null;
+  const tuneNode = nodes.find((n) => n.id === sel) ?? nodes.find((n) => n.guide) ?? nodes[0] ?? null;
   const tarRoll = s.tar == null ? s.cmd || 0 : s.tar;
   const tarPitch = s.pitch_tar == null ? s.pitch_cmd || 0 : s.pitch_tar;
   const tarYaw = s.yaw_tar == null ? s.yaw || 0 : s.yaw_tar;
-  const stickName = t(feel.axis ?? axis);
+  const stickAxis = vehicle === "plane" ? camStickAxis(planeCam) : axis;
+  const stickName = t(feel.axis ?? stickAxis);
   const StickName = stickName.charAt(0).toUpperCase() + stickName.slice(1);
 
   return (
-    <aside>
+    <aside className={alive ? undefined : "idle"}>
       <Craft
         roll={s.roll || 0}
         pitch={s.pitch || 0}
@@ -404,13 +502,18 @@ export function Aside({
         axis={axis}
         live3d={live3d}
         status={s.texts?.[0] ?? ""}
+        vehicle={vehicle}
+        alive={alive}
+        onCam={vehicle === "plane" ? setPlaneCam : undefined}
       />
       <div className="flight">
         <select
           title={t("Flight mode")}
           aria-label={t("Mode")}
-          value={modeOptions.includes(s.mode) ? s.mode : "STABILIZE"}
+          disabled={!alive}
+          value={modeOptions.includes(s.mode) ? s.mode : modes[0] ?? s.mode}
           onChange={(ev) => {
+            if (!frameLive(vehicle, getLatest())) return;
             send({ op: "mode", mode: ev.target.value });
             addLog(t("Mode {mode}", { mode: ev.target.value }), "cmd");
           }}
@@ -423,10 +526,11 @@ export function Aside({
           type="button"
           className={s.armed ? "arm-sw on" : "arm-sw"}
           aria-pressed={s.armed}
-          title="Arm / disarm"
+          disabled={!alive}
+          title={t("Arm / force disarm")}
           onClick={() => {
+            if (!frameLive(vehicle, getLatest())) return;
             if (s.armed) {
-              send({ op: "land" });
               send({ op: "arm", on: false });
               send({ op: "release" });
               resetSticks();
@@ -440,8 +544,8 @@ export function Aside({
           {s.armed ? "armed" : "disarm"}
         </button>
       </div>
-      <div className={`sticks ${live3d ? "axis-3d" : `axis-${axis}`}`} aria-label={t("Virtual Mode 2 sticks")}>
-        <div className="stick thr" ref={stickL} role="button" tabIndex={0} title={axis === "d" && !live3d ? t("Left stick: throttle (up-down)") : axis === "yaw" && !live3d ? t("Left stick: yaw (left-right)") : t("Left stick: throttle and yaw")}>
+      <div className={`sticks ${live3d ? "axis-3d" : `axis-${stickAxis}`}`} aria-label={t("Virtual Mode 2 sticks")}>
+        <div className="stick thr" ref={stickL} role="button" tabIndex={0} title={stickAxis === "d" && !live3d ? t("Left stick: throttle (up-down)") : stickAxis === "yaw" && !live3d ? t("Left stick: yaw (left-right)") : t("Left stick: throttle and yaw")}>
           <div className="cross" />
           <span className="tag n">{t("Thr")}</span>
           <span className="tag s">{t("Thr−")}</span>
@@ -449,7 +553,7 @@ export function Aside({
           <span className="tag e">{t("Yaw+")}</span>
           <div className="knob" ref={knobL} />
         </div>
-        <div className="stick" ref={stickR} role="button" tabIndex={0} title={live3d ? t("Right stick: roll and pitch") : axis === "pitch" ? t("Right stick: pitch (up-down)") : t("Right stick: roll (left-right)")}>
+        <div className="stick" ref={stickR} role="button" tabIndex={0} title={live3d ? t("Right stick: roll and pitch") : stickAxis === "pitch" ? t("Right stick: pitch (up-down)") : t("Right stick: roll (left-right)")}>
           <div className="cross" />
           <span className="tag n">{t("pitch")}</span>
           <span className="tag s">{t("pitch")}</span>
@@ -460,12 +564,14 @@ export function Aside({
       </div>
       <div className={`feel ${feel.kind}`}>{feel.title === "—" ? "—" : t(feel.title)}</div>
       <div className="hint">{t(feel.hint, { stick: stickName, Stick: StickName })}</div>
+      {presets ? (
       <div className="btns">
-        <button className={p < 0.1 ? "cyan on" : "cyan"} onClick={() => applyPreset("wool")}>{t("Wool")}</button>
-        <button className={p >= 0.1 && p < 0.4 ? "on" : ""} onClick={() => applyPreset("stock")}>{t("Stock")}</button>
-        <button className={p >= 0.4 ? "hot on" : "hot"} onClick={() => applyPreset("hot")}>{t("Sharp")}</button>
+        <button disabled={!alive} className={p < 0.1 ? "cyan on" : "cyan"} onClick={() => applyPreset("wool")}>{t("Wool")}</button>
+        <button disabled={!alive} className={p >= 0.1 && p < 0.4 ? "on" : ""} onClick={() => applyPreset("stock")}>{t("Stock")}</button>
+        <button disabled={!alive} className={p >= 0.4 ? "hot on" : "hot"} onClick={() => applyPreset("hot")}>{t("Sharp")}</button>
       </div>
-      {tuneNode ? (
+      ) : null}
+      {knobs && tuneNode ? (
           <>
             <div className="tune-cap">
               {t(tuneNode.title)}

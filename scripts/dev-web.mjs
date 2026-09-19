@@ -44,6 +44,12 @@ function killTree(child) {
   }
 }
 
+/** Drop the bridge exe without /T so ArduCopter/ArduPlane (its child) can stay up. */
+function killBridgeBinary() {
+  if (process.platform !== "win32") return;
+  spawn("taskkill", ["/IM", `${bridgeBin()}.exe`, "/F"], { stdio: "ignore" });
+}
+
 function listeningPid(port) {
   try {
     const out = execSync("netstat -ano", { encoding: "utf8", windowsHide: true });
@@ -106,7 +112,8 @@ function restartBridge() {
   };
   if (old?.pid) {
     old.once("exit", launch);
-    killTree(old);
+    killBridgeBinary();
+    setTimeout(() => killTree(old), 700);
     setTimeout(launch, 2500);
   } else {
     launch();

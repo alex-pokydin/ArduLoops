@@ -47,13 +47,6 @@ export const SIM_GROUPS: SimGroup[] = [
     ],
   },
   {
-    id: "speedup",
-    title: "Speedup",
-    knobs: [
-      { key: "SIM_SPEEDUP", label: "speedup", unit: "×", min: 1, max: 10, step: 1, digits: 0, def: 1 },
-    ],
-  },
-  {
     id: "gps",
     title: "GPS",
     knobs: [
@@ -284,7 +277,7 @@ export const SIM_ENGINE_FAIL = "SIM_ENGINE_FAIL";
 export const SIM_PARAM_KEYS: string[] = uniqueKeys();
 
 function uniqueKeys(): string[] {
-  const out: string[] = [SIM_ENGINE_FAIL];
+  const out: string[] = [SIM_ENGINE_FAIL, "SIM_SPEEDUP"];
   const seen = new Set(out);
   for (const g of SIM_GROUPS) {
     for (const k of g.knobs) {
@@ -324,6 +317,7 @@ export function writeSimKeys(k: SimKnob, params: Record<string, number>): string
 
 export function catalogDef(name: string): number | null {
   if (name === SIM_ENGINE_FAIL) return 0;
+  if (name === "SIM_SPEEDUP") return 1;
   for (const g of SIM_GROUPS) {
     for (const k of g.knobs) {
       if (simNames(k).includes(name)) return k.def;

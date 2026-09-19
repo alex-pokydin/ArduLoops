@@ -1,7 +1,8 @@
+import { useId, type KeyboardEvent, type MouseEvent, type SVGProps } from "react";
 import { pidTerms, type NodeDef } from "../cascade";
 import { useT } from "../i18n/i18n";
 import { axisTar, axisView, remapGainKey, type Axis } from "../mav/axis";
-import { getBuffer, getSnapshot } from "../mav/store";
+import { useVehicle, viewBuffer, viewSample } from "../mav/view";
 import type { Sample } from "../mav/types";
 import { sparkSeries } from "../plot";
 import { paramOf } from "./GainRow";
@@ -17,7 +18,119 @@ export const PID_COL = {
   ink: "#e8eef4",
   pid: "#6b8cff",
   hot: "#ef5350",
+  tune: "#1e2630",
+  struct: "#15191e",
 };
+
+/** Same language as map cards: solid left = tune, double left = optional, dashed = no knobs. */
+export type LoopMark = "tune" | "later" | "struct";
+
+export function loopFill(mark?: LoopMark): string {
+  if (mark === "tune") return PID_COL.tune;
+  if (mark === "later") return "transparent";
+  if (mark === "struct") return PID_COL.struct;
+  return PID_COL.panel;
+}
+
+/** Map-card left edge: 4px solid = tune, 4px double = later, clipped to the rounded rect. */
+export function LoopFrame({
+  x,
+  y,
+  w,
+  h,
+  rx = 7,
+  color,
+  mark,
+  picked,
+}: {
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+  rx?: number;
+  color: string;
+  mark?: LoopMark;
+  picked?: boolean;
+}) {
+  const clip = useId().replace(/:/g, "");
+  return (
+    <>
+      <rect
+        x={x}
+        y={y}
+        width={w}
+        height={h}
+        rx={rx}
+        fill={loopFill(mark)}
+        stroke={color}
+        strokeWidth={picked ? 2.2 : 1}
+        strokeDasharray={mark === "struct" ? "4 3" : undefined}
+      />
+      {mark === "tune" || mark === "later" ? (
+        <>
+          <defs>
+            <clipPath id={clip}>
+              <rect x={x} y={y} width={w} height={h} rx={rx} />
+            </clipPath>
+          </defs>
+          <g clipPath={`url(#${clip})`}>
+            {mark === "tune" ? (
+              <rect x={x} y={y} width={4} height={h} fill={color} />
+            ) : (
+              <>
+                <rect x={x} y={y} width={1.35} height={h} fill={color} />
+                <rect x={x + 2.65} y={y} width={1.35} height={h} fill={color} />
+              </>
+            )}
+          </g>
+        </>
+      ) : null}
+    </>
+  );
+}
+
+export function LoopMixDot({
+  cx,
+  cy,
+  stroke,
+  label,
+  value,
+  mark,
+  picked,
+  onPick,
+}: {
+  cx: number;
+  cy: number;
+  stroke: string;
+  label: string;
+  value: string;
+  mark?: LoopMark;
+  picked?: boolean;
+  onPick?: () => void;
+}) {
+  const sw = picked ? 2.6 : mark === "tune" ? 2.4 : 1.4;
+  return (
+    <g {...loopBoxHit(onPick)}>
+      <circle cx={cx} cy={cy} r="22" fill="transparent" />
+      {mark === "later" ? <circle cx={cx} cy={cy} r="19.5" fill="none" stroke={stroke} strokeWidth="1.3" /> : null}
+      <circle
+        cx={cx}
+        cy={cy}
+        r="16"
+        fill={loopFill(mark)}
+        stroke={stroke}
+        strokeWidth={sw}
+        strokeDasharray={mark === "struct" ? "3 2" : undefined}
+      />
+      <text x={cx} y={cy - 4} textAnchor="middle" fill={stroke} fontSize="9" fontWeight="700">
+        {label}
+      </text>
+      <text x={cx} y={cy + 8} textAnchor="middle" fill={stroke} fontSize="10" fontWeight="700">
+        {value}
+      </text>
+    </g>
+  );
+}
 
 export function kpOf(node: NodeDef, s: Sample, axis: Axis): number | null {
   const g = node.gains.find((x) => x.label.replace(/^ANG\s+/i, "").trim() === "P");
@@ -35,14 +148,18 @@ function loopErr(node: NodeDef, s: Sample, axis: Axis): number | null {
     return s.climb_des - s.climb;
   }
   const v = axisView(s, axis === "d" && node.inner ? "roll" : axis);
-  if (node.id === "atc_rat") return v.des != null ? v.des - v.rate : null;
+  if (node.id === "atc_rat" || node.id === "rll_rate" || node.id === "ptch_rate") {
+    return v.des != null ? v.des - v.rate : null;
+  }
   if (node.id === "atc_ang") return axisTar(v) - v.ang;
   return null;
 }
 
 export function termOf(letter: "P" | "I" | "D", node: NodeDef, s: Sample, axis: Axis, kp: number | null): number | null {
   const v = axisView(s, axis === "d" && node.inner ? "roll" : axis);
-  if (node.id === "atc_rat") return letter === "P" ? v.p : letter === "I" ? v.i : v.d;
+  if (node.id === "atc_rat" || node.id === "rll_rate" || node.id === "ptch_rate") {
+    return letter === "P" ? v.p : letter === "I" ? v.i : v.d;
+  }
   if (letter === "P" && kp != null) {
     const e = loopErr(node, s, axis);
     return e == null ? null : kp * e;
@@ -161,6 +278,26 @@ export function PidSketch({
 
 const PID = PID_COL.pid;
 
+export function loopBoxHit(onPick?: () => void): Pick<SVGProps<SVGGElement>, "role" | "tabIndex" | "onClick" | "onKeyDown" | "style"> {
+  if (!onPick) return {};
+  return {
+    role: "button",
+    tabIndex: 0,
+    style: { cursor: "pointer" },
+    onClick: (e: MouseEvent<SVGGElement>) => {
+      e.stopPropagation();
+      onPick();
+    },
+    onKeyDown: (e: KeyboardEvent<SVGGElement>) => {
+      if (e.key === "Enter" || e.key === " ") {
+        e.preventDefault();
+        e.stopPropagation();
+        onPick();
+      }
+    },
+  };
+}
+
 export function LoopPidBlock({
   letter,
   x,
@@ -171,6 +308,8 @@ export function LoopPidBlock({
   axis,
   extra,
   extraHot,
+  picked,
+  onPick,
 }: {
   letter: "P" | "I" | "D";
   x: number;
@@ -181,21 +320,25 @@ export function LoopPidBlock({
   axis: Axis;
   extra?: string | null;
   extraHot?: boolean;
+  picked?: boolean;
+  onPick?: () => void;
 }) {
   const t = useT();
-  const s = getSnapshot();
+  const vehicle = useVehicle();
+  const s = viewSample(vehicle);
   const on = pidTerms(node).includes(letter);
   const kp = kpOf(node, s, axis);
   const v = termOf(letter, node, s, axis, kp);
   const sparkW = w - 12;
   const sparkH = 22;
-  const { ds } = sparkSeries(getBuffer(), [(p) => (on ? termOf(letter, node, p, axis, kpOf(node, p, axis)) : null)], sparkW, sparkH);
-  const stroke = PID;
+  const { ds } = sparkSeries(viewBuffer(vehicle), [(p) => (on ? termOf(letter, node, p, axis, kpOf(node, p, axis)) : null)], sparkW, sparkH);
+  const stroke = on ? PID : PID_COL.gray;
+  const mark: LoopMark = on ? "tune" : "struct";
   const liveY = extra ? y + 25 : y + 14;
   return (
-    <g opacity={on ? 1 : 0.28}>
-      <rect x={x} y={y} width={w} height={h} rx="7" fill={PID_COL.panel} stroke={on ? stroke : PID_COL.gray} strokeWidth="1.4" />
-      <text x={x + 8} y={y + 14} fill={on ? stroke : PID_COL.dim} fontSize="11" fontWeight="700">
+    <g opacity={on ? 1 : 0.28} {...loopBoxHit(onPick)}>
+      <LoopFrame x={x} y={y} w={w} h={h} color={stroke} mark={mark} picked={picked} />
+      <text x={x + 10} y={y + 14} fill={on ? stroke : PID_COL.dim} fontSize="11" fontWeight="700">
         {letter}
       </text>
       {extra ? (
@@ -224,6 +367,9 @@ export function LoopSumBlock({
   axis,
   label,
   extra,
+  picked,
+  onPick,
+  mark = "later",
 }: {
   x: number;
   y: number;
@@ -233,17 +379,21 @@ export function LoopSumBlock({
   axis: Axis;
   label: string;
   extra?: string | null;
+  picked?: boolean;
+  onPick?: () => void;
+  mark?: LoopMark;
 }) {
-  const s = getSnapshot();
+  const vehicle = useVehicle();
+  const s = viewSample(vehicle);
   const kp = kpOf(node, s, axis);
   const u = termSum(node, s, axis, kp);
   const sparkW = w - 12;
   const sparkH = h - 28;
-  const { ds } = sparkSeries(getBuffer(), [(p) => termSum(node, p, axis, kpOf(node, p, axis))], sparkW, sparkH);
+  const { ds } = sparkSeries(viewBuffer(vehicle), [(p) => termSum(node, p, axis, kpOf(node, p, axis))], sparkW, sparkH);
   return (
-    <g>
-      <rect x={x} y={y} width={w} height={h} rx="10" fill={PID_COL.panel} stroke={PID_COL.pid} strokeWidth="1.3" />
-      <text x={x + 8} y={y + 14} fill={PID_COL.dim} fontSize="11" fontWeight="700">
+    <g {...loopBoxHit(onPick)}>
+      <LoopFrame x={x} y={y} w={w} h={h} rx={10} color={PID_COL.pid} mark={mark} picked={picked} />
+      <text x={x + 10} y={y + 14} fill={PID_COL.dim} fontSize="11" fontWeight="700">
         Σ  {label}
         {extra ? (
           <tspan fill={PID_COL.hot}>{extra}</tspan>
@@ -271,6 +421,9 @@ export function LoopLiveBox({
   value,
   pick,
   subColor,
+  picked,
+  onPick,
+  mark,
 }: {
   x: number;
   y: number;
@@ -282,21 +435,25 @@ export function LoopLiveBox({
   value: string;
   pick: (s: Sample) => number | null;
   subColor?: string;
+  picked?: boolean;
+  onPick?: () => void;
+  mark?: LoopMark;
 }) {
   const sparkW = w - 12;
   const sparkH = 24;
-  const { ds } = sparkSeries(getBuffer(), [pick], sparkW, sparkH);
+  const vehicle = useVehicle();
+  const { ds } = sparkSeries(viewBuffer(vehicle), [pick], sparkW, sparkH);
   return (
-    <g>
-      <rect x={x} y={y} width={w} height={h} rx="7" fill={PID_COL.panel} stroke={stroke} strokeWidth="1.4" />
-      <text x={x + 8} y={y + 13} fill={PID_COL.dim} fontSize="10">
+    <g {...loopBoxHit(onPick)}>
+      <LoopFrame x={x} y={y} w={w} h={h} color={stroke} mark={mark} picked={picked} />
+      <text x={x + 10} y={y + 13} fill={PID_COL.dim} fontSize="10">
         {title}
       </text>
       <text x={x + w - 8} y={y + 13} textAnchor="end" fill={stroke} fontSize="11" fontWeight="700">
         {value}
       </text>
       {sub ? (
-        <text x={x + 8} y={y + 24} fill={subColor ?? PID_COL.dim} fontSize="9">
+        <text x={x + 10} y={y + 24} fill={subColor ?? PID_COL.dim} fontSize="9">
           {sub}
         </text>
       ) : null}

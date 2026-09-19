@@ -14,6 +14,8 @@ use mavlink::ardupilotmega::{
 use mavlink::{MavConnection, MavHeader};
 use serde::{Deserialize, Serialize};
 
+use crate::sitl::{SitlCtl, SitlOpts};
+
 const STOCK_P: f64 = 0.135;
 const STOCK_I: f64 = 0.135;
 const STOCK_D: f64 = 0.0036;
@@ -141,6 +143,77 @@ const PARAM_WATCH: &[&str] = &[
     "SIM_BARO_DELAY",
     "SIM_BATT_VOLTAGE",
     "SIM_BATT_CAP_AH",
+    // Plane First Flight / Tuning (harmless PARAM_REQUEST_READ on copter).
+    "RLL_RATE_P",
+    "RLL_RATE_I",
+    "RLL_RATE_D",
+    "RLL_RATE_FF",
+    "RLL_RATE_IMAX",
+    "RLL_RATE_FLTT",
+    "RLL_RATE_FLTE",
+    "RLL_RATE_FLTD",
+    "RLL_RATE_SMAX",
+    "RLL_ANGLE_P",
+    "RLL2SRV_TCONST",
+    "RLL2SRV_RMAX",
+    "RLL2SRV_ACCEL",
+    "PTCH_RATE_P",
+    "PTCH_RATE_I",
+    "PTCH_RATE_D",
+    "PTCH_RATE_FF",
+    "PTCH_RATE_IMAX",
+    "PTCH_RATE_FLTT",
+    "PTCH_RATE_FLTE",
+    "PTCH_RATE_FLTD",
+    "PTCH_RATE_SMAX",
+    "PTCH_ANGLE_P",
+    "PTCH2SRV_TCONST",
+    "PTCH2SRV_RMAX_UP",
+    "PTCH2SRV_RMAX_DN",
+    "PTCH2SRV_RLL",
+    "PTCH2SRV_ACCEL",
+    "YAW2SRV_SLIP",
+    "YAW2SRV_INT",
+    "YAW2SRV_DAMP",
+    "YAW2SRV_RLL",
+    "YAW2SRV_IMAX",
+    "YAW_RATE_ENABLE",
+    "YAW_RATE_P",
+    "YAW_RATE_I",
+    "YAW_RATE_D",
+    "YAW_RATE_FF",
+    "STEER2SRV_TCONST",
+    "STEER2SRV_P",
+    "STEER2SRV_I",
+    "STEER2SRV_D",
+    "STEER2SRV_FF",
+    "STEER2SRV_IMAX",
+    "STEER2SRV_MINSPD",
+    "GROUND_STEER_ALT",
+    "NAVL1_PERIOD",
+    "NAVL1_DAMPING",
+    "NAVL1_XTRACK_I",
+    "NAVL1_LIM_BANK",
+    "TECS_TIME_CONST",
+    "TECS_SPDWEIGHT",
+    "TECS_THR_DAMP",
+    "TECS_PTCH_DAMP",
+    "TECS_INTEG_GAIN",
+    "TECS_RLL2THR",
+    "TECS_CLMB_MAX",
+    "TECS_SINK_MIN",
+    "TECS_SINK_MAX",
+    "AIRSPEED_CRUISE",
+    "AIRSPEED_MIN",
+    "AIRSPEED_MAX",
+    "SCALING_SPEED",
+    "THR_MAX",
+    "THR_MIN",
+    "TRIM_THROTTLE",
+    "PTCH_LIM_MAX_DEG",
+    "PTCH_LIM_MIN_DEG",
+    "WP_RADIUS",
+    "WP_LOITER_RAD",
 ];
 
 /// Bare-SITL lab stand (same keys as UI `labInit.ts` / `wsl/params/copter.parm`).
@@ -249,6 +322,10 @@ pub struct Sample {
     pub climb: Option<f64>,
     pub climb_des: Option<f64>,
     pub thr_cmd: f64,
+    pub aspd: Option<f64>,
+    pub gspd: Option<f64>,
+    pub hdg: Option<f64>,
+    pub thr_out: Option<f64>,
     pub att_hz: u32,
     pub rx: String,
     pub frame: String,
@@ -258,6 +335,18 @@ pub struct Sample {
     /// Init dump progress. `init_total == 0` means not running.
     pub init_done: u32,
     pub init_total: u32,
+    #[serde(default)]
+    pub sitl_phase: String,
+    #[serde(default)]
+    pub sitl_detail: String,
+    #[serde(default)]
+    pub sitl_vehicle: String,
+    #[serde(default)]
+    pub sitl_running: bool,
+    #[serde(default)]
+    pub sitl_cpu: f32,
+    #[serde(default)]
+    pub sitl_rss_mb: f32,
 }
 
 impl Sample {
@@ -303,6 +392,10 @@ impl Sample {
             climb: None,
             climb_des: None,
             thr_cmd: 0.0,
+            aspd: None,
+            gspd: None,
+            hdg: None,
+            thr_out: None,
             att_hz: 0,
             rx: String::new(),
             frame: String::new(),
@@ -310,6 +403,12 @@ impl Sample {
             texts: Vec::new(),
             init_done: 0,
             init_total: 0,
+            sitl_phase: String::new(),
+            sitl_detail: String::new(),
+            sitl_vehicle: String::new(),
+            sitl_running: false,
+            sitl_cpu: 0.0,
+            sitl_rss_mb: 0.0,
         }
     }
 }
@@ -352,6 +451,15 @@ pub enum Cmd {
     ParamRead { name: String },
     #[serde(rename = "reboot")]
     Reboot,
+    #[serde(rename = "sitl_start")]
+    SitlStart {
+        vehicle: String,
+        wipe: bool,
+        home: String,
+        speedup: f64,
+    },
+    #[serde(rename = "sitl_stop")]
+    SitlStop,
 }
 
 fn strip_prefix_ci<'a>(s: &'a str, prefix: &str) -> Option<&'a str> {
@@ -469,14 +577,14 @@ fn frame_of(mavtype: MavType) -> String {
         | MavType::MAV_TYPE_DODECAROTOR => "copter".into(),
         MavType::MAV_TYPE_FIXED_WING
         | MavType::MAV_TYPE_FLAPPING_WING
-        | MavType::MAV_TYPE_VTOL_TILTROTOR => "plane".into(),
-        other => {
-            if (19..=25).contains(&(other as u32)) {
-                "plane".into()
-            } else {
-                String::new()
-            }
-        }
+        | MavType::MAV_TYPE_VTOL_TILTROTOR
+        | MavType::MAV_TYPE_VTOL_TAILSITTER_DUOROTOR
+        | MavType::MAV_TYPE_VTOL_TAILSITTER_QUADROTOR
+        | MavType::MAV_TYPE_VTOL_FIXEDROTOR
+        | MavType::MAV_TYPE_VTOL_TAILSITTER
+        | MavType::MAV_TYPE_VTOL_TILTWING
+        | MavType::MAV_TYPE_VTOL_RESERVED5 => "plane".into(),
+        _ => String::new(),
     }
 }
 
@@ -498,7 +606,48 @@ fn copter_mode(custom: u32) -> String {
     .into()
 }
 
-fn mode_custom(name: &str) -> Option<u32> {
+fn plane_mode(custom: u32) -> String {
+    match custom {
+        0 => "MANUAL",
+        1 => "CIRCLE",
+        2 => "STABILIZE",
+        3 => "TRAINING",
+        4 => "ACRO",
+        5 => "FBWA",
+        6 => "FBWB",
+        7 => "CRUISE",
+        8 => "AUTOTUNE",
+        10 => "AUTO",
+        11 => "RTL",
+        12 => "LOITER",
+        13 => "TAKEOFF",
+        15 => "GUIDED",
+        16 => "INIT",
+        _ => return format!("mode{custom}"),
+    }
+    .into()
+}
+
+fn mode_custom(frame: &str, name: &str) -> Option<u32> {
+    if frame == "plane" {
+        return Some(match name {
+            "MANUAL" => 0,
+            "CIRCLE" => 1,
+            "STABILIZE" => 2,
+            "TRAINING" => 3,
+            "ACRO" => 4,
+            "FBWA" | "FLY_BY_WIRE_A" => 5,
+            "FBWB" | "FLY_BY_WIRE_B" => 6,
+            "CRUISE" => 7,
+            "AUTOTUNE" => 8,
+            "AUTO" => 10,
+            "RTL" => 11,
+            "LOITER" => 12,
+            "TAKEOFF" => 13,
+            "GUIDED" => 15,
+            _ => return None,
+        });
+    }
     Some(match name {
         "STABILIZE" => 0,
         "ACRO" => 1,
@@ -999,6 +1148,7 @@ fn apply_cmd(
     cmd: Cmd,
     on_sample: &OnSample,
     latest: &Mutex<Sample>,
+    sitl: &SitlCtl,
 ) {
     match cmd {
         Cmd::Param { name, value } => set_param(conn, st, &name, value),
@@ -1035,7 +1185,7 @@ fn apply_cmd(
             let mut done = 0u32;
             st.sample.init_done = 0;
             st.sample.init_total = total;
-            emit_sample(on_sample, latest, st);
+            emit_sample(on_sample, latest, st, sitl);
             for name in &ordered {
                 if let Some(&value) = params.get(name) {
                     if name == "FRAME_CLASS" || name == "FRAME_TYPE" {
@@ -1051,7 +1201,7 @@ fn apply_cmd(
                     }
                     done += 1;
                     st.sample.init_done = done;
-                    emit_sample(on_sample, latest, st);
+                    emit_sample(on_sample, latest, st, sitl);
                 }
             }
             if let Some(&v) = params.get("FRAME_CLASS") {
@@ -1064,7 +1214,7 @@ fn apply_cmd(
                 }
                 done += 1;
                 st.sample.init_done = done;
-                emit_sample(on_sample, latest, st);
+                emit_sample(on_sample, latest, st, sitl);
             }
             let settle = Instant::now() + Duration::from_millis(1200);
             while Instant::now() < settle {
@@ -1073,7 +1223,7 @@ fn apply_cmd(
             }
             st.sample.init_done = 0;
             st.sample.init_total = 0;
-            emit_sample(on_sample, latest, st);
+            emit_sample(on_sample, latest, st, sitl);
         }
         Cmd::Preset { name } => {
             let (p, i, d, ang, shape) = match name.as_str() {
@@ -1088,7 +1238,7 @@ fn apply_cmd(
         }
         Cmd::Tune { p, i, d } => set_rate_pid(conn, st, p, i, d, None),
         Cmd::Mode { mode } => {
-            if let Some(custom) = mode_custom(&mode) {
+            if let Some(custom) = mode_custom(&st.sample.frame, &mode) {
                 command_long(
                     conn,
                     st.target_system,
@@ -1100,6 +1250,14 @@ fn apply_cmd(
             }
         }
         Cmd::Arm { on } => {
+            // GCS disarm is refused while Copter !land_complete / Plane is_flying.
+            // 21196 is ArduPilot's force-disarm magic (GCS.h magic_force_arm_disarm_value).
+            if !on {
+                st.virtual_stick = false;
+                st.pulse_until = None;
+                st.rc.thr = 0;
+            }
+            let force = if on { 0.0 } else { 21196.0 };
             for comp in [st.target_component, 1, 0] {
                 command_long(
                     conn,
@@ -1107,7 +1265,7 @@ fn apply_cmd(
                     comp,
                     MavCmd::MAV_CMD_COMPONENT_ARM_DISARM,
                     if on { 1.0 } else { 0.0 },
-                    0.0,
+                    force,
                 );
             }
         }
@@ -1158,7 +1316,7 @@ fn apply_cmd(
                 }),
             );
         }
-        Cmd::Connect { .. } | Cmd::Disconnect => {}
+        Cmd::Connect { .. } | Cmd::Disconnect | Cmd::SitlStart { .. } | Cmd::SitlStop => {}
         Cmd::Reboot => reboot_fc(conn, st),
     }
 }
@@ -1190,15 +1348,23 @@ fn handle_msg(st: &mut LinkState, header: &MavHeader, msg: MavMessage) {
             if autopilot != MavAutopilot::MAV_AUTOPILOT_ARDUPILOTMEGA {
                 return;
             }
+            let frame = frame_of(mavtype);
+            if frame.is_empty() {
+                return;
+            }
             if header.system_id != 0 {
                 st.target_system = header.system_id;
             }
             if header.component_id != 0 {
                 st.target_component = header.component_id;
             }
-            st.sample.mode = copter_mode(custom_mode);
+            st.sample.frame = frame;
+            st.sample.mode = if st.sample.frame == "plane" {
+                plane_mode(custom_mode)
+            } else {
+                copter_mode(custom_mode)
+            };
             st.sample.armed = base_mode.contains(MavModeFlag::MAV_MODE_FLAG_SAFETY_ARMED);
-            st.sample.frame = frame_of(mavtype);
         }
         MavMessage::ATTITUDE(ATTITUDE_DATA {
             roll,
@@ -1223,17 +1389,21 @@ fn handle_msg(st: &mut LinkState, header: &MavHeader, msg: MavMessage) {
             }
         }
         MavMessage::ATTITUDE_TARGET(ATTITUDE_TARGET_DATA { q, .. }) => {
-            if let Some(ang) = quat_roll_deg(&q) {
-                st.sample.tar = Some(ang);
-                st.have_att_target = true;
-            }
-            if let Some(ang) = quat_pitch_deg(&q) {
-                st.sample.pitch_tar = Some(ang);
-                st.have_att_target = true;
-            }
-            if let Some(ang) = quat_yaw_deg(&q) {
-                st.sample.yaw_tar = Some(ang);
-                st.have_att_target = true;
+            // Plane's ATTITUDE_TARGET is QuadPlane-only. Fixed-wing angle
+            // setpoint is NAV_CONTROLLER_OUTPUT.nav_roll / nav_pitch.
+            if st.sample.frame != "plane" {
+                if let Some(ang) = quat_roll_deg(&q) {
+                    st.sample.tar = Some(ang);
+                    st.have_att_target = true;
+                }
+                if let Some(ang) = quat_pitch_deg(&q) {
+                    st.sample.pitch_tar = Some(ang);
+                    st.have_att_target = true;
+                }
+                if let Some(ang) = quat_yaw_deg(&q) {
+                    st.sample.yaw_tar = Some(ang);
+                    st.have_att_target = true;
+                }
             }
         }
         MavMessage::NAV_CONTROLLER_OUTPUT(NAV_CONTROLLER_OUTPUT_DATA {
@@ -1242,7 +1412,7 @@ fn handle_msg(st: &mut LinkState, header: &MavHeader, msg: MavMessage) {
             alt_error,
             ..
         }) => {
-            if !st.have_att_target {
+            if st.sample.frame == "plane" || !st.have_att_target {
                 st.sample.tar = Some(nav_roll as f64);
                 st.sample.pitch_tar = Some(nav_pitch as f64);
             }
@@ -1288,7 +1458,18 @@ fn handle_msg(st: &mut LinkState, header: &MavHeader, msg: MavMessage) {
             st.sample.climb = Some(-(vz as f64) / 100.0);
             apply_d_targets(st);
         }
-        MavMessage::VFR_HUD(VFR_HUD_DATA { climb, .. }) => {
+        MavMessage::VFR_HUD(VFR_HUD_DATA {
+            airspeed,
+            groundspeed,
+            heading,
+            throttle,
+            climb,
+            ..
+        }) => {
+            st.sample.aspd = Some(airspeed as f64);
+            st.sample.gspd = Some(groundspeed as f64);
+            st.sample.hdg = Some(heading as f64);
+            st.sample.thr_out = Some(throttle as f64);
             if st.sample.climb.is_none() {
                 st.sample.climb = Some(climb as f64);
             }
@@ -1409,15 +1590,18 @@ fn msg_name(msg: &MavMessage) -> &'static str {
     }
 }
 
-/// SITL extra GCS ports (5760 is often MAVProxy; 5762/5763 are the extras).
+/// Extra GCS ports. 5760 is SERIAL0; do not wander off it onto 5762/5763.
 fn sitl_alt_urls(url: &str) -> Vec<String> {
-    let Some(rest) = strip_prefix_ci(url, "tcpout:") else {
+    let Some(("tcpout", rest)) = url.split_once(':') else {
         return Vec::new();
     };
     let Some((host, port)) = rest.rsplit_once(':') else {
         return Vec::new();
     };
-    if !matches!(host, "127.0.0.1" | "localhost" | "::1") {
+    if host != "127.0.0.1" && host != "localhost" {
+        return Vec::new();
+    }
+    if port == "5760" || port == "5770" {
         return Vec::new();
     }
     ["5763", "5762"]
@@ -1427,15 +1611,33 @@ fn sitl_alt_urls(url: &str) -> Vec<String> {
         .collect()
 }
 
+#[derive(Clone, Copy)]
 enum OpenErr {
     Connect,
+    AddrInUse,
     NoHeartbeat,
 }
 
+fn open_conn(url: &str) -> Result<Box<dyn MavConnection<MavMessage> + Send + Sync>, OpenErr> {
+    let udp = url.len() >= 3 && url[..3].eq_ignore_ascii_case("udp");
+    let io_err = |err: std::io::Error| {
+        if err.kind() == std::io::ErrorKind::AddrInUse {
+            OpenErr::AddrInUse
+        } else {
+            OpenErr::Connect
+        }
+    };
+    if udp {
+        crate::udp::connect(url).map_err(io_err)
+    } else {
+        mavlink::connect::<MavMessage>(url).map_err(io_err)
+    }
+}
+
 fn try_open(url: &str) -> Result<Box<dyn MavConnection<MavMessage> + Send + Sync>, OpenErr> {
-    let mut conn = mavlink::connect::<MavMessage>(url).map_err(|_| OpenErr::Connect)?;
+    let mut conn = open_conn(url)?;
     conn.set_protocol_version(mavlink::MavlinkVersion::V2);
-    let deadline = Instant::now() + Duration::from_millis(2500);
+    let deadline = Instant::now() + Duration::from_secs(6);
     while Instant::now() < deadline {
         let _ = conn.send(&header(), &gcs_heartbeat());
         match conn.recv() {
@@ -1469,11 +1671,17 @@ fn open_link(url: &str) -> Result<(Box<dyn MavConnection<MavMessage> + Send + Sy
 
 pub type OnSample = Arc<dyn Fn(&Sample) + Send + Sync>;
 
-fn emit_sample(on_sample: &OnSample, latest: &Mutex<Sample>, st: &LinkState) {
-    if let Ok(mut g) = latest.lock() {
+fn emit_sample(on_sample: &OnSample, latest: &Mutex<Sample>, st: &LinkState, sitl: &SitlCtl) {
+    let s = if let Ok(mut g) = latest.lock() {
         *g = st.sample.clone();
-    }
-    on_sample(&st.sample);
+        sitl.write_into(&mut g);
+        g.clone()
+    } else {
+        let mut s = st.sample.clone();
+        sitl.write_into(&mut s);
+        s
+    };
+    on_sample(&s);
 }
 
 fn wall_time() -> f64 {
@@ -1495,8 +1703,14 @@ fn drain_cmds(
     conn: Option<&dyn MavConnection<MavMessage>>,
     st: &mut LinkState,
     on_sample: &OnSample,
-    latest: &Mutex<Sample>,
+    latest: &Arc<Mutex<Sample>>,
+    sitl: &Arc<SitlCtl>,
 ) -> Drain {
+    if let Some(u) = sitl.take_connect() {
+        let mut g = url.lock().unwrap();
+        *g = u;
+        return Drain::Reconnect;
+    }
     let rx = cmds.lock().unwrap();
     loop {
         match rx.try_recv() {
@@ -1514,9 +1728,35 @@ fn drain_cmds(
                 g.clear();
                 return Drain::Reconnect;
             }
+            Ok(Cmd::SitlStart {
+                vehicle,
+                wipe,
+                home,
+                speedup,
+            }) => {
+                sitl.start(
+                    SitlOpts {
+                        vehicle,
+                        wipe,
+                        home,
+                        speedup,
+                    },
+                    Arc::clone(latest),
+                );
+                sitl.write_into(&mut st.sample);
+                emit_sample(on_sample, latest, st, sitl);
+            }
+            Ok(Cmd::SitlStop) => {
+                sitl.stop();
+                sitl.write_into(&mut st.sample);
+                emit_sample(on_sample, latest, st, sitl);
+                let mut g = url.lock().unwrap();
+                g.clear();
+                return Drain::Reconnect;
+            }
             Ok(cmd) => {
                 if let Some(conn) = conn {
-                    apply_cmd(conn, st, cmd, on_sample, latest);
+                    apply_cmd(conn, st, cmd, on_sample, latest, sitl);
                 }
             }
             Err(TryRecvError::Empty) => return Drain::None,
@@ -1530,17 +1770,19 @@ pub fn run_loop(
     cmds: Receiver<Cmd>,
     latest: Arc<Mutex<Sample>>,
     url: Arc<Mutex<String>>,
+    sitl: Arc<SitlCtl>,
 ) {
     let cmds = Mutex::new(cmds);
+    sitl.adopt(Arc::clone(&latest));
     loop {
         let mut st = LinkState::new();
         let target = url.lock().map(|g| g.clone()).unwrap_or_default();
         if target.is_empty() {
             st.sample.ok = false;
             st.sample.detail = "відключено".into();
-            emit_sample(&on_sample, &latest, &st);
+            emit_sample(&on_sample, &latest, &st, &sitl);
             loop {
-                match drain_cmds(&cmds, &url, None, &mut st, &on_sample, &latest) {
+                match drain_cmds(&cmds, &url, None, &mut st, &on_sample, &latest, &sitl) {
                     Drain::None => std::thread::sleep(Duration::from_millis(50)),
                     Drain::Reconnect => break,
                     Drain::Stop => return,
@@ -1548,6 +1790,9 @@ pub fn run_loop(
             }
             continue;
         }
+        st.sample.ok = false;
+        st.sample.detail = format!("чекаємо HEARTBEAT ({target})");
+        emit_sample(&on_sample, &latest, &st, &sitl);
         let conn = match open_link(&target) {
             Ok((c, actual)) => {
                 if actual != target {
@@ -1565,6 +1810,11 @@ pub fn run_loop(
                 st.sample.detail = format!("немає HEARTBEAT ({target})");
                 None
             }
+            Err(OpenErr::AddrInUse) => {
+                st.sample.ok = false;
+                st.sample.detail = format!("порт зайнятий ({target})");
+                None
+            }
             Err(OpenErr::Connect) => {
                 st.sample.ok = false;
                 st.sample.detail = format!("немає MAVLink ({target})");
@@ -1572,10 +1822,10 @@ pub fn run_loop(
             }
         };
         let Some(conn) = conn else {
-            emit_sample(&on_sample, &latest, &st);
+            emit_sample(&on_sample, &latest, &st, &sitl);
             let until = Instant::now() + Duration::from_secs(2);
             while Instant::now() < until {
-                match drain_cmds(&cmds, &url, None, &mut st, &on_sample, &latest) {
+                match drain_cmds(&cmds, &url, None, &mut st, &on_sample, &latest, &sitl) {
                     Drain::None => std::thread::sleep(Duration::from_millis(50)),
                     Drain::Reconnect => break,
                     Drain::Stop => return,
@@ -1596,7 +1846,7 @@ pub fn run_loop(
         let mut last_att: Option<Instant> = None;
 
         loop {
-            match drain_cmds(&cmds, &url, Some(&*conn), &mut st, &on_sample, &latest) {
+            match drain_cmds(&cmds, &url, Some(&*conn), &mut st, &on_sample, &latest, &sitl) {
                 Drain::None => {}
                 Drain::Reconnect => break,
                 Drain::Stop => return,
@@ -1624,7 +1874,7 @@ pub fn run_loop(
                 if now.duration_since(t) > Duration::from_secs(12) {
                     st.sample.ok = false;
                     st.sample.detail = "немає ATTITUDE, reconnect".into();
-                    emit_sample(&on_sample, &latest, &st);
+                    emit_sample(&on_sample, &latest, &st, &sitl);
                     break;
                 }
             }
@@ -1654,13 +1904,13 @@ pub fn run_loop(
                 Err(_) => {
                     st.sample.ok = false;
                     st.sample.detail = "лінк обірвався".into();
-                    emit_sample(&on_sample, &latest, &st);
+                    emit_sample(&on_sample, &latest, &st, &sitl);
                     break;
                 }
             }
 
             if now.duration_since(last_emit) >= Duration::from_millis(40) {
-                emit_sample(&on_sample, &latest, &st);
+                emit_sample(&on_sample, &latest, &st, &sitl);
                 last_emit = now;
             }
         }
