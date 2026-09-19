@@ -9,7 +9,7 @@ on:
       tag:
         description: GitHub release tag to upload installers to
         required: true
-        default: "1.0.0"
+        default: "1.1.0"
 
 permissions:
   contents: write
@@ -45,7 +45,6 @@ jobs:
           args: --bundles deb,rpm,appimage
 
   windows:
-    if: github.event_name == 'push'
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
@@ -62,8 +61,8 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
-          tagName: ${{ github.ref_name }}
-          releaseName: ArduLoops ${{ github.ref_name }}
+          tagName: ${{ github.event.inputs.tag || github.ref_name }}
+          releaseName: ArduLoops ${{ github.event.inputs.tag || github.ref_name }}
           releaseDraft: false
           uploadUpdaterJson: false
           tauriScript: node scripts/with-cargo.mjs tauri

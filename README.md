@@ -1,6 +1,6 @@
 # ArduLoops
 
-A live stand for **seeing ArduPilot loops** — copter and plane. Until a vehicle is linked, the app shows a **disconnected landing** (not a fake copter). HEARTBEAT then mounts the matching shell. **SITL** in the header starts an official sitl-exe from the left rail.
+A live stand for **seeing ArduPilot loops** — copter and plane. Until a vehicle is linked, the app shows a **disconnected landing** (not a fake copter). HEARTBEAT then mounts the matching shell. **SITL** in the header starts official firmware SITL from the left rail.
 
 The wiki is the protocol. This stand shows which loops the current mode actually closes.
 
@@ -40,7 +40,7 @@ How to Link, how to start SITL on this OS, official First Time Setup / Tuning, w
 
 ### SITL rail
 
-**SITL** before the title opens a left rail. Pick copter or plane, **Start** — the app downloads sitl-exe if needed and links `tcpout:127.0.0.1:5770`. Wind, GPS, RC fail, motors, IMU are `SIM_*` while the sim is live. **Reset** restores values from the start of the link.
+**SITL** before the title opens a left rail. Pick copter or plane, **Start** — the app downloads official SITL if needed (Windows: Mission Planner sitl-exe; Linux x86_64: firmware `arducopter` / `arduplane`) and links `tcpout:127.0.0.1:5770`. Wind, GPS, RC fail, motors, IMU are `SIM_*` while the sim is live. **Reset** restores values from the start of the link.
 
 ![SITL: vehicle thumbs and start](docs/sitl.png)
 
@@ -82,11 +82,11 @@ npm run build      # native installers for this OS (same UI as `dev`)
 
 On Windows that writes NSIS + MSI. On Linux: `.deb`, `.rpm` and AppImage (`--bundles deb,rpm,appimage`).
 
-GitHub Actions (`.github/workflows/release.yml`) builds the Linux packages and uploads them to the release. Local Linux needs the [Tauri v2 prerequisites](https://v2.tauri.app/start/prerequisites/#linux) (`libwebkit2gtk-4.1-dev`, …).
+GitHub Actions (`.github/workflows/release.yml`) builds Windows NSIS/MSI and Linux `.deb` / `.rpm` / AppImage and uploads them to the release. Local Linux needs the [Tauri v2 prerequisites](https://v2.tauri.app/start/prerequisites/#linux) (`libwebkit2gtk-4.1-dev`, …).
 
 Release assets:
 
-- `ArduLoops_1.0.0_x64-setup.exe` / `ArduLoops_1.0.0_x64_en-US.msi` — Windows
+- `ArduLoops_1.1.0_x64-setup.exe` / `ArduLoops_1.1.0_x64_en-US.msi` — Windows
 - `.deb` / `.rpm` / `.AppImage` — Linux x86_64
 
 ## Options

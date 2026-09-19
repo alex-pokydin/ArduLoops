@@ -23,7 +23,7 @@ Each SITL TCP port accepts **one** client. Do not point two ArduLoops instances 
 
 ## Start SITL
 
-**SITL** before the title opens a left rail. Pick copter or plane, **Start**. The app downloads the official sitl-exe if needed and Links `tcpout:127.0.0.1:5770`.
+**SITL** before the title opens a left rail. Pick copter or plane, **Start**. The app downloads official SITL if needed (Windows: Mission Planner sitl-exe; Linux x86_64: firmware `arducopter` / `arduplane`) and Links `tcpout:127.0.0.1:5770`.
 
 ![SITL: vehicle thumbs and start](sitl.png)
 
@@ -45,6 +45,8 @@ In ArduLoops, **Link** `tcpout:127.0.0.1:5760`. WSL2 localhost forwarding usuall
 Wiki default (`--map --console`) starts MAVProxy; then ArduLoops often uses `tcpout:127.0.0.1:5763`.
 
 ### macOS / Linux
+
+On **Linux x86_64**, **Start** in the SITL rail downloads the firmware ELF (`SITL_x86_64_linux_gnu`) and Links `tcpout:127.0.0.1:5770`. There is no aarch64 firmware folder — on ARM or macOS, start SITL yourself.
 
 Same [SITL](https://ardupilot.org/dev/docs/sitl-simulator-software-in-the-loop.html) script after [macOS](https://ardupilot.org/dev/docs/building-setup-mac.html) or [Linux](https://ardupilot.org/dev/docs/building-setup-linux.html) build setup:
 

@@ -1,5 +1,5 @@
 export const DEFAULT_LINK = "tcpout:127.0.0.1:5763";
-/** SITL `--serial0 tcp:0` (Mission Planner binaries, no MAVProxy). */
+/** In-app SITL `--serial0 tcp:5770` (no MAVProxy). */
 export const SITL_LINK = "tcpout:127.0.0.1:5770";
 /** Local MAVLink HTTP (browser and desktop). */
 export const APP_HTTP = "http://127.0.0.1:8767";

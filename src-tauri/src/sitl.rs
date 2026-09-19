@@ -1,4 +1,5 @@
-//! Mission Planner Windows SITL: official exe + Cygwin DLLs, then spawn.
+//! In-app SITL: Mission Planner Cygwin binaries on Windows, firmware
+//! `SITL_x86_64_linux_gnu` ELFs on Linux. Spawn `--serial0 tcp:5770`.
 use std::fs::{self, File};
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
@@ -11,7 +12,11 @@ use crate::link::Sample;
 pub const LINK: &str = "tcpout:127.0.0.1:5770";
 pub const DEFAULT_HOME: &str = "-35.363261,149.165230,584,353";
 
-const BASE: &str = "https://firmware.ardupilot.org/Tools/MissionPlanner/sitl/";
+#[cfg(windows)]
+const MP_SITL: &str = "https://firmware.ardupilot.org/Tools/MissionPlanner/sitl/";
+#[cfg(any(test, all(target_os = "linux", target_arch = "x86_64")))]
+const FW: &str = "https://firmware.ardupilot.org";
+#[cfg(windows)]
 const DLLS: &[&str] = &[
     "cygatomic-1.dll",
     "cyggcc_s-1.dll",
@@ -101,8 +106,8 @@ impl SitlCtl {
         };
         #[cfg(windows)]
         let alive = win_proc::is_running(pid) && win_proc::is_sitl(pid);
-        #[cfg(not(windows))]
-        let alive = false;
+        #[cfg(unix)]
+        let alive = unix_proc::is_running(pid) && unix_proc::is_sitl(pid);
         if !alive {
             clear_live();
             return;
@@ -142,9 +147,11 @@ impl SitlCtl {
         g.gen = g.gen.wrapping_add(1);
         let pid = g.pid.take();
         kill_child(g.child.take());
-        #[cfg(windows)]
         if let Some(pid) = pid {
+            #[cfg(windows)]
             win_proc::kill_tree(pid);
+            #[cfg(unix)]
+            unix_proc::kill(pid);
         }
         clear_live();
         g.running = false;
@@ -251,90 +258,158 @@ fn run_job(
     opts: SitlOpts,
     latest: &Mutex<Sample>,
 ) -> Result<(), String> {
-    #[cfg(not(windows))]
-    {
-        let _ = (ctl, gen, opts, latest);
-        return Err("Windows SITL binaries only".into());
+    let vehicle = norm_vehicle(&opts.vehicle);
+    let model = if vehicle == "plane" { "plane" } else { "+" };
+    let root = sitl_root()?;
+    fs::create_dir_all(&root).map_err(|e| e.to_string())?;
+    let run_dir = root.join(vehicle);
+    fs::create_dir_all(&run_dir).map_err(|e| e.to_string())?;
+
+    let exe = fetch_sitl(ctl, gen, latest, &root, vehicle)?;
+    if !ctl.alive(gen) {
+        return Ok(());
     }
+
+    ctl.set(gen, "start", "", false, None);
+    ctl.push_latest(latest);
+
+    let home = sanitize_home(&opts.home);
+    let speedup = opts.speedup.clamp(1.0, 10.0);
+    let mut cmd = Command::new(&exe);
+    cmd.arg(format!("-M{model}"))
+        .arg(format!("-O{home}"))
+        .arg(format!("-s{speedup}"))
+        .arg("--serial0")
+        .arg("tcp:5770")
+        .arg("--serial1")
+        .arg("none")
+        .arg("--serial2")
+        .arg("none")
+        .current_dir(&run_dir)
+        .env("HOME", &run_dir)
+        .stdin(Stdio::null());
+    let log = File::create(run_dir.join("sitl.log")).map_err(|e| format!("sitl.log: {e}"))?;
+    let log_err = log.try_clone().map_err(|e| e.to_string())?;
+    cmd.stdout(Stdio::from(log)).stderr(Stdio::from(log_err));
+    if opts.wipe {
+        cmd.arg("--wipe");
+    }
+    let path = std::env::var_os("PATH").unwrap_or_default();
+    let mut new_path = root.as_os_str().to_os_string();
+    new_path.push(if cfg!(windows) { ";" } else { ":" });
+    new_path.push(&run_dir);
+    new_path.push(if cfg!(windows) { ";" } else { ":" });
+    new_path.push(&path);
+    cmd.env("PATH", new_path);
+
     #[cfg(windows)]
     {
-        let vehicle = norm_vehicle(&opts.vehicle);
-        let (elf, model) = match vehicle {
-            "plane" => ("ArduPlane.elf", "plane"),
-            _ => ("ArduCopter.elf", "+"),
-        };
-        let exe_name = elf.trim_end_matches(".elf").to_string() + ".exe";
-        let root = sitl_root()?;
-        fs::create_dir_all(&root).map_err(|e| e.to_string())?;
-        let run_dir = root.join(vehicle);
-        fs::create_dir_all(&run_dir).map_err(|e| e.to_string())?;
-
-        ensure_file(ctl, gen, latest, &root, elf, &exe_name, 1_000_000)?;
-        for dll in DLLS {
-            ensure_file(ctl, gen, latest, &root, dll, dll, 4_000)?;
-        }
-        if !ctl.alive(gen) {
-            return Ok(());
-        }
-
-        ctl.set(gen, "start", "", false, None);
-        ctl.push_latest(latest);
-
-        let exe = root.join(&exe_name);
-        let home = sanitize_home(&opts.home);
-        let speedup = opts.speedup.clamp(1.0, 10.0);
-        let mut cmd = Command::new(&exe);
-        cmd.arg(format!("-M{model}"))
-            .arg(format!("-O{home}"))
-            .arg(format!("-s{speedup}"))
-            .arg("--serial0")
-            .arg("tcp:5770")
-            .arg("--serial1")
-            .arg("none")
-            .arg("--serial2")
-            .arg("none")
-            .current_dir(&run_dir)
-            .env("HOME", &run_dir)
-            .stdin(Stdio::null());
-        let log = File::create(run_dir.join("sitl.log")).map_err(|e| format!("sitl.log: {e}"))?;
-        let log_err = log.try_clone().map_err(|e| e.to_string())?;
-        cmd.stdout(Stdio::from(log)).stderr(Stdio::from(log_err));
-        if opts.wipe {
-            cmd.arg("--wipe");
-        }
-        let path = std::env::var_os("PATH").unwrap_or_default();
-        let mut new_path = root.into_os_string();
-        new_path.push(";");
-        new_path.push(&run_dir);
-        new_path.push(";");
-        new_path.push(path);
-        cmd.env("PATH", new_path);
-
         use std::os::windows::process::CommandExt;
         cmd.creation_flags(sitl_spawn_flags());
-
-        log::info!(
-            "sitl spawn {} -M{model} -O{home} -s{speedup} --serial0 tcp:5770{}",
-            exe.display(),
-            if opts.wipe { " --wipe" } else { "" }
-        );
-
-        let child = cmd.spawn().map_err(|e| format!("spawn: {e}"))?;
-        ctl.attach(gen, child);
-        if !ctl.alive(gen) {
-            return Ok(());
-        }
-        // SERIAL0 is one TCP client. Do not probe-connect — that attach/close
-        // kills Cygwin SITL when it has no clock console.
-        std::thread::sleep(Duration::from_millis(600));
-        if !ctl.alive(gen) {
-            return Ok(());
-        }
-        ctl.set(gen, "run", "", true, Some(LINK));
-        ctl.push_latest(latest);
-        watch_pid(ctl, gen, latest);
-        Ok(())
     }
+
+    log::info!(
+        "sitl spawn {} -M{model} -O{home} -s{speedup} --serial0 tcp:5770{}",
+        exe.display(),
+        if opts.wipe { " --wipe" } else { "" }
+    );
+
+    let child = cmd.spawn().map_err(|e| format!("spawn: {e}"))?;
+    ctl.attach(gen, child);
+    if !ctl.alive(gen) {
+        return Ok(());
+    }
+    // SERIAL0 is one TCP client. Do not probe-connect — that attach/close
+    // kills Cygwin SITL when it has no clock console.
+    std::thread::sleep(Duration::from_millis(600));
+    if !ctl.alive(gen) {
+        return Ok(());
+    }
+    ctl.set(gen, "run", "", true, Some(LINK));
+    ctl.push_latest(latest);
+    watch_pid(ctl, gen, latest);
+    Ok(())
+}
+
+fn fetch_sitl(
+    ctl: &SitlCtl,
+    gen: u64,
+    latest: &Mutex<Sample>,
+    root: &Path,
+    vehicle: &str,
+) -> Result<PathBuf, String> {
+    #[cfg(windows)]
+    {
+        let (elf, exe_name) = match vehicle {
+            "plane" => ("ArduPlane.elf", "ArduPlane.exe"),
+            _ => ("ArduCopter.elf", "ArduCopter.exe"),
+        };
+        ensure_url(
+            ctl,
+            gen,
+            latest,
+            &root.join(exe_name),
+            &format!("{MP_SITL}{elf}"),
+            exe_name,
+            1_000_000,
+        )?;
+        for dll in DLLS {
+            ensure_url(
+                ctl,
+                gen,
+                latest,
+                &root.join(dll),
+                &format!("{MP_SITL}{dll}"),
+                dll,
+                4_000,
+            )?;
+        }
+        Ok(root.join(exe_name))
+    }
+    #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
+    {
+        let dest = root.join(linux_bin(vehicle));
+        ensure_url(
+            ctl,
+            gen,
+            latest,
+            &dest,
+            &linux_fw_url(vehicle),
+            linux_bin(vehicle),
+            1_000_000,
+        )?;
+        chmod_exec(&dest)?;
+        Ok(dest)
+    }
+    #[cfg(not(any(windows, all(target_os = "linux", target_arch = "x86_64"))))]
+    {
+        let _ = (ctl, gen, latest, root, vehicle);
+        Err("in-app SITL needs Windows or Linux x86_64".into())
+    }
+}
+
+#[cfg(any(test, all(target_os = "linux", target_arch = "x86_64")))]
+fn linux_bin(vehicle: &str) -> &'static str {
+    if vehicle == "plane" {
+        "arduplane"
+    } else {
+        "arducopter"
+    }
+}
+
+#[cfg(any(test, all(target_os = "linux", target_arch = "x86_64")))]
+fn linux_fw_url(vehicle: &str) -> String {
+    let folder = if vehicle == "plane" { "Plane" } else { "Copter" };
+    format!("{FW}/{folder}/stable/SITL_x86_64_linux_gnu/{}", linux_bin(vehicle))
+}
+
+#[cfg(all(target_os = "linux", target_arch = "x86_64"))]
+fn chmod_exec(path: &Path) -> Result<(), String> {
+    use std::os::unix::fs::PermissionsExt;
+    let meta = fs::metadata(path).map_err(|e| e.to_string())?;
+    let mut perms = meta.permissions();
+    perms.set_mode(perms.mode() | 0o755);
+    fs::set_permissions(path, perms).map_err(|e| e.to_string())
 }
 
 fn watch_pid(ctl: &SitlCtl, gen: u64, latest: &Mutex<Sample>) {
@@ -366,34 +441,21 @@ fn watch_pid(ctl: &SitlCtl, gen: u64, latest: &Mutex<Sample>) {
                         true
                     }
                 },
-                None => {
-                    #[cfg(windows)]
-                    {
-                        match g.pid {
-                            Some(pid) => !win_proc::is_running(pid),
-                            None => true,
-                        }
-                    }
-                    #[cfg(not(windows))]
-                    {
-                        true
-                    }
-                }
+                None => match g.pid {
+                    Some(pid) => !os_running(pid),
+                    None => true,
+                },
             };
             if !exited {
                 if let Some(parent) = parent {
-                    #[cfg(windows)]
-                    {
-                        let pid = win_proc::worker_pid(parent).unwrap_or(parent);
-                        if g.stats_pid != Some(pid) {
-                            g.stats_pid = Some(pid);
-                            g.cpu_mark = None;
-                        }
-                        let (cpu, rss) = win_proc::usage(pid, &mut g.cpu_mark);
-                        g.cpu_pct = cpu;
-                        g.rss_mb = rss;
+                    let pid = os_stats_pid(parent);
+                    if g.stats_pid != Some(pid) {
+                        g.stats_pid = Some(pid);
+                        g.cpu_mark = None;
                     }
-                    let _ = parent;
+                    let (cpu, rss) = os_usage(pid, &mut g.cpu_mark);
+                    g.cpu_pct = cpu;
+                    g.rss_mb = rss;
                 }
             }
             exited
@@ -407,19 +469,18 @@ fn watch_pid(ctl: &SitlCtl, gen: u64, latest: &Mutex<Sample>) {
     }
 }
 
-fn ensure_file(
+fn ensure_url(
     ctl: &SitlCtl,
     gen: u64,
     latest: &Mutex<Sample>,
-    dir: &Path,
-    remote: &str,
-    local: &str,
+    dest: &Path,
+    url: &str,
+    label: &str,
     min_len: u64,
 ) -> Result<(), String> {
     if !ctl.alive(gen) {
         return Ok(());
     }
-    let dest = dir.join(local);
     if dest.is_file() {
         if let Ok(meta) = dest.metadata() {
             if meta.len() >= min_len {
@@ -427,15 +488,14 @@ fn ensure_file(
             }
         }
     }
-    ctl.set(gen, "download", local, false, None);
+    ctl.set(gen, "download", label, false, None);
     ctl.push_latest(latest);
-    let url = format!("{BASE}{remote}");
-    download(&url, &dest, min_len, &mut |frac| {
+    download(url, dest, min_len, &mut |frac| {
         if !ctl.alive(gen) {
             return;
         }
         let pct = (frac * 100.0).round() as u32;
-        ctl.set(gen, "download", &format!("{local} {pct}%"), false, None);
+        ctl.set(gen, "download", &format!("{label} {pct}%"), false, None);
         ctl.push_latest(latest);
     })?;
     Ok(())
@@ -456,15 +516,13 @@ fn download(
         }
     };
     if ureq_err.is_some() {
+        on_frac(0.0);
         #[cfg(windows)]
-        {
-            on_frac(0.0);
-            download_powershell(url, &tmp)?;
-        }
-        #[cfg(not(windows))]
-        {
-            return Err(ureq_err.unwrap());
-        }
+        download_powershell(url, &tmp)?;
+        #[cfg(unix)]
+        download_curl(url, &tmp)?;
+        #[cfg(not(any(windows, unix)))]
+        return Err(ureq_err.unwrap());
     }
     let len = tmp.metadata().map(|m| m.len()).unwrap_or(0);
     if len < min_len {
@@ -507,6 +565,21 @@ fn download_ureq(url: &str, dest: &Path, on_frac: &mut dyn FnMut(f32)) -> Result
     Ok(())
 }
 
+#[cfg(unix)]
+fn download_curl(url: &str, dest: &Path) -> Result<(), String> {
+    let status = Command::new("curl")
+        .args(["-fsSL", "--connect-timeout", "20", "-o"])
+        .arg(dest)
+        .arg(url)
+        .status()
+        .map_err(|e| e.to_string())?;
+    if status.success() {
+        Ok(())
+    } else {
+        Err(format!("curl {status}"))
+    }
+}
+
 #[cfg(windows)]
 fn download_powershell(url: &str, dest: &Path) -> Result<(), String> {
     let dest_s = dest.to_string_lossy().replace('\'', "''");
@@ -528,8 +601,19 @@ fn download_powershell(url: &str, dest: &Path) -> Result<(), String> {
 }
 
 fn sitl_root() -> Result<PathBuf, String> {
-    let base = std::env::var_os("LOCALAPPDATA").ok_or("LOCALAPPDATA is not set")?;
-    Ok(PathBuf::from(base).join("ArduLoops").join("sitl"))
+    #[cfg(windows)]
+    {
+        let base = std::env::var_os("LOCALAPPDATA").ok_or("LOCALAPPDATA is not set")?;
+        Ok(PathBuf::from(base).join("ArduLoops").join("sitl"))
+    }
+    #[cfg(not(windows))]
+    {
+        if let Some(xdg) = std::env::var_os("XDG_DATA_HOME") {
+            return Ok(PathBuf::from(xdg).join("ArduLoops").join("sitl"));
+        }
+        let home = std::env::var_os("HOME").ok_or("HOME is not set")?;
+        Ok(PathBuf::from(home).join(".local/share/ArduLoops/sitl"))
+    }
 }
 
 fn live_path() -> Option<PathBuf> {
@@ -600,8 +684,145 @@ fn kill_child(child: Option<Child>) {
     if let Some(mut ch) = child {
         #[cfg(windows)]
         win_proc::kill_tree(ch.id());
+        #[cfg(unix)]
+        unix_proc::kill(ch.id());
         let _ = ch.kill();
         let _ = ch.wait();
+    }
+}
+
+fn os_running(pid: u32) -> bool {
+    #[cfg(windows)]
+    {
+        win_proc::is_running(pid)
+    }
+    #[cfg(unix)]
+    {
+        unix_proc::is_running(pid)
+    }
+    #[cfg(not(any(windows, unix)))]
+    {
+        let _ = pid;
+        false
+    }
+}
+
+fn os_stats_pid(parent: u32) -> u32 {
+    #[cfg(windows)]
+    {
+        win_proc::worker_pid(parent).unwrap_or(parent)
+    }
+    #[cfg(not(windows))]
+    {
+        parent
+    }
+}
+
+fn os_usage(pid: u32, mark: &mut Option<(Instant, u64)>) -> (f32, f32) {
+    #[cfg(windows)]
+    {
+        win_proc::usage(pid, mark)
+    }
+    #[cfg(unix)]
+    {
+        unix_proc::usage(pid, mark)
+    }
+    #[cfg(not(any(windows, unix)))]
+    {
+        let _ = (pid, mark);
+        (0.0, 0.0)
+    }
+}
+
+#[cfg(unix)]
+mod unix_proc {
+    use std::fs;
+    use std::path::Path;
+    use std::process::Command;
+    use std::time::{Duration, Instant};
+
+    pub fn is_running(pid: u32) -> bool {
+        if Path::new(&format!("/proc/{pid}")).exists() {
+            return true;
+        }
+        Command::new("kill")
+            .args(["-0", &pid.to_string()])
+            .status()
+            .map(|s| s.success())
+            .unwrap_or(false)
+    }
+
+    pub fn is_sitl(pid: u32) -> bool {
+        let comm = fs::read_to_string(format!("/proc/{pid}/comm")).unwrap_or_default();
+        let name = comm.trim().to_ascii_lowercase();
+        if name.contains("arducopter") || name.contains("arduplane") {
+            return true;
+        }
+        if let Ok(link) = fs::read_link(format!("/proc/{pid}/exe")) {
+            let lower = link.to_string_lossy().to_ascii_lowercase();
+            return lower.contains("arducopter") || lower.contains("arduplane");
+        }
+        false
+    }
+
+    pub fn kill(pid: u32) {
+        let _ = Command::new("kill")
+            .args(["-TERM", &pid.to_string()])
+            .status();
+        std::thread::sleep(Duration::from_millis(80));
+        if is_running(pid) {
+            let _ = Command::new("kill")
+                .args(["-KILL", &pid.to_string()])
+                .status();
+        }
+    }
+
+    pub fn usage(pid: u32, mark: &mut Option<(Instant, u64)>) -> (f32, f32) {
+        let rss = rss_mb(pid);
+        let ticks = cpu_ticks(pid).unwrap_or(0);
+        let now = Instant::now();
+        let cpu = if let Some((t0, ticks0)) = *mark {
+            let dt = now.saturating_duration_since(t0).as_secs_f32();
+            if dt > 0.05 {
+                let d = ticks.saturating_sub(ticks0) as f32;
+                (d / (100.0 * dt) * 100.0).clamp(0.0, 400.0)
+            } else {
+                0.0
+            }
+        } else {
+            0.0
+        };
+        *mark = Some((now, ticks));
+        (cpu, rss)
+    }
+
+    fn cpu_ticks(pid: u32) -> Option<u64> {
+        let stat = fs::read_to_string(format!("/proc/{pid}/stat")).ok()?;
+        let rest = stat.rsplit_once(')')?.1;
+        let mut it = rest.split_whitespace();
+        for _ in 0..11 {
+            it.next()?;
+        }
+        let utime: u64 = it.next()?.parse().ok()?;
+        let stime: u64 = it.next()?.parse().ok()?;
+        Some(utime + stime)
+    }
+
+    fn rss_mb(pid: u32) -> f32 {
+        let Ok(txt) = fs::read_to_string(format!("/proc/{pid}/status")) else {
+            return 0.0;
+        };
+        for line in txt.lines() {
+            if let Some(rest) = line.strip_prefix("VmRSS:") {
+                let kb: f32 = rest
+                    .split_whitespace()
+                    .next()
+                    .and_then(|s| s.parse().ok())
+                    .unwrap_or(0.0);
+                return kb / 1024.0;
+            }
+        }
+        0.0
     }
 }
 
@@ -838,6 +1059,25 @@ mod win_proc {
             0.0
         };
         (cpu_pct, rss_mb)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn linux_firmware_urls() {
+        assert_eq!(
+            linux_fw_url("copter"),
+            "https://firmware.ardupilot.org/Copter/stable/SITL_x86_64_linux_gnu/arducopter"
+        );
+        assert_eq!(
+            linux_fw_url("plane"),
+            "https://firmware.ardupilot.org/Plane/stable/SITL_x86_64_linux_gnu/arduplane"
+        );
+        assert_eq!(linux_bin("copter"), "arducopter");
+        assert_eq!(linux_bin("plane"), "arduplane");
     }
 }
 
