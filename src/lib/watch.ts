@@ -1,7 +1,7 @@
 import {
   EDGES as COPTER_EDGES,
   NODES as COPTER_NODES,
-  edgeLiveIn as copterEdge,
+  edgeShownIn as copterEdge,
   isBandId as copterBand,
   nodeBand as copterNodeBand,
   nodesLiveIn as copterLive,

@@ -19,6 +19,33 @@ function fmt(v: unknown, d: number): string {
   return v.toFixed(d);
 }
 
+function useLegendFit(ref: { current: HTMLDivElement | null }) {
+  useLayoutEffect(() => {
+    const el = ref.current;
+    if (!el) return;
+    const contentW = () => {
+      const kids = el.children;
+      if (!kids.length) return 0;
+      const a = kids[0].getBoundingClientRect();
+      const b = kids[kids.length - 1].getBoundingClientRect();
+      return b.right - a.left;
+    };
+    const measure = () => {
+      const w = el.clientWidth;
+      if (w <= 0) return;
+      el.dataset.fit = "full";
+      if (contentW() <= w + 1) return;
+      el.dataset.fit = "value";
+      if (contentW() <= w + 1) return;
+      el.dataset.fit = "dot";
+    };
+    const ro = new ResizeObserver(measure);
+    ro.observe(el);
+    measure();
+    return () => ro.disconnect();
+  }, [ref]);
+}
+
 export function TracePanes({
   panes,
   blocks,
@@ -362,6 +389,8 @@ function PaneBlock({
 }) {
   const t = useT();
   const d = digits(pane.unit);
+  const legendRef = useRef<HTMLDivElement>(null);
+  useLegendFit(legendRef);
   const names = (pane.fromIds ?? [])
     .map((id) => cardTitle(blocks, id, t))
     .filter(Boolean);
@@ -381,27 +410,24 @@ function PaneBlock({
         <canvas ref={canvasRef} />
       </div>
       <div className="caption">
-        <div className="legend">
+        <div ref={legendRef} className="legend">
           {pane.traces.map((tr, i) => (
-            <span key={traceId(tr)}>
+            <span key={traceId(tr)} className="leg" title={tr.label}>
               <i className={pane.custom ? TONE[i % TONE.length] : ROLE_CLASS[tr.role]} />
-              {tr.label} <b>{fmt(traceValue(sample, tr), d)}</b>
+              <span className="leg-name">{tr.label}</span>
+              <b className="leg-val">{fmt(traceValue(sample, tr), d)}</b>
             </span>
           ))}
-          {pane.gap ? (
-            <span>
-              <i className="gap" />
-              {t("error gap")}
-            </span>
-          ) : null}
           {pane.hud?.includes("aspd") ? (
-            <span>
-              VFR_HUD.airspeed <b>{fmt(sample.aspd, 1)}</b> m/s
+            <span className="leg" title="VFR_HUD.airspeed">
+              <span className="leg-name">VFR_HUD.airspeed</span>
+              <b className="leg-val">{fmt(sample.aspd, 1)} m/s</b>
             </span>
           ) : null}
           {pane.hud?.includes("gspd") ? (
-            <span>
-              VFR_HUD.groundspeed <b>{fmt(sample.gspd, 1)}</b> m/s
+            <span className="leg" title="VFR_HUD.groundspeed">
+              <span className="leg-name">VFR_HUD.groundspeed</span>
+              <b className="leg-val">{fmt(sample.gspd, 1)} m/s</b>
             </span>
           ) : null}
         </div>

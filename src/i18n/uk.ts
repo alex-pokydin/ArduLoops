@@ -115,6 +115,7 @@ export const uk: Record<string, string> = {
   Expand: "розгорнути",
   Collapse: "згорнути",
   "Resize columns": "ширина колонок",
+  "Resize rows": "висота панелей",
   "L1 · track → bank": "L1 · трек → крен",
   "Not AC_PID. Cross-track error becomes a demanded bank for the roll loop. Period smaller = tighter turn.":
     "Не AC_PID. Помилка треку стає замовленим креном для roll-контуру. Менший period — тугіший розворот.",
@@ -362,7 +363,7 @@ export const uk: Record<string, string> = {
   "rear · body": "ззаду · тіло",
   "m · m/s": "м · м/с",
   "m · m/s · m/s²": "м · м/с · м/с²",
-  "roll · pitch · yaw": "крен · тангаж · yaw",
+  "roll · pitch · yaw": "крен · тангаж · рискання",
 
   "Preset sets P I D. Throttle is left stick, roll is right.":
     "Пресет ставить P I D. Газ — лівий стик, крен — правий.",
@@ -846,6 +847,9 @@ export const uk: Record<string, string> = {
   servo: "серво",
   "set in FBWA before trusting TECS": "виставити в FBWA, перш ніж довіряти TECS",
   "side · airspeed": "збоку · швидкість",
+  "side · TECS": "збоку · TECS",
+  "top · L1": "згори · L1",
+  "track → bank": "трек → крен",
   "sometimes · after rate": "інколи · після rate",
   "thr {v}%": "газ {v}%",
   "T {v}%": "T {v}%",
@@ -985,13 +989,13 @@ export const uk: Record<string, string> = {
   "command · plant": "команда · рослина",
   "dashed · no P I D": "пунктир · без P I D",
   "dashed · no knobs": "пунктир · без кнобів",
+  "pilot override": "перехоплення стиком",
   "no knobs": "без кнобів",
   "A letter on a card is a knob: P I D, or TCONST, DAMP, PERIOD. Dashed cards have none — AHRS measures, a surface is PWM.":
     "Літера на картці — кноб: P I D, або TCONST, DAMP, PERIOD. Пунктирні картки не мають кнобів — AHRS міряє, поверхня це PWM.",
   "A letter on a card is a knob: P I D, or TC, ANGLE_MAX, hover. Left bar is first flight; the Loiter stack comes after attitude.":
     "Літера на картці — кноб: P I D, або TC, ANGLE_MAX, hover. Смуга зліва — перший політ; стек Loiter після attitude.",
   targets: "цілі",
-  "track → bank": "трек → крен",
   "energy mix": "суміш енергії",
   "rate + FF": "rate + FF",
   runway: "смуга",
@@ -1056,10 +1060,10 @@ export const uk: Record<string, string> = {
     "Поверхня рискання в повітрі. Її пише демпфер. Окремо від носового колеса. KFF_RDDRMIX може додати елерон у цей канал.",
   "Nosewheel channel (GroundSteering). Ground steer writes it below GROUND_STEER_ALT. Idle above that height and in MANUAL.":
     "Канал носового колеса (GroundSteering). Кермо на землі пише його нижче GROUND_STEER_ALT. Мовчить вище цієї висоти й у MANUAL.",
-  "The stick request. Stabilize wants an angle, AltHold a climb rate (PILOT_SPD_UP / DN), Loiter a lean/accel, Acro a rate. TC / ACC / Rmax only shape how fast that request may change (Input Shaping).":
-    "Запит стика. Stabilize хоче кут, AltHold — швидкість набору (PILOT_SPD_UP / DN), Loiter — lean/accel, Acro — rate. TC / ACC / Rmax лише формують, як швидко цей запит може змінюватись (Input Shaping).",
-  "Writes where PSC should hold, and how fast to get there. WP_SPD is mission cruise; LOIT_SPEED_MS is stick speed in Loiter. Live in Loiter / Auto / RTL — idle in Stabilize.":
-    "Пише, де PSC має тримати, і як швидко туди летіти. WP_SPD — крейсер місії; LOIT_SPEED_MS — швидкість стика в Loiter. Живий у Loiter / Auto / RTL — мовчить у Stabilize.",
+  "The stick request. Stabilize and PosHold want an angle, AltHold a climb rate (PILOT_SPD_UP / DN), Loiter a lean/accel, Acro a rate. TC / ACC / Rmax only shape how fast that request may change (Input Shaping).":
+    "Запит стика. Stabilize і PosHold хочуть кут, AltHold — швидкість набору (PILOT_SPD_UP / DN), Loiter — lean/accel, Acro — rate. TC / ACC / Rmax лише формують, як швидко цей запит може змінюватись (Input Shaping).",
+  "Writes where PSC should hold, and how fast to get there. WP_SPD is mission cruise; LOIT_SPEED_MS is stick speed in Loiter. Live in Loiter / PosHold / Auto / RTL — idle in Stabilize.":
+    "Пише, де PSC має тримати, і як швидко туди летіти. WP_SPD — крейсер місії; LOIT_SPEED_MS — швидкість стика в Loiter. Живий у Loiter / PosHold / Auto / RTL — мовчить у Stabilize.",
   "NE acceleration (earth, m/s²) becomes roll/pitch (body, °). ATC_ANGLE_MAX is the lean ceiling. Between PosControl and Attitude.":
     "Прискорення NE (земля, m/s²) стає roll/pitch (тіло, °). ATC_ANGLE_MAX — стеля lean. Між PosControl і Attitude.",
   "Mixer: rate torque plus vertical-accel throttle. Hover should sit near mid stick — that is MOT_THST_HOVER.":

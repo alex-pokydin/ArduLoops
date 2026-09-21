@@ -44,7 +44,7 @@ export const NODES: NodeDef[] = [
     kind: "command",
     unit: "stick",
     axes: "cmd",
-    does: "The stick request. Stabilize wants an angle, AltHold a climb rate (PILOT_SPD_UP / DN), Loiter a lean/accel, Acro a rate. TC / ACC / Rmax only shape how fast that request may change (Input Shaping).",
+    does: "The stick request. Stabilize and PosHold want an angle, AltHold a climb rate (PILOT_SPD_UP / DN), Loiter a lean/accel, Acro a rate. TC / ACC / Rmax only shape how fast that request may change (Input Shaping).",
     trap: "Do not raise ACC or Rmax past Autotune to “get more P”. That is feel, not stability. If AltHold creeps, hover is not mid-stick — set MOT_THST_HOVER, do not touch PSC yet.",
     live: ["cmd"],
     guide: true,
@@ -63,7 +63,7 @@ export const NODES: NodeDef[] = [
     kind: "targets",
     unit: "m · NED",
     axes: "nav",
-    does: "Writes where PSC should hold, and how fast to get there. WP_SPD is mission cruise; LOIT_SPEED_MS is stick speed in Loiter. Live in Loiter / Auto / RTL — idle in Stabilize.",
+    does: "Writes where PSC should hold, and how fast to get there. WP_SPD is mission cruise; LOIT_SPEED_MS is stick speed in Loiter. Live in Loiter / PosHold / Auto / RTL — idle in Stabilize.",
     trap: "Drifting in Loiter is GPS, compass, vibe or PSC. These speeds only cap how fast it flies the path — raising them will not hold position.",
     later: true,
     gains: [
@@ -374,5 +374,13 @@ export function edgeLiveIn(edge: EdgeDef, mode: string, live: Set<string>): bool
     }
   }
   return live.has(edge.from) && live.has(edge.to);
+}
+
+/** Drawn on the map. Live = solid. PosHold stick→angle is the only idle (dashed) stick path — Loiter never writes angle. */
+export function edgeShownIn(edge: EdgeDef, mode: string, live: Set<string>): boolean {
+  if (edgeLiveIn(edge, mode, live)) return true;
+  const m = (mode || "").toUpperCase();
+  if (m === "ALL") return true;
+  return m === "POSHOLD" && edge.from === "pilot" && edge.to === "atc_ang";
 }
 

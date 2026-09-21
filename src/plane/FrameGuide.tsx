@@ -80,82 +80,6 @@ export function PlaneGuide({ focus, band }: { focus: AxisFocus | null; band?: Ba
 
   return (
     <div className="frames">
-      <div className={track ? "frame on amber" : "frame"}>
-        <span className="cap">{t("top · track")}</span>
-        <svg viewBox="0 0 140 100" aria-hidden="true">
-          {steer ? (
-            <g stroke={ink(true, AMBER)} strokeWidth="1.25" fill="none">
-              <line x1="48" y1="6" x2="48" y2="94" />
-              <line x1="92" y1="6" x2="92" y2="94" />
-              <line x1="70" y1="8" x2="70" y2="92" strokeDasharray="5 4" />
-            </g>
-          ) : null}
-          {l1 ? (
-            <g stroke={AMBER} fill={AMBER} strokeLinecap="round">
-              <line x1="8" y1="30" x2="132" y2="30" fill="none" strokeWidth="1.35" strokeDasharray="5 3" />
-              <circle cx="14" cy="30" r="2.1" stroke="none" />
-              <circle cx="132" cy="30" r="2.1" stroke="none" />
-              <line x1="42" y1="74" x2="108" y2="30" fill="none" strokeWidth="1.5" />
-              <circle cx="108" cy="30" r="3.1" stroke="#0c0e11" strokeWidth="1" />
-              <text x="112" y="24" fontSize="9" stroke="none">
-                L1
-              </text>
-              <line x1="42" y1="74" x2="51" y2="54" fill="none" strokeWidth="1.5" />
-              <polygon points="52.5,50 47,56 55.5,56.5" stroke="none" />
-              <text x="56" y="46" fontSize="9" stroke="none">
-                V
-              </text>
-              <path d="M 50.1 55.7 A 20 20 0 0 1 58.6 62.9" fill="none" strokeWidth="1.25" />
-              <text x="70" y="66" fontSize="9" stroke="none">
-                Nu
-              </text>
-            </g>
-          ) : null}
-          <g
-            transform={l1 ? "translate(42 74) rotate(24) scale(0.6)" : "translate(70 58)"}
-            color={ink(track, AMBER, BODY)}
-          >
-            <PlaneTop />
-          </g>
-          <text x="8" y="94" fontSize="9" fill={DIM}>
-            {steer ? t("runway") : t("Nu → bank")}
-          </text>
-        </svg>
-      </div>
-      <div className={aspd ? "frame on amber" : "frame"}>
-        <span className="cap">{t("side · airspeed")}</span>
-        <svg viewBox="0 0 140 100" aria-hidden="true">
-          <line x1="8" y1="58" x2="132" y2="58" stroke="#3a4650" strokeDasharray="4 3" />
-          <g transform="translate(58 56)" color={ink(aspd, AMBER, BODY)}>
-            <PlaneSide />
-          </g>
-          {aspd ? (
-            <g stroke={AMBER} fill={AMBER} strokeWidth="1.7" strokeLinecap="round">
-              <line x1="96" y1="56" x2="124" y2="56" />
-              <Tip x={128} y={56} color={AMBER} />
-              <text x="118" y="50" fontSize="10" fill={AMBER} stroke="none">
-                V
-              </text>
-              {tecs ? (
-                <>
-                  <line x1="58" y1="44" x2="58" y2="16" />
-                  <polygon points="58,12 54,20 62,20" stroke="none" />
-                  <text x="64" y="22" fontSize="10" fill={AMBER} stroke="none">
-                    h
-                  </text>
-                </>
-              ) : null}
-            </g>
-          ) : (
-            <text x="8" y="18" fontSize="9" fill={DIM}>
-              V
-            </text>
-          )}
-          <text x="8" y="94" fontSize="9" fill={DIM}>
-            {tecs ? t("h · V") : t("m/s · scaler")}
-          </text>
-        </svg>
-      </div>
       <div className={body ? "frame on cyan" : "frame"}>
         <span className="cap">{t("rear · body")}</span>
         <svg viewBox="0 0 140 100" aria-hidden="true">
@@ -174,6 +98,92 @@ export function PlaneGuide({ focus, band }: { focus: AxisFocus | null; band?: Ba
           </text>
           <text x="8" y="94" fontSize="9" fill={DIM}>
             {t("roll · pitch · yaw")}
+          </text>
+        </svg>
+      </div>
+      <div className={aspd ? "frame on amber" : "frame"}>
+        <span className="cap">{t("side · TECS")}</span>
+        <svg viewBox="0 0 140 100" aria-hidden="true">
+          <line x1="8" y1="88" x2="132" y2="88" stroke={tecs ? AMBER : "#3a4650"} strokeWidth="1.2" />
+          <g transform="translate(74 42)" color={ink(aspd, AMBER, BODY)}>
+            <PlaneSide />
+          </g>
+          {aspd ? (
+            <g stroke={CYAN} fill={CYAN} strokeWidth="1.7" strokeLinecap="round">
+              <line x1="112" y1="42" x2="126" y2="42" />
+              <Tip x={130} y={42} color={CYAN} />
+              <text x="118" y="36" fontSize="10" fill={CYAN} stroke="none">
+                V
+              </text>
+            </g>
+          ) : (
+            <text x="8" y="18" fontSize="9" fill={DIM}>
+              V
+            </text>
+          )}
+          {tecs ? (
+            <g stroke={AMBER} fill={AMBER} strokeWidth="1.7" strokeLinecap="round">
+              <line x1="46" y1="88" x2="46" y2="50" />
+              <polygon points="46,46 42,54 50,54" stroke="none" />
+              <text x="52" y="70" fontSize="10" fill={AMBER} stroke="none">
+                h
+              </text>
+            </g>
+          ) : null}
+          <text x="8" y="94" fontSize="9" fill={DIM}>
+            {tecs ? t("h · V") : t("m/s · scaler")}
+          </text>
+        </svg>
+      </div>
+      <div className={track ? "frame on amber" : "frame"}>
+        <span className="cap">{t("top · L1")}</span>
+        <svg viewBox="0 0 140 100" aria-hidden="true">
+          {steer ? (
+            <g stroke={ink(true, AMBER)} strokeWidth="1.25" fill="none">
+              <line x1="48" y1="6" x2="48" y2="94" />
+              <line x1="92" y1="6" x2="92" y2="94" />
+              <line x1="70" y1="8" x2="70" y2="92" strokeDasharray="5 4" />
+            </g>
+          ) : null}
+          {l1 && !steer ? (
+            <g strokeLinecap="round" strokeLinejoin="round">
+              <path
+                d="M 36 96 L 36 50 L 78 42 L 112 18"
+                fill="none"
+                stroke={CYAN}
+                strokeWidth="1.45"
+              />
+              <path
+                d="M 91 94 A 56.6 56.6 0 0 0 78 42"
+                fill="none"
+                stroke={CYAN}
+                strokeWidth="1.2"
+                strokeDasharray="4 3"
+              />
+              <line x1="36" y1="80" x2="78" y2="42" stroke={AMBER} strokeWidth="1.45" fill="none" />
+              <circle cx="78" cy="42" r="3" fill={AMBER} stroke="#0c0e11" strokeWidth="1" />
+              <text x="84" y="40" fontSize="9" fill={AMBER}>
+                L1
+              </text>
+              <line x1="36" y1="66" x2="36" y2="50" stroke={CYAN} strokeWidth="1.5" fill="none" />
+              <polygon points="36,46 32,54 40,54" fill={CYAN} stroke="none" />
+              <text x="20" y="56" fontSize="9" fill={CYAN}>
+                V
+              </text>
+              <path d="M 36 68 A 12 12 0 0 1 45 72" fill="none" stroke={AMBER} strokeWidth="1.25" />
+              <text x="48" y="80" fontSize="9" fill={AMBER}>
+                Nu
+              </text>
+            </g>
+          ) : null}
+          <g
+            transform={l1 && !steer ? "translate(36 80) scale(0.52)" : "translate(70 58)"}
+            color={ink(track, AMBER, BODY)}
+          >
+            <PlaneTop />
+          </g>
+          <text x="8" y="94" fontSize="9" fill={DIM}>
+            {steer ? t("runway") : t("track → bank")}
           </text>
         </svg>
       </div>

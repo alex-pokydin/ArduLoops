@@ -258,21 +258,26 @@ export function L1Scheme({ embed, compact }: { embed?: boolean; compact?: boolea
   );
   const knobNode = pick === "t" || pick === "k" || pick === "l1" ? { ...L1, gains: [] } : L1;
 
-  const PX = 190;
-  const PY = 248;
-  const hd = (32 * Math.PI) / 180;
-  const vx = Math.sin(hd);
-  const vy = -Math.cos(hd);
-  const L1X = 428;
-  const L1Y = 84;
+  const PX = 252;
+  const PY = 255;
+  const hdDeg = 0;
+  const vx = 0;
+  const vy = -1;
+  const L1X = 362;
+  const L1Y = 85;
+  const T2X = 552;
+  const T2Y = 50;
   const rL = Math.hypot(L1X - PX, L1Y - PY);
   const aL = Math.atan2(L1Y - PY, L1X - PX);
-  const aArc = aL - 0.38;
-  const arcX = PX + rL * Math.cos(aArc);
-  const arcY = PY + rL * Math.sin(aArc);
-  const vLen = 74;
-  const vX = PX + vx * vLen;
-  const vY = PY + vy * vLen;
+  const aStart = 0.22;
+  const arcX = PX + rL * Math.cos(aStart);
+  const arcY = PY + rL * Math.sin(aStart);
+  const nose = 28;
+  const nX = PX + vx * nose;
+  const nY = PY + vy * nose;
+  const vLen = 50;
+  const vX = nX + vx * vLen;
+  const vY = nY + vy * vLen;
   const nuR = 54;
   const nuVx = PX + vx * nuR;
   const nuVy = PY + vy * nuR;
@@ -311,31 +316,21 @@ export function L1Scheme({ embed, compact }: { embed?: boolean; compact?: boolea
               <polygon points="0 0, 7 3.5, 0 7" fill={COL.cyan} />
             </marker>
           </defs>
-          <text x="36" y="22" fill={COL.dim} fontSize="11">
+          <text x={PX + 16} y="22" fill={COL.dim} fontSize="11">
             {t("track")}
           </text>
-          <line
-            x1="36"
-            y1="84"
-            x2="548"
-            y2="84"
-            stroke={xtrackOn ? COL.amber : COL.line}
-            strokeWidth={xtrackOn ? 2 : 1.4}
-            strokeDasharray="7 5"
-          />
-          <circle cx="48" cy="84" r="3.2" fill={xtrackOn ? COL.amber : COL.dim} stroke="none" />
-          <circle cx="536" cy="84" r="3.2" fill={xtrackOn ? COL.amber : COL.dim} stroke="none" />
-          <line
-            x1={PX}
-            y1={PY}
-            x2={PX}
-            y2="84"
-            stroke={xtrackOn ? COL.amber : COL.line}
-            strokeWidth={xtrackOn ? 2 : 1.3}
-            strokeDasharray="4 3"
-          />
           <path
-            d={`M ${arcX.toFixed(1)} ${arcY.toFixed(1)} A ${rL.toFixed(1)} ${rL.toFixed(1)} 0 0 1 ${L1X} ${L1Y}`}
+            d={`M ${PX} 322 L ${PX} 118 L ${L1X} ${L1Y} L ${T2X} ${T2Y}`}
+            fill="none"
+            stroke={xtrackOn ? COL.amber : COL.line}
+            strokeWidth={xtrackOn ? 2 : 1.45}
+            strokeLinejoin="round"
+            strokeLinecap="round"
+          />
+          <circle cx={PX} cy="312" r="3.2" fill={xtrackOn ? COL.amber : COL.dim} stroke="none" />
+          <circle cx={T2X} cy={T2Y} r="3.2" fill={xtrackOn ? COL.amber : COL.dim} stroke="none" />
+          <path
+            d={`M ${arcX.toFixed(1)} ${arcY.toFixed(1)} A ${rL.toFixed(1)} ${rL.toFixed(1)} 0 0 0 ${L1X} ${L1Y}`}
             fill="none"
             stroke={l1On ? COL.amber : "#5a4a32"}
             strokeWidth={l1On ? 2 : 1.3}
@@ -344,8 +339,8 @@ export function L1Scheme({ embed, compact }: { embed?: boolean; compact?: boolea
           <line x1={PX} y1={PY} x2={L1X} y2={L1Y} stroke={COL.amber} strokeWidth={l1On ? 2.4 : 1.7} />
           <circle cx={L1X} cy={L1Y} r="5" fill={COL.amber} stroke="#0c0e11" strokeWidth="1.2" />
           <line
-            x1={PX}
-            y1={PY}
+            x1={nX}
+            y1={nY}
             x2={vX}
             y2={vY}
             stroke={vOn ? COL.cyan : COL.amber}
@@ -359,44 +354,12 @@ export function L1Scheme({ embed, compact }: { embed?: boolean; compact?: boolea
             stroke={nuOn ? COL.amber : COL.dim}
             strokeWidth={nuOn ? 2.4 : 1.6}
           />
-          <g transform={`translate(${PX} ${PY}) rotate(32)`} color={COL.amber} pointerEvents="none">
+          <g transform={`translate(${PX} ${PY}) rotate(${hdDeg})`} color={COL.amber} pointerEvents="none">
             <L1Plane />
           </g>
           <LoopChip
-            x={8}
-            y={96}
-            w={128}
-            h={32}
-            title={t("cross-track")}
-            stroke={COL.dim}
-            mark="struct"
-            {...hit("xtrack")}
-          />
-          <LoopChip
-            x={8}
-            y={218}
-            w={128}
-            h={32}
-            title="V"
-            value={s.gspd == null ? "—" : `${fmt(s.gspd, 1)} m/s`}
-            stroke={COL.cyan}
-            mark="struct"
-            {...hit("gspd")}
-          />
-          <LoopChip
-            x={248}
-            y={210}
-            w={96}
-            h={32}
-            step="2"
-            title="Nu"
-            stroke={COL.dim}
-            mark="struct"
-            {...hit("nu")}
-          />
-          <LoopChip
-            x={248}
-            y={128}
+            x={12}
+            y={8}
             w={156}
             h={34}
             title="PERIOD"
@@ -406,7 +369,39 @@ export function L1Scheme({ embed, compact }: { embed?: boolean; compact?: boolea
             {...hit("t")}
           />
           <LoopChip
-            x={L1X - 20}
+            x={12}
+            y={96}
+            w={128}
+            h={32}
+            title={t("cross-track")}
+            stroke={COL.dim}
+            mark="struct"
+            {...hit("xtrack")}
+          />
+          <LoopChip
+            x={12}
+            y={220}
+            w={128}
+            h={32}
+            title="V"
+            value={s.gspd == null ? "—" : `${fmt(s.gspd, 1)} m/s`}
+            stroke={COL.cyan}
+            mark="struct"
+            {...hit("gspd")}
+          />
+          <LoopChip
+            x={280}
+            y={165}
+            w={96}
+            h={32}
+            step="2"
+            title="Nu"
+            stroke={COL.dim}
+            mark="struct"
+            {...hit("nu")}
+          />
+          <LoopChip
+            x={376}
             y={8}
             w={168}
             h={34}
@@ -418,7 +413,7 @@ export function L1Scheme({ embed, compact }: { embed?: boolean; compact?: boolea
             {...hit("l1")}
           />
           <path
-            d={`M ${L1X + 18} ${L1Y + 8} L 608 80`}
+            d={`M ${L1X + 12} ${L1Y} L 608 80`}
             fill="none"
             stroke={COL.amber}
             strokeWidth="1.5"

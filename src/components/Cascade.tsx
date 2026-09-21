@@ -3,6 +3,7 @@ import {
   EDGES,
   NODES,
   edgeLiveIn,
+  edgeShownIn,
   edgeRoute,
   isBandId,
   LAYERS,
@@ -73,7 +74,8 @@ export function Cascade({
   const layout = useMemo(() => layoutCopter(prefW, 0), [prefW]);
   const scale = fitScale(box.w, box.h, layout.width, layout.height);
   const modeKey = showAll ? "ALL" : s.mode;
-  const live = !s.ok ? new Set<string>() : nodesLiveIn(modeKey);
+  const closed = nodesLiveIn(modeKey);
+  const live = !s.ok ? new Set<string>() : closed;
   const band = isBandId(sel) ? sel : null;
   const node = band ? null : NODES.find((n) => n.id === sel) ?? null;
   const boxById = useMemo(() => {
@@ -85,7 +87,7 @@ export function Cascade({
   if (sel) {
     neighbors.add(sel);
     for (const e of EDGES) {
-      if (!edgeLiveIn(e, modeKey, live)) continue;
+      if (!edgeShownIn(e, modeKey, closed)) continue;
       if (e.from === sel) neighbors.add(e.to);
       if (e.to === sel) neighbors.add(e.from);
     }
@@ -180,11 +182,12 @@ export function Cascade({
                 const a = boxById.get(e.from);
                 const b = boxById.get(e.to);
                 if (!a || !b) return null;
+                if (!edgeShownIn(e, modeKey, closed)) return null;
                 const r = edgeRoute(a, b);
-                const on = edgeLiveIn(e, modeKey, live);
+                const on = s.ok && edgeLiveIn(e, modeKey, closed);
                 const connected = !band && sel != null && (e.from === sel || e.to === sel);
                 const bandEdge = !!band && (nodeBand(e.from) === band || nodeBand(e.to) === band);
-                const hot = connected && on;
+                const hot = connected;
                 return (
                   <g key={`${e.from}-${e.to}-${e.label}`}>
                     <path

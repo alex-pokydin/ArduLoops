@@ -17,12 +17,22 @@ type Saved = {
   col1Rest: number;
   col1Expand: number;
   rightSplit: number;
+  col1RowSplit: number;
   expand: StudioExpand;
 };
 
+type Drag =
+  | { kind: "col"; startX: number; startW: number; total: number }
+  | { kind: "row"; startY: number; startFr: number; total: number };
+
 const MIN_COL1 = 280;
 const MIN_COL2 = 260;
+const MIN_ROW = 110;
 const GUTTER = 8;
+
+function clampSplit(v: number): number {
+  return Math.min(0.78, Math.max(0.22, v));
+}
 
 function storeKey(frame: string): string {
   return "arduloops.studio.v1." + frame;
@@ -35,12 +45,13 @@ function load(frame: string, defaults: Saved): Saved {
     const col1Rest = Number(raw.col1Rest);
     const col1Expand = Number(raw.col1Expand);
     const rightSplit = Number(raw.rightSplit);
+    const col1RowSplit = Number(raw.col1RowSplit);
     const expand = raw.expand === "loop" || raw.expand === "scope" ? raw.expand : null;
     return {
       col1Rest: Number.isFinite(col1Rest) ? col1Rest : defaults.col1Rest,
       col1Expand: Number.isFinite(col1Expand) ? col1Expand : defaults.col1Expand,
-      rightSplit:
-        Number.isFinite(rightSplit) && rightSplit > 0.25 && rightSplit < 0.75 ? rightSplit : defaults.rightSplit,
+      rightSplit: Number.isFinite(rightSplit) ? clampSplit(rightSplit) : defaults.rightSplit,
+      col1RowSplit: Number.isFinite(col1RowSplit) ? clampSplit(col1RowSplit) : defaults.col1RowSplit,
       expand,
     };
   } catch {
@@ -134,32 +145,49 @@ export function Studio({
     col1Rest: col1Default,
     col1Expand: Math.round(col1Default * 0.78),
     rightSplit: 0.5,
+    col1RowSplit: 0.72,
     expand: null,
   };
   const [layout, setLayout] = useState<Saved>(() => load(frame, defaults));
   const box = useRef<HTMLDivElement>(null);
-  const drag = useRef<{ startX: number; startW: number; total: number } | null>(null);
+  const drag = useRef<Drag | null>(null);
   const expand = layout.expand;
   const col1Raw = expand ? layout.col1Expand : layout.col1Rest;
+  const rowTopFr = expand ? layout.col1RowSplit : layout.rightSplit;
 
   useEffect(() => {
     save(frame, layout);
   }, [frame, layout]);
 
-  function onSplitDown(ev: PointerEvent<HTMLDivElement>) {
+  function onColDown(ev: PointerEvent<HTMLDivElement>) {
     const root = box.current;
     if (!root) return;
     ev.preventDefault();
     ev.currentTarget.setPointerCapture(ev.pointerId);
-    drag.current = { startX: ev.clientX, startW: col1Raw, total: root.clientWidth };
+    drag.current = { kind: "col", startX: ev.clientX, startW: col1Raw, total: root.clientWidth };
+  }
+
+  function onRowDown(ev: PointerEvent<HTMLDivElement>) {
+    const root = box.current;
+    if (!root) return;
+    ev.preventDefault();
+    ev.currentTarget.setPointerCapture(ev.pointerId);
+    drag.current = { kind: "row", startY: ev.clientY, startFr: rowTopFr, total: root.clientHeight };
   }
 
   function onSplitMove(ev: PointerEvent<HTMLDivElement>) {
     const d = drag.current;
     if (!d) return;
-    const max = Math.max(MIN_COL1, d.total - MIN_COL2 - GUTTER);
-    const next = Math.min(max, Math.max(MIN_COL1, d.startW + (ev.clientX - d.startX)));
-    setLayout((s) => (s.expand ? { ...s, col1Expand: next } : { ...s, col1Rest: next }));
+    if (d.kind === "col") {
+      const max = Math.max(MIN_COL1, d.total - MIN_COL2 - GUTTER);
+      const next = Math.min(max, Math.max(MIN_COL1, d.startW + (ev.clientX - d.startX)));
+      setLayout((s) => (s.expand ? { ...s, col1Expand: next } : { ...s, col1Rest: next }));
+      return;
+    }
+    const usable = Math.max(1, d.total - GUTTER);
+    const minFr = Math.min(0.45, MIN_ROW / usable);
+    const next = clampSplit(Math.min(1 - minFr, Math.max(minFr, d.startFr + (ev.clientY - d.startY) / usable)));
+    setLayout((s) => (s.expand ? { ...s, col1RowSplit: next } : { ...s, rightSplit: next }));
   }
 
   function onSplitUp() {
@@ -167,8 +195,6 @@ export function Studio({
   }
 
   const mode = expand === "loop" ? "loop" : expand === "scope" ? "scope" : "rest";
-  const loopFr = layout.rightSplit;
-  const scopeFr = 1 - layout.rightSplit;
 
   return (
     <div className="studio-wrap">
@@ -178,11 +204,8 @@ export function Studio({
         className={"studio is-" + mode}
         style={{
           ["--studio-col1" as string]: `${col1Raw}px`,
-          ...(expand
-            ? {}
-            : {
-                gridTemplateRows: `minmax(0, ${loopFr}fr) minmax(0, ${scopeFr}fr)`,
-              }),
+          ["--studio-row-top" as string]: `${rowTopFr}fr`,
+          ["--studio-row-bot" as string]: `${1 - rowTopFr}fr`,
         }}
       >
         <div className="pane pane-scheme">
@@ -193,7 +216,17 @@ export function Studio({
           role="separator"
           aria-orientation="vertical"
           aria-label={t("Resize columns")}
-          onPointerDown={onSplitDown}
+          onPointerDown={onColDown}
+          onPointerMove={onSplitMove}
+          onPointerUp={onSplitUp}
+          onPointerCancel={onSplitUp}
+        />
+        <div
+          className="studio-gutter is-row"
+          role="separator"
+          aria-orientation="horizontal"
+          aria-label={t("Resize rows")}
+          onPointerDown={onRowDown}
           onPointerMove={onSplitMove}
           onPointerUp={onSplitUp}
           onPointerCancel={onSplitUp}

@@ -346,31 +346,37 @@ main { grid-column: 2; grid-row: 3; min-height: 0; min-width: 0; display: grid; 
   flex: 1; min-height: 0; min-width: 0;
   display: grid;
   grid-template-columns: var(--studio-col1, 540px) 8px minmax(0, 1fr);
-  column-gap: 0; row-gap: 8px;
+  grid-template-rows: minmax(0, var(--studio-row-top, 1fr)) 8px minmax(0, var(--studio-row-bot, 1fr));
+  column-gap: 0; row-gap: 0;
 }
 .studio.is-rest {
   grid-template-areas:
     "scheme gutter loop"
+    "scheme gutter hgutter"
     "scheme gutter scope";
 }
 .studio.is-loop {
-  grid-template-rows: minmax(0, 1fr) minmax(110px, 28%);
+  grid-template-rows: minmax(0, var(--studio-row-top, 1fr)) 8px minmax(110px, var(--studio-row-bot, 1fr));
   grid-template-areas:
-    "scheme gutter loop"
-    "scope  gutter loop";
+    "scheme  gutter loop"
+    "hgutter gutter loop"
+    "scope   gutter loop";
 }
 .studio.is-scope {
-  grid-template-rows: minmax(0, 1fr) minmax(110px, 28%);
+  grid-template-rows: minmax(0, var(--studio-row-top, 1fr)) 8px minmax(110px, var(--studio-row-bot, 1fr));
   grid-template-areas:
-    "scheme gutter scope"
-    "loop   gutter scope";
+    "scheme  gutter scope"
+    "hgutter gutter scope"
+    "loop    gutter scope";
 }
 .studio-gutter {
-  grid-area: gutter; cursor: col-resize; position: relative; touch-action: none;
+  grid-area: gutter; cursor: col-resize; position: relative; touch-action: none; z-index: 2;
 }
+.studio-gutter.is-row { grid-area: hgutter; cursor: row-resize; }
 .studio-gutter::before {
   content: ""; position: absolute; inset: 8px 2px; border-radius: 3px; background: #2a333c;
 }
+.studio-gutter.is-row::before { inset: 2px 8px; }
 .studio-gutter:hover::before,
 .studio-gutter:active::before { background: var(--cyan); }
 .pane {
@@ -403,9 +409,10 @@ main { grid-column: 2; grid-row: 3; min-height: 0; min-width: 0; display: grid; 
 .pane-exp.on { color: var(--cyan); }
 .pane-body { flex: 1; min-height: 0; min-width: 0; display: flex; flex-direction: column; overflow: hidden; }
 .pane.pane-scope .pane-body { overflow: hidden; }
-.plots { flex: 1; min-height: 0; display: flex; flex-direction: column; gap: 8px; padding: 4px; overflow: auto; }
+.plots { flex: 1; min-height: 0; min-width: 0; display: flex; flex-direction: column; gap: 8px; padding: 4px; overflow: auto; }
 .plot-card {
-  flex: 1 1 0; min-height: 120px; display: flex; flex-direction: column;
+  flex: 1 1 0; min-height: 120px; min-width: 0; max-width: 100%;
+  display: flex; flex-direction: column;
   background: #15191e; border-radius: 10px; padding: 4px 8px 8px;
   box-shadow: inset 0 0 0 1px #2a333c;
 }
@@ -531,11 +538,27 @@ html[lang="uk"] .loop-board.idle::after { content: "стоп"; }
   background: #0c0e11; border-radius: 10px; display: block; }
 .caption { flex: none; display: flex; align-items: center; justify-content: flex-end;
   gap: 16px; min-width: 0; padding: 2px 4px 4px; }
-.legend { display: flex; flex-wrap: wrap; align-items: center; justify-content: flex-end;
-  gap: 12px 16px; font-size: 12px; color: var(--dim); min-width: 0; }
-.legend > span { flex: none; white-space: nowrap; }
+.legend { display: flex; flex-wrap: nowrap; align-items: center; justify-content: flex-end;
+  gap: 8px 12px; font-size: 12px; color: var(--dim); min-width: 0; max-width: 100%; flex: 1; }
+.legend .leg { position: relative; display: inline-flex; align-items: center; gap: 6px;
+  flex: none; white-space: nowrap; max-width: 100%; }
+.legend .leg:hover i,
+.legend .leg:focus-visible i { box-shadow: 0 0 0 2px rgba(255,255,255,0.22); }
+.legend .leg-name { min-width: 0; }
+.legend[data-fit="value"] .leg-name,
+.legend[data-fit="dot"] .leg-name {
+  position: absolute; left: 50%; bottom: calc(100% + 6px); transform: translateX(-50%);
+  display: none; padding: 4px 8px; background: #0c0e11; color: var(--ink);
+  border-radius: 6px; font-size: 11px; z-index: 9; pointer-events: none;
+  box-shadow: 0 8px 20px rgba(0,0,0,0.5), inset 0 0 0 1px #3a4652;
+}
+.legend[data-fit="value"] .leg:hover .leg-name,
+.legend[data-fit="value"] .leg:focus-visible .leg-name,
+.legend[data-fit="dot"] .leg:hover .leg-name,
+.legend[data-fit="dot"] .leg:focus-visible .leg-name { display: block; }
+.legend[data-fit="dot"] .leg-val { display: none; }
 .legend i { display: inline-block; width: 18px; height: 3px; border-radius: 2px;
-  margin-right: 6px; vertical-align: middle; }
+  flex: none; vertical-align: middle; }
 .legend .g { background: #6b7884; }
 .legend .w { background: rgba(255,255,255,0.9); }
 .legend .c { background: var(--cyan); }

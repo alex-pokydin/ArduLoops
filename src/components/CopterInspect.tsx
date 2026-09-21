@@ -4,6 +4,7 @@ import {
   EDGES,
   NODES,
   edgeLiveIn,
+  edgeShownIn,
   hasKnobs,
   isBandId,
   isLaterNode,
@@ -72,11 +73,12 @@ export function CopterInspect({
   const t = useT();
   const s = useViewSample();
   const modeKey = showAll ? "ALL" : s.mode;
-  const live = !s.ok ? new Set<string>() : nodesLiveIn(modeKey);
+  const closed = nodesLiveIn(modeKey);
+  const live = !s.ok ? new Set<string>() : closed;
   const band = isBandId(sel) ? sel : null;
   const node = band ? null : NODES.find((n) => n.id === sel) ?? null;
-  const incoming = EDGES.filter((e) => e.to === sel && edgeLiveIn(e, modeKey, live));
-  const outgoing = EDGES.filter((e) => e.from === sel && edgeLiveIn(e, modeKey, live));
+  const incoming = EDGES.filter((e) => e.to === sel && edgeShownIn(e, modeKey, closed));
+  const outgoing = EDGES.filter((e) => e.from === sel && edgeShownIn(e, modeKey, closed));
   const dimmed = node ? !live.has(node.id) : false;
 
   return (
@@ -118,6 +120,7 @@ export function CopterInspect({
               {incoming.map((e) => (
                 <div key={e.from + e.label}>
                   {titleOf(e.from)} · <b>{t(e.label)}</b>
+                  {edgeLiveIn(e, modeKey, closed) ? "" : ` · ${t("pilot override")}`}
                 </div>
               ))}
             </div>
@@ -128,6 +131,7 @@ export function CopterInspect({
               {outgoing.map((e) => (
                 <div key={e.to + e.label}>
                   <b>{t(e.label)}</b> · {titleOf(e.to)}
+                  {edgeLiveIn(e, modeKey, closed) ? "" : ` · ${t("pilot override")}`}
                 </div>
               ))}
             </div>
