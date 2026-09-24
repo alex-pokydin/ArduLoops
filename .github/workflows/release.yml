@@ -10,12 +10,17 @@ on:
         description: GitHub release tag to upload installers to
         required: true
         default: "1.2.0"
+      only:
+        description: Run one job (linux, windows, macos, android). Empty runs all.
+        required: false
+        default: ""
 
 permissions:
   contents: write
 
 jobs:
   linux:
+    if: github.event_name != 'workflow_dispatch' || inputs.only == '' || inputs.only == 'linux'
     runs-on: ubuntu-22.04
     steps:
       - uses: actions/checkout@v4
@@ -31,7 +36,7 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y libwebkit2gtk-4.1-dev libayatana-appindicator3-dev \
-            librsvg2-dev patchelf libfuse2 xdg-utils
+            librsvg2-dev patchelf libfuse2 xdg-utils pkg-config libudev-dev
       - run: npm ci
       - uses: tauri-apps/tauri-action@v1
         env:
@@ -45,6 +50,7 @@ jobs:
           args: --bundles deb,rpm,appimage
 
   windows:
+    if: github.event_name != 'workflow_dispatch' || inputs.only == '' || inputs.only == 'windows'
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
@@ -69,6 +75,7 @@ jobs:
           args: --bundles nsis,msi
 
   macos:
+    if: github.event_name != 'workflow_dispatch' || inputs.only == '' || inputs.only == 'macos'
     runs-on: macos-latest
     strategy:
       fail-fast: false
@@ -104,6 +111,7 @@ jobs:
           args: --target ${{ matrix.target }} --bundles dmg --no-sign
 
   android:
+    if: github.event_name != 'workflow_dispatch' || inputs.only == '' || inputs.only == 'android'
     permissions:
       contents: write
     uses: ./.github/workflows/android.yml

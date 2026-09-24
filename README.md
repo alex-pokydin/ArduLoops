@@ -85,7 +85,7 @@ npm run build      # native installers for this OS (same UI as `dev`)
 
 On Windows that writes NSIS + MSI. On Linux: `.deb`, `.rpm` and AppImage (`--bundles deb,rpm,appimage`). On macOS: a `.dmg` (`--bundles dmg`).
 
-GitHub Actions (`.github/workflows/release.yml`) builds Windows NSIS/MSI, Linux `.deb` / `.rpm` / AppImage, and macOS Apple Silicon and Intel `.dmg` files. The macOS jobs also build ArduPilot SITL (`scripts/build-sitl-macos.sh`) and pack it into the app. Local Linux needs the [Tauri v2 prerequisites](https://v2.tauri.app/start/prerequisites/#linux) (`libwebkit2gtk-4.1-dev`, …).
+GitHub Actions (`.github/workflows/release.yml`) builds Windows NSIS/MSI, Linux `.deb` / `.rpm` / AppImage, and macOS Apple Silicon and Intel `.dmg` files. The macOS jobs also build ArduPilot SITL (`scripts/build-sitl-macos.sh`) and pack it into the app. Local Linux needs the [Tauri v2 prerequisites](https://v2.tauri.app/start/prerequisites/#linux) (`libwebkit2gtk-4.1-dev`, `libudev-dev`, `pkg-config`, …).
 
 Release assets:
 
