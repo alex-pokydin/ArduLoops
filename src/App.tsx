@@ -369,7 +369,7 @@ export function App() {
             <form className="link" onSubmit={onLink}>
               <div className="link-combo" ref={linkCombo}>
                 <input
-                  className={linkBad ? "bad" : undefined}
+                  className={linkBad ? "bad" : linkWait ? "wait" : undefined}
                   value={linkUrl}
                   onChange={(ev) => setLinkUrl(ev.target.value)}
                   spellCheck={false}
@@ -409,6 +409,7 @@ export function App() {
                 ) : null}
               </div>
               <button type="submit">{t("Link")}</button>
+              {linkWait || linkBad ? <span className={linkBad ? "link-note bad" : "link-note"}>{tDetail(s.detail)}</span> : null}
             </form>
           )}
           <button

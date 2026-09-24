@@ -1378,6 +1378,7 @@ fn handle_msg(st: &mut LinkState, header: &MavHeader, msg: MavMessage) {
             if header.component_id != 0 {
                 st.target_component = header.component_id;
             }
+            st.sample.ok = true;
             st.sample.frame = frame;
             st.sample.mode = if st.sample.frame == "plane" {
                 plane_mode(custom_mode)
@@ -1678,7 +1679,17 @@ fn try_open(url: &str) -> Result<Box<dyn MavConnection<MavMessage> + Send + Sync
     Err(OpenErr::NoHeartbeat)
 }
 
+fn is_udp(url: &str) -> bool {
+    url.len() >= 3 && url[..3].eq_ignore_ascii_case("udp")
+}
+
 fn open_link(url: &str) -> Result<(Box<dyn MavConnection<MavMessage> + Send + Sync>, String), OpenErr> {
+    // UDP has no connect handshake. Keep the socket up and wait for HEARTBEAT in the read loop.
+    // Closing it after a few seconds changes the source port, so the vehicle's reply is lost.
+    if is_udp(url) {
+        let conn = open_conn(url)?;
+        return Ok((conn, url.to_string()));
+    }
     let mut last = OpenErr::Connect;
     for candidate in std::iter::once(url.to_string()).chain(sitl_alt_urls(url)) {
         match try_open(&candidate) {
@@ -1820,9 +1831,14 @@ pub fn run_loop(
                         *g = actual.clone();
                     }
                 }
-                st.sample.detail = actual;
-                st.sample.rx = "heartbeat".into();
-                st.sample.ok = true;
+                if is_udp(&actual) {
+                    st.sample.ok = false;
+                    st.sample.detail = format!("чекаємо HEARTBEAT ({actual})");
+                } else {
+                    st.sample.detail = actual;
+                    st.sample.rx = "heartbeat".into();
+                    st.sample.ok = true;
+                }
                 Some(c)
             }
             Err(OpenErr::NoHeartbeat) => {
@@ -1911,6 +1927,9 @@ pub fn run_loop(
                 Ok((hdr, msg)) => {
                     let is_att = matches!(msg, MavMessage::ATTITUDE(_));
                     handle_msg(&mut st, &hdr, msg);
+                    if st.sample.ok && st.sample.detail.starts_with("чекаємо HEARTBEAT") {
+                        st.sample.detail = target.clone();
+                    }
                     if is_att {
                         att_n += 1;
                         last_att = Some(Instant::now());

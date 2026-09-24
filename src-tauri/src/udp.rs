@@ -70,6 +70,23 @@ fn ignore_connreset(socket: &UdpSocket) {
 #[cfg(not(windows))]
 fn ignore_connreset(_socket: &UdpSocket) {}
 
+/// Vehicles usually send to the GCS on 14550, or listen there. Bind that port when it is free
+/// and still send to the address the user typed.
+fn bind_gcs_socket(dest: &SocketAddr) -> io::Result<UdpSocket> {
+    if dest.port() == 14550 || dest.port() == 14551 {
+        let fixed = if dest.is_ipv6() {
+            format!("[::]:{}", dest.port())
+        } else {
+            format!("0.0.0.0:{}", dest.port())
+        };
+        if let Ok(socket) = UdpSocket::bind(&fixed) {
+            return Ok(socket);
+        }
+    }
+    let ephemeral = if dest.is_ipv6() { "[::]:0" } else { "0.0.0.0:0" };
+    UdpSocket::bind(ephemeral)
+}
+
 fn prep(socket: UdpSocket) -> io::Result<UdpSocket> {
     socket.set_read_timeout(Some(READ_TIMEOUT))?;
     ignore_connreset(&socket);
@@ -115,12 +132,15 @@ impl UdpMav {
 
     fn bind_out(addr: &str, broadcast: bool) -> io::Result<Self> {
         let dest = parse_addr(addr)?;
-        let bind = if dest.is_ipv6() { "[::]:0" } else { "0.0.0.0:0" };
-        let socket = prep(UdpSocket::bind(bind)?)?;
+        let socket = prep(bind_gcs_socket(&dest)?)?;
         if broadcast {
             socket.set_broadcast(true)?;
         }
-        log::info!("UDP {} {dest}", if broadcast { "broadcast" } else { "out" });
+        log::info!(
+            "UDP {} {dest} local {}",
+            if broadcast { "broadcast" } else { "out" },
+            socket.local_addr()?
+        );
         Ok(Self::new(socket, false, Some(dest)))
     }
 
@@ -241,6 +261,17 @@ mod tests {
         write_versioned_msg(&mut bytes, MavlinkVersion::V2, MavHeader::default(), &hb()).unwrap();
         let got = decode_datagram(&bytes);
         assert!(matches!(&got[0].1, MavMessage::HEARTBEAT(_)));
+    }
+
+    #[test]
+    fn udpout_14550_listens_on_that_port_when_free() {
+        let probe = UdpSocket::bind("127.0.0.1:14550");
+        if probe.is_err() {
+            return;
+        }
+        drop(probe);
+        let mav = UdpMav::bind_out("127.0.0.1:14550", false).unwrap();
+        assert_eq!(mav.socket.local_addr().unwrap().port(), 14550);
     }
 
     #[test]
