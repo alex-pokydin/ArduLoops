@@ -7,6 +7,59 @@ const KEY = "arduloops.link";
 const HIST_KEY = "arduloops.links";
 const HIST_MAX = 12;
 
+export type LinkKind = "tcp" | "udp" | "serial";
+
+/** TCP is host:port. UDP is a listen port, or host:port to send to the vehicle. Serial is port@baud. */
+export function parseLink(url: string): { kind: LinkKind; value: string } {
+  const s = url.trim();
+  if (/^serial:/i.test(s)) {
+    const rest = s.slice("serial:".length);
+    const cut = rest.lastIndexOf(":");
+    if (cut <= 0) return { kind: "serial", value: rest || "" };
+    return { kind: "serial", value: `${rest.slice(0, cut)}@${rest.slice(cut + 1)}` };
+  }
+  if (/^udp/i.test(s)) {
+    const rest = s.replace(/^udp(?:in|out|bcast)?:/i, "").trim();
+    if (!rest || /^(?:0\.0\.0\.0:)?\d+$/.test(rest)) {
+      return { kind: "udp", value: rest.match(/(\d+)$/)?.[1] ?? "14550" };
+    }
+    return { kind: "udp", value: rest };
+  }
+  const host = s.replace(/^(tcpout|tcpin|tcp):/i, "").trim();
+  return { kind: "tcp", value: host || "127.0.0.1:5760" };
+}
+
+export function formatLink(kind: LinkKind, value: string): string {
+  const v = value.trim();
+  if (kind === "serial") {
+    const [port, baud] = v.split("@");
+    const name = (port || "").trim();
+    const rate = (baud || "115200").replace(/\D/g, "") || "115200";
+    return name ? `serial:${name}:${rate}` : "serial::115200";
+  }
+  if (kind === "udp") {
+    const raw = v.replace(/^udp(?:in|out|bcast)?:/i, "").trim();
+    if (!raw || /^\d+$/.test(raw)) return `udpin:0.0.0.0:${raw || "14550"}`;
+    return `udpout:${raw.includes(":") ? raw : `${raw}:14550`}`;
+  }
+  const host = v.replace(/^(tcpout|tcpin|tcp):/i, "").trim();
+  if (!host) return "tcpout:127.0.0.1:5760";
+  if (host.includes(":")) return `tcpout:${host}`;
+  return `tcpout:127.0.0.1:${host}`;
+}
+
+export function linkLabel(url: string): string {
+  const parsed = parseLink(url);
+  if (parsed.kind === "udp") return `UDP ${parsed.value}`;
+  if (parsed.kind === "serial") return `SER ${parsed.value.replace("@", " ")}`;
+  return `TCP ${parsed.value}`;
+}
+
+export function canonicalLink(url: string): string {
+  const parsed = parseLink(url);
+  return formatLink(parsed.kind, parsed.value);
+}
+
 export function loadLink(): string {
   try {
     return localStorage.getItem(KEY) || DEFAULT_LINK;

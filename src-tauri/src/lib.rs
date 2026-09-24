@@ -2,6 +2,7 @@ mod cli;
 mod http;
 mod link;
 mod mcp;
+mod ports;
 mod sitl;
 mod udp;
 

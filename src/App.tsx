@@ -4,10 +4,10 @@ import { Disconnected } from "./components/Disconnected";
 import { LabDialog } from "./components/LabDialog";
 import { SimRail } from "./components/SimRail";
 import { CopterApp } from "./copter/App";
-import { tDetail, useT } from "./i18n/i18n";
+import { useT } from "./i18n/i18n";
 import { addLog, setLogHandler } from "./log";
 import { send } from "./mav/cmd";
-import { loadLink, loadLinkHistory, rememberLink, saveLink } from "./mav/link";
+import { APP_HTTP, formatLink, linkLabel, loadLink, loadLinkHistory, parseLink, rememberLink, saveLink, type LinkKind } from "./mav/link";
 import {
   downloadParm,
   LAB_KEYS,
@@ -125,7 +125,9 @@ export function App() {
   const t = useT();
   const s = useSyncExternalStore(subscribe, getSnapshot, getSnapshot);
   const [log, setLog] = useState<LogRow[]>([]);
-  const [linkUrl, setLinkUrl] = useState(loadLink);
+  const [linkKind, setLinkKind] = useState<LinkKind>(() => parseLink(loadLink()).kind);
+  const [linkValue, setLinkValue] = useState(() => parseLink(loadLink()).value);
+  const [serialPorts, setSerialPorts] = useState<{ name: string; label: string }[]>([]);
   const [linkHist, setLinkHist] = useState(loadLinkHistory);
   const [linkMenu, setLinkMenu] = useState(false);
   const [labOpen, setLabOpen] = useState(false);
@@ -167,11 +169,38 @@ export function App() {
   }, []);
 
   useEffect(() => {
+    if (linkKind !== "serial" || isAndroid()) return;
+    const ac = new AbortController();
+    void fetch(`${APP_HTTP}/ports`, { cache: "no-store", signal: ac.signal })
+      .then((r) => r.json())
+      .then((rows: unknown) => {
+        if (!Array.isArray(rows)) return;
+        const ports = rows.flatMap((row) => {
+          if (typeof row === "string" && row) return [{ name: row, label: row }];
+          if (!row || typeof row !== "object") return [];
+          const name = "name" in row && typeof row.name === "string" ? row.name : "";
+          const label = "label" in row && typeof row.label === "string" && row.label ? row.label : name;
+          return name ? [{ name, label }] : [];
+        });
+        setSerialPorts(ports);
+        setLinkValue((cur) => {
+          const port = cur.split("@")[0];
+          if (port && ports.some((p) => p.name === port)) return cur;
+          return ports[0] ? `${ports[0].name}@115200` : cur;
+        });
+      })
+      .catch(() => {});
+    return () => ac.abort();
+  }, [linkKind]);
+
+  useEffect(() => {
     if (!s.ok) return;
     const url = (s.detail || "").trim();
     if (!/^(tcpout|tcp:|udp)/i.test(url)) return;
     setLinkHist(rememberLink(url));
-    setLinkUrl((prev) => (prev === url ? prev : url));
+    const parsed = parseLink(url);
+    setLinkKind(parsed.kind);
+    setLinkValue(parsed.value);
   }, [s.ok, s.detail]);
 
   useEffect(() => {
@@ -196,12 +225,19 @@ export function App() {
     addLog(next ? t("Display paused") : t("Display running"), "cmd");
   }
 
-  function onLink(ev: FormEvent) {
-    ev.preventDefault();
-    const url = linkUrl.trim();
+  function applyLink(kind: LinkKind, value: string) {
+    const url = formatLink(kind, value);
+    if (kind === "serial" && !value.split("@")[0]) return;
+    setLinkKind(kind);
+    setLinkValue(parseLink(url).value);
     saveLink(url);
     send({ op: "connect", url });
     addLog(t("Link {url}", { url }), "cmd");
+  }
+
+  function onLink(ev: FormEvent) {
+    ev.preventDefault();
+    applyLink(linkKind, linkValue);
   }
 
   function onDisconnect() {
@@ -249,9 +285,7 @@ export function App() {
   const initDone = s.init_done || 0;
   const initTotal = s.init_total || 0;
   const initPct = initTotal > 0 ? Math.min(100, Math.round((100 * initDone) / initTotal)) : 0;
-  const linkWait = isWaitDetail(s.detail);
-  const linkBad = !linked && !isIdleDetail(s.detail) && !linkWait;
-  const linkHint = "tcpout:host:port, tcp:host:port, udpin:0.0.0.0:14550, udpout:host:port";
+  const linkBad = !linked && !isIdleDetail(s.detail) && !isWaitDetail(s.detail);
   const android = isAndroid();
 
   function onShell(next: Shell) {
@@ -281,7 +315,9 @@ export function App() {
         sample={s}
         open={sitlOpen}
         onSitlLink={(url) => {
-          setLinkUrl(url);
+          const parsed = parseLink(url);
+          setLinkKind(parsed.kind);
+          setLinkValue(parsed.value);
           saveLink(url);
         }}
       />
@@ -367,18 +403,58 @@ export function App() {
             </div>
           ) : (
             <form className="link" onSubmit={onLink}>
+              <select
+                className="link-kind"
+                aria-label="MAVLink"
+                value={linkKind}
+                onChange={(ev) => {
+                  const kind = ev.target.value as LinkKind;
+                  setLinkKind(kind);
+                  setLinkValue((cur) => {
+                    if (kind === "udp") return /^\d+$/.test(cur) || cur.includes(".") ? cur : "14550";
+                    if (kind === "serial") return cur.includes("@") ? cur : "@115200";
+                    return cur.includes(":") && !cur.includes("@") ? cur : "127.0.0.1:5760";
+                  });
+                }}
+              >
+                <option value="tcp">TCP</option>
+                <option value="udp">UDP</option>
+                {android ? null : <option value="serial">SER</option>}
+              </select>
               <div className="link-combo" ref={linkCombo}>
+                {linkKind === "serial" ? (
+                  <>
+                    <select
+                      aria-label="Serial port"
+                      value={linkValue.split("@")[0]}
+                      onChange={(ev) => setLinkValue(`${ev.target.value}@${linkValue.split("@")[1] || "115200"}`)}
+                    >
+                      {serialPorts.length ? null : <option value="">—</option>}
+                      {serialPorts.map((port) => (
+                        <option key={port.name} value={port.name}>{port.label}</option>
+                      ))}
+                    </select>
+                    <input
+                      className="baud"
+                      value={linkValue.split("@")[1] || "115200"}
+                      onChange={(ev) => setLinkValue(`${linkValue.split("@")[0]}@${ev.target.value.replace(/\D/g, "")}`)}
+                      inputMode="numeric"
+                      aria-label="Baud"
+                      placeholder="115200"
+                    />
+                  </>
+                ) : (
                 <input
-                  className={linkBad ? "bad" : linkWait ? "wait" : undefined}
-                  value={linkUrl}
-                  onChange={(ev) => setLinkUrl(ev.target.value)}
+                  className={[linkKind === "udp" && !linkValue.includes(":") ? "port" : "", linkBad ? "bad" : ""].filter(Boolean).join(" ") || undefined}
+                  value={linkValue}
+                  onChange={(ev) => setLinkValue(ev.target.value)}
                   spellCheck={false}
                   autoComplete="off"
                   aria-invalid={linkBad || undefined}
-                  aria-label="MAVLink"
-                  title={linkBad || linkWait ? tDetail(s.detail) : linkHint}
-                  placeholder="tcpout:127.0.0.1:5763"
+                  aria-label={linkKind === "udp" ? "UDP port or host:port" : "TCP host:port"}
+                  placeholder={linkKind === "udp" ? "14550" : "127.0.0.1:5760"}
                 />
+                )}
                 {linkHist.length ? (
                   <button
                     type="button"
@@ -393,15 +469,16 @@ export function App() {
                 {linkMenu && linkHist.length ? (
                   <ul className="link-menu" role="listbox">
                     {linkHist.map((u) => (
-                      <li key={u} role="option" aria-selected={u === linkUrl}>
+                      <li key={u} role="option" aria-selected={formatLink(linkKind, linkValue) === u}>
                         <button
                           type="button"
                           onClick={() => {
-                            setLinkUrl(u);
+                            const parsed = parseLink(u);
                             setLinkMenu(false);
+                            applyLink(parsed.kind, parsed.value);
                           }}
                         >
-                          {u}
+                          {linkLabel(u)}
                         </button>
                       </li>
                     ))}
@@ -409,7 +486,6 @@ export function App() {
                 ) : null}
               </div>
               <button type="submit">{t("Link")}</button>
-              {linkWait || linkBad ? <span className={linkBad ? "link-note bad" : "link-note"}>{tDetail(s.detail)}</span> : null}
             </form>
           )}
           <button

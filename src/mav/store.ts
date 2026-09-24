@@ -1,5 +1,5 @@
 import { send, waitHttp } from "./cmd";
-import { APP_HTTP, loadLink } from "./link";
+import { APP_HTTP, canonicalLink, loadLink } from "./link";
 import { EMPTY, type Sample } from "./types";
 
 /** Keep this many seconds of samples so a longer plot window has history waiting. */
@@ -142,7 +142,7 @@ export function startStream(): () => void {
   void (async () => {
     if (!(await waitHttp(ac.signal))) return;
     if (ac.signal.aborted) return;
-    send({ op: "connect", url: loadLink() });
+    send({ op: "connect", url: canonicalLink(loadLink()) });
     es = new EventSource(`${APP_HTTP}/stream`);
     es.onmessage = (ev) => {
       try {

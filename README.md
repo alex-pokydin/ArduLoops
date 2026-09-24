@@ -71,8 +71,9 @@ Paste a connection string and click **Link**:
 | `tcpout:127.0.0.1:5760` | SITL with `--no-mavproxy` (SERIAL0) |
 | `tcpout:127.0.0.1:5763` | Extra SITL GCS / MAVProxy first extra |
 | `tcpout:127.0.0.1:5762` | If 5763 is already taken |
-| `udpin:0.0.0.0:14550` | UDP listen (GCS-style). Vehicle must send here; close other GCS first. |
-| `udpout:127.0.0.1:14550` | UDP client, when the vehicle listens |
+| `udpin:0.0.0.0:14550` | UDP listen. The vehicle sends to this port. |
+| `udpout:192.168.6.167:14550` | UDP to a vehicle. An ESP8266 bridge is also tried on port 14555. |
+| `serial:COM3:115200` | USB or radio on the desktop app. |
 
 Each SITL TCP port accepts **one** GCS. Do not run `npm run dev` and the desktop app against the same port at once.
 
@@ -88,9 +89,10 @@ GitHub Actions (`.github/workflows/release.yml`) builds Windows NSIS/MSI, Linux 
 
 Release assets:
 
-- `ArduLoops_1.3.0_x64-setup.exe` / `ArduLoops_1.3.0_x64_en-US.msi` — Windows
+- `ArduLoops_1.4.0_x64-setup.exe` / `ArduLoops_1.4.0_x64_en-US.msi` — Windows
 - `.deb` / `.rpm` / `.AppImage` — Linux x86_64
-- `ArduLoops_1.3.0_aarch64.dmg` / `ArduLoops_1.3.0_x64.dmg` — macOS (unsigned), with bundled SITL
+- `ArduLoops_1.4.0_aarch64.dmg` / `ArduLoops_1.4.0_x64.dmg` — macOS (unsigned), with bundled SITL
+- `ArduLoops_1.4.0_aarch64.apk` — Android arm64, link client only (sideload)
 
 ## Options
 

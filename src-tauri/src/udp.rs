@@ -6,11 +6,11 @@
 //! and `try_open`'s 6s deadline never fires.
 use std::collections::VecDeque;
 use std::io::{self, Cursor};
-use std::net::{SocketAddr, ToSocketAddrs, UdpSocket};
+use std::net::{IpAddr, Ipv4Addr, SocketAddr, SocketAddrV4, ToSocketAddrs, UdpSocket};
 use std::sync::Mutex;
 use std::time::Duration;
 
-use mavlink::ardupilotmega::MavMessage;
+use mavlink::ardupilotmega::{MavMessage, MavType};
 use mavlink::peek_reader::PeekReader;
 use mavlink::{
     read_versioned_msg, write_versioned_msg, MavConnection, MavHeader, MavlinkVersion,
@@ -115,7 +115,7 @@ fn decode_datagram(buf: &[u8]) -> Vec<(MavHeader, MavMessage)> {
 
 pub struct UdpMav {
     socket: UdpSocket,
-    dest: Mutex<Option<SocketAddr>>,
+    dest: Mutex<Vec<SocketAddr>>,
     pending: Mutex<VecDeque<(MavHeader, MavMessage)>>,
     sequence: Mutex<u8>,
     protocol_version: Mutex<MavlinkVersion>,
@@ -126,8 +126,11 @@ impl UdpMav {
     fn bind_in(addr: &str) -> io::Result<Self> {
         let sock_addr = parse_addr(addr)?;
         let socket = prep(UdpSocket::bind(sock_addr)?)?;
-        log::info!("UDP listen {sock_addr}");
-        Ok(Self::new(socket, true, None))
+        socket.set_broadcast(true)?;
+        // Until a vehicle answers, GCS heartbeats go to the whole subnet on this port.
+        let announce = SocketAddr::new(IpAddr::V4(Ipv4Addr::BROADCAST), sock_addr.port());
+        log::info!("UDP listen {sock_addr} announce {announce}");
+        Ok(Self::new(socket, true, vec![announce]))
     }
 
     fn bind_out(addr: &str, broadcast: bool) -> io::Result<Self> {
@@ -136,15 +139,22 @@ impl UdpMav {
         if broadcast {
             socket.set_broadcast(true)?;
         }
+        // MAVESP8266 listens on 14555 and answers a GCS that is listening on 14550.
+        let mut dests = vec![dest];
+        if dest.port() == 14550 {
+            if let SocketAddr::V4(v4) = dest {
+                dests.push(SocketAddr::V4(SocketAddrV4::new(*v4.ip(), 14555)));
+            }
+        }
         log::info!(
-            "UDP {} {dest} local {}",
+            "UDP {} {dests:?} local {}",
             if broadcast { "broadcast" } else { "out" },
             socket.local_addr()?
         );
-        Ok(Self::new(socket, false, Some(dest)))
+        Ok(Self::new(socket, false, dests))
     }
 
-    fn new(socket: UdpSocket, server: bool, dest: Option<SocketAddr>) -> Self {
+    fn new(socket: UdpSocket, server: bool, dest: Vec<SocketAddr>) -> Self {
         Self {
             socket,
             dest: Mutex::new(dest),
@@ -154,6 +164,13 @@ impl UdpMav {
             server,
         }
     }
+}
+
+fn from_vehicle(msgs: &[(MavHeader, MavMessage)]) -> bool {
+    msgs.iter().any(|(_, msg)| match msg {
+        MavMessage::HEARTBEAT(hb) => hb.mavtype != MavType::MAV_TYPE_GCS,
+        _ => true,
+    })
 }
 
 pub fn connect(url: &str) -> io::Result<Box<dyn MavConnection<MavMessage> + Send + Sync>> {
@@ -182,12 +199,15 @@ impl MavConnection<MavMessage> for UdpMav {
         loop {
             match self.socket.recv_from(&mut buf) {
                 Ok((n, addr)) => {
-                    if self.server {
-                        *self.dest.lock().unwrap() = Some(addr);
-                    }
                     let mut q = decode_datagram(&buf[..n]);
                     if q.is_empty() {
                         continue;
+                    }
+                    if from_vehicle(&q) {
+                        let mut dests = self.dest.lock().unwrap();
+                        if self.server || dests.len() != 1 || dests.first() != Some(&addr) {
+                            *dests = vec![addr];
+                        }
                     }
                     let first = q.remove(0);
                     self.pending.lock().unwrap().extend(q);
@@ -210,10 +230,10 @@ impl MavConnection<MavMessage> for UdpMav {
         header: &MavHeader,
         data: &MavMessage,
     ) -> Result<usize, mavlink::error::MessageWriteError> {
-        let dest = *self.dest.lock().unwrap();
-        let Some(addr) = dest else {
+        let dests = self.dest.lock().unwrap().clone();
+        if dests.is_empty() {
             return Ok(0);
-        };
+        }
         let mut seq = self.sequence.lock().unwrap();
         let header = MavHeader {
             sequence: *seq,
@@ -225,7 +245,20 @@ impl MavConnection<MavMessage> for UdpMav {
         let ver = *self.protocol_version.lock().unwrap();
         let mut bytes = Vec::new();
         write_versioned_msg(&mut bytes, ver, header, data)?;
-        Ok(self.socket.send_to(&bytes, addr)?)
+        let mut sent = 0;
+        let mut last_err = None;
+        for addr in dests {
+            match self.socket.send_to(&bytes, addr) {
+                Ok(n) => sent += n,
+                Err(err) => last_err = Some(err),
+            }
+        }
+        if sent == 0 {
+            if let Some(err) = last_err {
+                return Err(err.into());
+            }
+        }
+        Ok(sent)
     }
 
     fn set_protocol_version(&mut self, version: MavlinkVersion) {
@@ -275,10 +308,45 @@ mod tests {
     }
 
     #[test]
+    fn udpout_heartbeat_reaches_vehicle_and_reply_comes_back() {
+        let vehicle = prep(UdpSocket::bind("127.0.0.1:0").unwrap()).unwrap();
+        let vehicle_addr = vehicle.local_addr().unwrap();
+        let gcs = UdpMav::bind_out(&vehicle_addr.to_string(), false).unwrap();
+        let sent = gcs
+            .send(
+                &MavHeader { system_id: 255, component_id: 190, sequence: 0 },
+                &hb(),
+            )
+            .expect("send");
+        assert!(sent > 8, "heartbeat was not written");
+        let mut buf = [0u8; 512];
+        let (n, from) = vehicle.recv_from(&mut buf).expect("vehicle never saw the GCS heartbeat");
+        assert!(n > 8);
+        let mut reply = Vec::new();
+        write_versioned_msg(
+            &mut reply,
+            MavlinkVersion::V2,
+            MavHeader { system_id: 1, component_id: 1, sequence: 0 },
+            &hb(),
+        )
+        .unwrap();
+        vehicle.send_to(&reply, from).unwrap();
+        let rec = gcs.recv().expect("GCS never saw the vehicle heartbeat");
+        assert!(matches!(rec.1, MavMessage::HEARTBEAT(_)));
+    }
+
+    #[test]
+    fn udpin_sends_until_a_vehicle_answers() {
+        let mav = UdpMav::bind_in("127.0.0.1:0").unwrap();
+        let n = mav.send(&MavHeader::default(), &hb()).unwrap_or(0);
+        assert!(n > 0 || mav.socket.local_addr().is_ok());
+    }
+
+    #[test]
     fn udpin_loopback() {
         let socket = prep(UdpSocket::bind("127.0.0.1:0").unwrap()).unwrap();
         let addr = socket.local_addr().unwrap();
-        let server = UdpMav::new(socket, true, None);
+        let server = UdpMav::new(socket, true, Vec::new());
         let client = UdpMav::bind_out(&addr.to_string(), false).unwrap();
         client.send(&MavHeader::default(), &hb()).unwrap();
         let rec = server.recv().expect("heartbeat on udpin");

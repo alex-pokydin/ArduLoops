@@ -108,6 +108,11 @@ fn handle(stream: TcpStream, latest: Arc<Mutex<Sample>>, tx: Sender<Cmd>) -> std
         reply(&mut socket, 200, "application/json", &mcp_cursor_config())?;
         return Ok(());
     }
+    if method == "GET" && path == "/ports" {
+        let json = serde_json::to_vec(&crate::ports::list()).unwrap_or_else(|_| b"[]".to_vec());
+        reply(&mut socket, 200, "application/json", &json)?;
+        return Ok(());
+    }
     if method == "GET" && path == "/state" {
         let json = {
             let g = latest.lock().map_err(|_| {
