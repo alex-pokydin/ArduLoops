@@ -37,9 +37,9 @@ jobs:
           echo "NDK_HOME=$ANDROID_HOME/ndk/28.2.13676358" >> "$GITHUB_ENV"
       - run: npm ci
       - name: Android project
-        run: node scripts/with-cargo.mjs tauri android init --ci
+        run: npm run tauri -- android init --ci
       - name: APK
-        run: node scripts/with-cargo.mjs tauri android build --apk --target aarch64 --ci
+        run: npm run tauri -- android build --apk --target aarch64 --ci
       - name: Collect APK
         run: |
           mkdir -p dist-apk
