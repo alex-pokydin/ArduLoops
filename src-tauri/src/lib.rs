@@ -56,6 +56,7 @@ mod desktop {
     }
 }
 
+#[cfg_attr(mobile, tauri::mobile_entry_point)]
 #[cfg(feature = "desktop")]
 pub fn run() {
     desktop::run();

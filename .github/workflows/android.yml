@@ -1,0 +1,53 @@
+name: Android
+
+permissions:
+  contents: write
+
+on:
+  workflow_dispatch:
+  workflow_call:
+    inputs:
+      tag:
+        required: false
+        type: string
+
+jobs:
+  apk:
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: lts/*
+          cache: npm
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-linux-android
+      - uses: android-actions/setup-android@v3
+      - name: Android SDK
+        run: |
+          sdkmanager --install "platforms;android-35" "build-tools;35.0.0" "ndk;28.2.13676358"
+          echo "NDK_HOME=$ANDROID_HOME/ndk/28.2.13676358" >> "$GITHUB_ENV"
+      - run: npm ci
+      - name: Android project
+        run: node scripts/with-cargo.mjs tauri android init --ci
+      - name: APK
+        run: node scripts/with-cargo.mjs tauri android build --apk --target aarch64 --ci
+      - name: Collect APK
+        run: |
+          mkdir -p dist-apk
+          find src-tauri/gen/android -name '*.apk' -exec cp {} dist-apk/ \;
+          ls -l dist-apk
+      - uses: actions/upload-artifact@v4
+        with:
+          name: android-apk
+          path: dist-apk/*.apk
+      - name: Upload to release
+        if: inputs.tag != ''
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: gh release upload "${{ inputs.tag }}" dist-apk/*.apk --clobber

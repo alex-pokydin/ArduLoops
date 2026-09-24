@@ -49,6 +49,10 @@ function writeFrameUrl(shell: Shell) {
   window.history.replaceState({}, "", u);
 }
 
+function isAndroid(): boolean {
+  return typeof navigator !== "undefined" && /Android/i.test(navigator.userAgent);
+}
+
 function isIdleDetail(detail: string | undefined): boolean {
   return (
     detail === "відключено" ||
@@ -248,6 +252,7 @@ export function App() {
   const linkWait = isWaitDetail(s.detail);
   const linkBad = !linked && !isIdleDetail(s.detail) && !linkWait;
   const linkHint = "tcpout:host:port, tcp:host:port, udpin:0.0.0.0:14550, udpout:host:port";
+  const android = isAndroid();
 
   function onShell(next: Shell) {
     setPick(next);
@@ -256,7 +261,8 @@ export function App() {
   }
 
   return (
-    <div className={sitlOpen ? "app sitl-open" : "app"}>
+    <div className={["app", android ? "android" : "", !android && sitlOpen ? "sitl-open" : ""].filter(Boolean).join(" ")}>
+      {android ? null : (
       <div className="sitl-dock">
         <button
           type="button"
@@ -269,6 +275,8 @@ export function App() {
           {t("SITL")}
         </button>
       </div>
+      )}
+      {android ? null : (
       <SimRail
         sample={s}
         open={sitlOpen}
@@ -277,6 +285,7 @@ export function App() {
           saveLink(url);
         }}
       />
+      )}
       <header>
         <div className="hdr-title">
           <h1>

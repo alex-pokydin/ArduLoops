@@ -993,6 +993,38 @@ button.hot { background: #6b2424; }
   header .sub { display: none; }
   .land-split { grid-template-columns: 1fr; }
 }
+@media (max-width: 720px) {
+  .app.android header { padding-left: 12px; }
+  header { padding-left: 58px; }
+  .hdr-right, .link, .link-combo { flex: 1 1 100%; min-width: 0; }
+  .link-combo input { width: 100%; min-width: 0; }
+  .link.on .status { max-width: none; }
+  main { overflow: auto; padding: 0 8px 12px; }
+  .studio-wrap, .studio { flex: none; height: auto; min-height: 0; }
+  .studio {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+  }
+  .studio-gutter { display: none; }
+  .pane { flex: none; min-height: 320px; }
+  .pane.pane-scheme { min-height: 460px; }
+  .app.sitl-open { grid-template-columns: minmax(0, 1fr); }
+  .app.sitl-open header,
+  .app.sitl-open .init-strip,
+  .app.sitl-open main,
+  .app.sitl-open .land-main { grid-column: 1; }
+  .app.sitl-open .sim-rail {
+    position: absolute;
+    z-index: 8;
+    top: 0;
+    bottom: 0;
+    left: 0;
+    width: min(280px, 88vw);
+    background: var(--bg);
+    box-shadow: 8px 0 24px rgba(0, 0, 0, 0.45);
+  }
+}
 @media (max-height: 640px) {
   header { padding: 6px 12px 4px 62px; }
   .app.sitl-open header { padding-left: 12px; }

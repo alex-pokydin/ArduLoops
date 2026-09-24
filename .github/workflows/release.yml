@@ -102,3 +102,11 @@ jobs:
           uploadUpdaterJson: false
           tauriScript: node scripts/with-cargo.mjs tauri
           args: --target ${{ matrix.target }} --bundles dmg --no-sign
+
+  android:
+    permissions:
+      contents: write
+    uses: ./.github/workflows/android.yml
+    with:
+      tag: ${{ github.event.inputs.tag || github.ref_name }}
+    secrets: inherit
