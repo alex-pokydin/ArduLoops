@@ -26,8 +26,6 @@ if [ -n "$ARCH_FLAG" ]; then
 fi
 
 brew install gawk
-python3 -m pip install --user --upgrade 'empy==3.3.4' pyserial || \
-  python3 -m pip install --user --upgrade --break-system-packages 'empy==3.3.4' pyserial
 
 if [ ! -d "$SRC/.git" ]; then
   rm -rf "$SRC"
@@ -35,8 +33,13 @@ if [ ! -d "$SRC/.git" ]; then
 fi
 git -C "$SRC" submodule update --init --recursive --depth 1
 
-python3 "$SRC/waf" configure --board sitl
-python3 "$SRC/waf" copter plane
+PY="${RUNNER_TEMP:-/tmp}/sitl-py"
+python3 -m venv "$PY"
+"$PY/bin/pip" install 'empy==3.3.4' pyserial
+
+cd "$SRC"
+"$PY/bin/python" ./waf configure --board sitl
+"$PY/bin/python" ./waf copter plane
 
 mkdir -p "$DEST"
 cp -f "$SRC/build/sitl/bin/arducopter" "$SRC/build/sitl/bin/arduplane" "$DEST/"
