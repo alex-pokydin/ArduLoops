@@ -28,5 +28,9 @@ serde = { version = "1.0", features = ["derive"] }
 log = "0.4"
 tauri = { version = "2.11.3", optional = true , features = [] }
 tauri-plugin-log = { version = "2", optional = true }
-mavlink = { version = "0.13.1", default-features = true, features = ["ardupilotmega"] }
+# direct-serial pulls the `serial` crate, whose termios 0.2 dependency does not build for Android.
+mavlink = { version = "0.13.1", default-features = false, features = ["std", "tcp", "udp", "serde", "ardupilotmega"] }
 ureq = { version = "2.12.1", default-features = false, features = ["tls"] }
+
+[target.'cfg(not(target_os = "android"))'.dependencies]
+mavlink = { version = "0.13.1", default-features = false, features = ["direct-serial"] }
