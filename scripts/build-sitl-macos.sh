@@ -35,10 +35,10 @@ git -C "$SRC" submodule update --init --recursive --depth 1
 
 PY="${RUNNER_TEMP:-/tmp}/sitl-py"
 python3 -m venv "$PY"
-"$PY/bin/pip" install 'empy==3.3.4' pyserial
+"$PY/bin/pip" install 'empy==3.3.4' pyserial pexpect future
 
 cd "$SRC"
-"$PY/bin/python" ./waf configure --board sitl
+"$PY/bin/python" ./waf configure --board sitl --no-submodule-update
 "$PY/bin/python" ./waf copter plane
 
 mkdir -p "$DEST"
