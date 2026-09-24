@@ -1,0 +1,8 @@
+{
+  "bundle": {
+    "resources": [
+      "resources/sitl/arducopter",
+      "resources/sitl/arduplane"
+    ]
+  }
+}

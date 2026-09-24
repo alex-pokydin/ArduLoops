@@ -1,5 +1,6 @@
 //! In-app SITL: Mission Planner Cygwin binaries on Windows, firmware
-//! `SITL_x86_64_linux_gnu` ELFs on Linux. Spawn `--serial0 tcp:5770`.
+//! `SITL_x86_64_linux_gnu` ELFs on Linux, and the macOS release bundle
+//! (`resources/sitl`). Spawn `--serial0 tcp:5770`.
 use std::fs::{self, File};
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
@@ -381,10 +382,23 @@ fn fetch_sitl(
         chmod_exec(&dest)?;
         Ok(dest)
     }
-    #[cfg(not(any(windows, all(target_os = "linux", target_arch = "x86_64"))))]
+    #[cfg(target_os = "macos")]
+    {
+        let _ = (ctl, gen, latest);
+        let name = macos_bin(vehicle);
+        let src = macos_bundled(name)?;
+        let dest = root.join(name);
+        install_bundled(&src, &dest)?;
+        Ok(dest)
+    }
+    #[cfg(not(any(
+        windows,
+        target_os = "macos",
+        all(target_os = "linux", target_arch = "x86_64")
+    )))]
     {
         let _ = (ctl, gen, latest, root, vehicle);
-        Err("in-app SITL needs Windows or Linux x86_64".into())
+        Err("in-app SITL needs Windows, Linux x86_64, or the macOS release bundle".into())
     }
 }
 
@@ -403,7 +417,47 @@ fn linux_fw_url(vehicle: &str) -> String {
     format!("{FW}/{folder}/stable/SITL_x86_64_linux_gnu/{}", linux_bin(vehicle))
 }
 
-#[cfg(all(target_os = "linux", target_arch = "x86_64"))]
+#[cfg(target_os = "macos")]
+fn macos_bin(vehicle: &str) -> &'static str {
+    if vehicle == "plane" {
+        "arduplane"
+    } else {
+        "arducopter"
+    }
+}
+
+#[cfg(target_os = "macos")]
+fn macos_bundled(name: &str) -> Result<PathBuf, String> {
+    let mut cands = Vec::new();
+    if let Some(dir) = std::env::var_os("ARDULOOPS_SITL_DIR") {
+        cands.push(PathBuf::from(dir).join(name));
+    }
+    if let Ok(exe) = std::env::current_exe() {
+        if let Some(dir) = exe.parent() {
+            cands.push(dir.join("../Resources/resources/sitl").join(name));
+            cands.push(dir.join("resources/sitl").join(name));
+        }
+    }
+    cands
+        .into_iter()
+        .find(|p| p.is_file())
+        .ok_or_else(|| format!("no bundled macOS SITL ({name}). Release builds include it."))
+}
+
+#[cfg(target_os = "macos")]
+fn install_bundled(src: &Path, dest: &Path) -> Result<(), String> {
+    let same = dest.is_file()
+        && fs::metadata(src).ok().map(|m| m.len()) == fs::metadata(dest).ok().map(|m| m.len());
+    if !same {
+        if let Some(parent) = dest.parent() {
+            fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+        }
+        fs::copy(src, dest).map_err(|e| format!("copy sitl: {e}"))?;
+    }
+    chmod_exec(dest)
+}
+
+#[cfg(unix)]
 fn chmod_exec(path: &Path) -> Result<(), String> {
     use std::os::unix::fs::PermissionsExt;
     let meta = fs::metadata(path).map_err(|e| e.to_string())?;

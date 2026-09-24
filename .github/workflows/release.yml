@@ -67,3 +67,38 @@ jobs:
           uploadUpdaterJson: false
           tauriScript: node scripts/with-cargo.mjs tauri
           args: --bundles nsis,msi
+
+  macos:
+    runs-on: macos-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: aarch64-apple-darwin
+          - target: x86_64-apple-darwin
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: lts/*
+          cache: npm
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+          key: ${{ matrix.target }}
+      - run: npm ci
+      - name: Build macOS SITL
+        run: bash scripts/build-sitl-macos.sh ${{ matrix.target }}
+      - uses: tauri-apps/tauri-action@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          tagName: ${{ github.event.inputs.tag || github.ref_name }}
+          releaseName: ArduLoops ${{ github.event.inputs.tag || github.ref_name }}
+          releaseDraft: false
+          uploadUpdaterJson: false
+          tauriScript: node scripts/with-cargo.mjs tauri
+          args: --target ${{ matrix.target }} --bundles dmg --no-sign

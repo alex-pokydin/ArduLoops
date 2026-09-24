@@ -23,7 +23,7 @@
 
 ## Запуск SITL
 
-**SITL** перед назвою відкриває ліву рейку. Коптер або крило, **старт**. Стенд завантажить офіційний SITL, якщо треба (Windows: sitl-exe Mission Planner; Linux x86_64: firmware `arducopter` / `arduplane`), і Link `tcpout:127.0.0.1:5770`.
+**SITL** перед назвою відкриває ліву рейку. Коптер або крило, **старт**. Windows качає sitl-exe Mission Planner, Linux x86_64 — firmware `arducopter` / `arduplane`, а реліз для macOS запускає SITL, зібраний у застосунок. Усі три роблять Link `tcpout:127.0.0.1:5770`.
 
 ![SITL: мініатюри апарата і старт](sitl.png)
 
@@ -46,7 +46,7 @@ python3 Tools/autotest/sim_vehicle.py -v ArduCopter --no-mavproxy
 
 ### macOS / Linux
 
-На **Linux x86_64** **старт** у рейці SITL качає firmware ELF (`SITL_x86_64_linux_gnu`) і Link `tcpout:127.0.0.1:5770`. Окремої aarch64-збірки немає — на ARM або macOS стартуйте SITL самі.
+На **Linux x86_64** **старт** у рейці SITL качає firmware ELF (`SITL_x86_64_linux_gnu`) і Link `tcpout:127.0.0.1:5770`. Реліз для macOS збирає ArduPilot SITL (`Copter-4.7.0`) на GitHub macOS runner і кладе `arducopter` / `arduplane` у застосунок; **старт** запускає цю копію так само. Збірка на Mac без `scripts/build-sitl-macos.sh` не має бінарника для запуску.
 
 Той самий скрипт [SITL](https://ardupilot.org/dev/docs/sitl-simulator-software-in-the-loop.html) після збірки на [macOS](https://ardupilot.org/dev/docs/building-setup-mac.html) або [Linux](https://ardupilot.org/dev/docs/building-setup-linux.html):
 

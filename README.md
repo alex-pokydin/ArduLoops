@@ -42,7 +42,7 @@ How to Link, how to start SITL on this OS, official First Time Setup / Tuning, w
 
 ### SITL rail
 
-**SITL** before the title opens a left rail. Pick copter or plane, **Start** — the app downloads official SITL if needed (Windows: Mission Planner sitl-exe; Linux x86_64: firmware `arducopter` / `arduplane`) and links `tcpout:127.0.0.1:5770`. While it runs: **Start** becomes **Stop**, **Pause** / **Reset** sit next to speedup. Wind, GPS, RC fail, motors, IMU are `SIM_*`. **Reset** restores values from the start of the link.
+**SITL** before the title opens a left rail. Pick copter or plane, **Start**. Windows downloads the Mission Planner sitl-exe, Linux x86_64 downloads firmware `arducopter` / `arduplane`, and the macOS release uses the SITL binaries built in GitHub Actions (`Copter-4.7.0`) and packed into the app. All three link `tcpout:127.0.0.1:5770`. While it runs: **Start** becomes **Stop**, **Pause** / **Reset** sit next to speedup. Wind, GPS, RC fail, motors, IMU are `SIM_*`. **Reset** restores values from the start of the link.
 
 ![SITL: vehicle thumbs and start](docs/sitl.png)
 
@@ -82,14 +82,15 @@ Each SITL TCP port accepts **one** GCS. Do not run `npm run dev` and the desktop
 npm run build      # native installers for this OS (same UI as `dev`)
 ```
 
-On Windows that writes NSIS + MSI. On Linux: `.deb`, `.rpm` and AppImage (`--bundles deb,rpm,appimage`).
+On Windows that writes NSIS + MSI. On Linux: `.deb`, `.rpm` and AppImage (`--bundles deb,rpm,appimage`). On macOS: a `.dmg` (`--bundles dmg`).
 
-GitHub Actions (`.github/workflows/release.yml`) builds Windows NSIS/MSI and Linux `.deb` / `.rpm` / AppImage and uploads them to the release. Local Linux needs the [Tauri v2 prerequisites](https://v2.tauri.app/start/prerequisites/#linux) (`libwebkit2gtk-4.1-dev`, …).
+GitHub Actions (`.github/workflows/release.yml`) builds Windows NSIS/MSI, Linux `.deb` / `.rpm` / AppImage, and macOS Apple Silicon and Intel `.dmg` files. The macOS jobs also build ArduPilot SITL (`scripts/build-sitl-macos.sh`) and pack it into the app. Local Linux needs the [Tauri v2 prerequisites](https://v2.tauri.app/start/prerequisites/#linux) (`libwebkit2gtk-4.1-dev`, …).
 
 Release assets:
 
-- `ArduLoops_1.2.0_x64-setup.exe` / `ArduLoops_1.2.0_x64_en-US.msi` — Windows
+- `ArduLoops_1.3.0_x64-setup.exe` / `ArduLoops_1.3.0_x64_en-US.msi` — Windows
 - `.deb` / `.rpm` / `.AppImage` — Linux x86_64
+- `ArduLoops_1.3.0_aarch64.dmg` / `ArduLoops_1.3.0_x64.dmg` — macOS (unsigned), with bundled SITL
 
 ## Options
 

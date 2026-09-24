@@ -23,7 +23,7 @@ Each SITL TCP port accepts **one** client. Do not point two ArduLoops instances 
 
 ## Start SITL
 
-**SITL** before the title opens a left rail. Pick copter or plane, **Start**. The app downloads official SITL if needed (Windows: Mission Planner sitl-exe; Linux x86_64: firmware `arducopter` / `arduplane`) and Links `tcpout:127.0.0.1:5770`.
+**SITL** before the title opens a left rail. Pick copter or plane, **Start**. Windows downloads the Mission Planner sitl-exe, Linux x86_64 downloads firmware `arducopter` / `arduplane`, and the macOS release launches the SITL binaries packed into the app. All three Link `tcpout:127.0.0.1:5770`.
 
 ![SITL: vehicle thumbs and start](sitl.png)
 
@@ -46,7 +46,7 @@ Wiki default (`--map --console`) starts MAVProxy; then ArduLoops often uses `tcp
 
 ### macOS / Linux
 
-On **Linux x86_64**, **Start** in the SITL rail downloads the firmware ELF (`SITL_x86_64_linux_gnu`) and Links `tcpout:127.0.0.1:5770`. There is no aarch64 firmware folder — on ARM or macOS, start SITL yourself.
+On **Linux x86_64**, **Start** in the SITL rail downloads the firmware ELF (`SITL_x86_64_linux_gnu`) and Links `tcpout:127.0.0.1:5770`. The macOS release builds ArduPilot SITL (`Copter-4.7.0`) on the GitHub macOS runner and packs `arducopter` / `arduplane` into the app, then **Start** launches that copy the same way. A Mac build made without `scripts/build-sitl-macos.sh` has no binary to launch.
 
 Same [SITL](https://ardupilot.org/dev/docs/sitl-simulator-software-in-the-loop.html) script after [macOS](https://ardupilot.org/dev/docs/building-setup-mac.html) or [Linux](https://ardupilot.org/dev/docs/building-setup-linux.html) build setup:
 
