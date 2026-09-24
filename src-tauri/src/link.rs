@@ -495,6 +495,12 @@ pub fn normalize_link(raw: &str) -> String {
         }
         return format!("udpin:0.0.0.0:{rest}");
     }
+    // 14550/14551 are the GCS UDP ports. A bare host:port was opened as TCP and never heard the vehicle.
+    if let Some((_, port)) = s.rsplit_once(':') {
+        if port == "14550" || port == "14551" {
+            return format!("udpout:{s}");
+        }
+    }
     format!("tcpout:{s}")
 }
 
@@ -1928,5 +1934,17 @@ pub fn run_loop(
                 last_emit = now;
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod normalize_tests {
+    use super::normalize_link;
+
+    #[test]
+    fn mavlink_udp_port_is_not_tcp() {
+        assert_eq!(normalize_link("192.168.6.167:14550"), "udpout:192.168.6.167:14550");
+        assert_eq!(normalize_link("tcpout:192.168.6.167:5760"), "tcpout:192.168.6.167:5760");
+        assert_eq!(normalize_link("udp:14550"), "udpin:0.0.0.0:14550");
     }
 }

@@ -37,7 +37,10 @@ jobs:
           echo "NDK_HOME=$ANDROID_HOME/ndk/28.2.13676358" >> "$GITHUB_ENV"
       - run: npm ci
       - name: Android project
-        run: npm run tauri -- android init --ci
+        run: |
+          npm run tauri -- android init --ci
+          # Release builds default to no cleartext. The UI talks to the on-device backend at http://127.0.0.1:8767.
+          sed -i 's/usesCleartextTraffic"\] = "false"/usesCleartextTraffic"] = "true"/' src-tauri/gen/android/app/build.gradle.kts
       - name: APK
         run: npm run tauri -- android build --apk --target aarch64 --ci
       - name: Sign APK
