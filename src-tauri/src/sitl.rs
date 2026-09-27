@@ -191,7 +191,11 @@ impl SitlCtl {
     }
 
     fn alive(&self, gen: u64) -> bool {
-        self.inner.lock().ok().map(|g| g.gen == gen).unwrap_or(false)
+        self.inner
+            .lock()
+            .ok()
+            .map(|g| g.gen == gen)
+            .unwrap_or(false)
     }
 
     fn set(&self, gen: u64, phase: &str, detail: &str, running: bool, connect: Option<&str>) {
@@ -413,8 +417,15 @@ fn linux_bin(vehicle: &str) -> &'static str {
 
 #[cfg(any(test, all(target_os = "linux", target_arch = "x86_64")))]
 fn linux_fw_url(vehicle: &str) -> String {
-    let folder = if vehicle == "plane" { "Plane" } else { "Copter" };
-    format!("{FW}/{folder}/stable/SITL_x86_64_linux_gnu/{}", linux_bin(vehicle))
+    let folder = if vehicle == "plane" {
+        "Plane"
+    } else {
+        "Copter"
+    };
+    format!(
+        "{FW}/{folder}/stable/SITL_x86_64_linux_gnu/{}",
+        linux_bin(vehicle)
+    )
 }
 
 #[cfg(target_os = "macos")]
@@ -727,7 +738,11 @@ fn norm_vehicle(v: &str) -> &'static str {
 fn sanitize_home(raw: &str) -> String {
     let s: String = raw.chars().filter(|c| !c.is_whitespace()).collect();
     let n = s.split(',').count();
-    if n >= 2 && n <= 4 && s.chars().all(|c| c.is_ascii_digit() || matches!(c, '.' | '-' | ',')) {
+    if n >= 2
+        && n <= 4
+        && s.chars()
+            .all(|c| c.is_ascii_digit() || matches!(c, '.' | '-' | ','))
+    {
         s
     } else {
         DEFAULT_HOME.into()
@@ -1065,15 +1080,9 @@ mod win_proc {
         let mut exit = [0u32; 2];
         let mut kernel = [0u32; 2];
         let mut user = [0u32; 2];
-        let cpu_ok = unsafe {
-            GetProcessTimes(
-                handle,
-                &mut creation,
-                &mut exit,
-                &mut kernel,
-                &mut user,
-            )
-        } != 0;
+        let cpu_ok =
+            unsafe { GetProcessTimes(handle, &mut creation, &mut exit, &mut kernel, &mut user) }
+                != 0;
         let cpu_100ns = if cpu_ok {
             filetime_100ns(kernel) + filetime_100ns(user)
         } else {
@@ -1134,4 +1143,3 @@ mod tests {
         assert_eq!(linux_bin("plane"), "arduplane");
     }
 }
-

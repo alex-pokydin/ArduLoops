@@ -2,6 +2,9 @@
 
 fn main() {
     let args: Vec<String> = std::env::args().skip(1).collect();
+    if args.first().map(String::as_str) == Some("--firmware-worker") {
+        std::process::exit(arduloops_lib::run_cli(&args));
+    }
     if arduloops_lib::wants_mcp(&args) {
         std::process::exit(arduloops_lib::run_cli(&["mcp".into()]));
     }

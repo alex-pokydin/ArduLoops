@@ -12,6 +12,7 @@ const HELP = `ArduLoops CLI — HTTP to the running app (npm run dev or the exe)
 
 npm run cli -- state
 npm run cli -- statustext [N]
+npm run cli -- diagnostics [refresh]
 npm run cli -- param get NAME
 npm run cli -- param set NAME VALUE
 npm run cli -- param list [GLOB]     e.g. ATC_RAT_*
@@ -34,10 +35,9 @@ async function post(body) {
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(body),
   });
-  if (!r.ok && r.status !== 204) {
-    throw new Error("HTTP " + r.status);
-  }
-  return "ok\n";
+  const text = await r.text();
+  if (!r.ok) throw new Error(text || "HTTP " + r.status);
+  return text || "ok\n";
 }
 
 async function main(args) {
@@ -50,6 +50,10 @@ async function main(args) {
   switch (cmd) {
     case "state":
       out = await get("/state");
+      break;
+    case "diagnostics":
+      if (a === "refresh") await post({ op: "diagnostics" });
+      out = await get("/diagnostics");
       break;
     case "statustext":
       out = await get("/statustext?n=" + (a || "10"));

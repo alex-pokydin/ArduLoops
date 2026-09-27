@@ -6,7 +6,8 @@ use std::sync::mpsc::Sender;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
-use crate::link::{Cmd, Sample};
+use crate::link::{mode_custom, Cmd, Sample};
+use std::time::{SystemTime, UNIX_EPOCH};
 
 pub const HTTP_ADDR: &str = "127.0.0.1:8767";
 
@@ -72,6 +73,23 @@ fn handle(stream: TcpStream, latest: Arc<Mutex<Sample>>, tx: Sender<Cmd>) -> std
         return sse(reader.into_inner(), latest);
     }
 
+    if method == "POST" && path == "/calibrate" {
+        let kind = query.get("kind").cloned().unwrap_or_default();
+        let mut socket = reader.into_inner();
+        if kind != "level" && kind != "gyro" {
+            return reply(&mut socket, 400, "application/json", br#"{"message":"Unsupported calibration"}"#);
+        }
+        let (result_tx, result_rx) = std::sync::mpsc::channel();
+        if tx.send(Cmd::Calibrate { kind, reply: result_tx }).is_err() {
+            return reply(&mut socket, 503, "application/json", br#"{"message":"Could not send calibration command"}"#);
+        }
+        let message = result_rx.recv_timeout(Duration::from_secs(40))
+            .unwrap_or_else(|_| "Calibration timed out; check vehicle messages before retrying".into());
+        let ok = message == "Calibration completed";
+        return reply(&mut socket, if ok {200} else {409}, "application/json",
+            &serde_json::to_vec(&serde_json::json!({"ok":ok,"message":message}))?);
+    }
+
     if method == "POST" && path == "/cmd" {
         let len = headers
             .get("content-length")
@@ -81,6 +99,9 @@ fn handle(stream: TcpStream, latest: Arc<Mutex<Sample>>, tx: Sender<Cmd>) -> std
         let mut body = vec![0u8; len];
         if len > 0 {
             reader.read_exact(&mut body)?;
+        }
+        if let Ok(Cmd::Mode { mode }) = serde_json::from_slice::<Cmd>(&body) {
+            return set_mode_reply(reader.into_inner(), &latest, &tx, &mode);
         }
         let status = match serde_json::from_slice::<Cmd>(&body) {
             Ok(cmd) => {
@@ -94,14 +115,106 @@ fn handle(stream: TcpStream, latest: Arc<Mutex<Sample>>, tx: Sender<Cmd>) -> std
         return Ok(());
     }
 
+    if method == "POST" && path == "/logs/erase" {
+        let len = headers
+            .get("content-length")
+            .and_then(|v| v.parse::<usize>().ok())
+            .unwrap_or(0)
+            .min(32_768);
+        let mut body = vec![0u8; len];
+        if len > 0 {
+            reader.read_exact(&mut body)?;
+        }
+        let confirmed = serde_json::from_slice::<serde_json::Value>(&body)
+            .ok()
+            .and_then(|value| value.get("confirm").and_then(serde_json::Value::as_bool))
+            .unwrap_or(false);
+        let mut socket = reader.into_inner();
+        return erase_logs_reply(&mut socket, &latest, &tx, confirmed);
+    }
+
+    if method == "POST" && path == "/firmware/flash" {
+        let len = headers
+            .get("content-length")
+            .and_then(|v| v.parse::<usize>().ok())
+            .unwrap_or(0)
+            .min(32_768);
+        let mut body = vec![0u8; len];
+        if len > 0 {
+            reader.read_exact(&mut body)?;
+        }
+        let args: serde_json::Value = match serde_json::from_slice::<serde_json::Value>(&body) {
+            Ok(value) if value.is_object() => value,
+            _ => {
+                let mut socket = reader.into_inner();
+                return reply(
+                    &mut socket,
+                    400,
+                    "application/json",
+                    br#"{\"error\":\"Invalid firmware request\"}"#,
+                );
+            }
+        };
+        let mut socket = reader.into_inner();
+        return flash_reply(&mut socket, &latest, &tx, &args);
+    }
+
+    if method == "POST" && path == "/firmware-library/comment" {
+        let len = headers
+            .get("content-length")
+            .and_then(|value| value.parse::<usize>().ok())
+            .unwrap_or(0)
+            .min(32_768);
+        let mut body = vec![0u8; len];
+        if len > 0 {
+            reader.read_exact(&mut body)?;
+        }
+        let args: serde_json::Value = match serde_json::from_slice::<serde_json::Value>(&body) {
+            Ok(value) if value.is_object() => value,
+            _ => {
+                let mut socket = reader.into_inner();
+                return reply(
+                    &mut socket,
+                    400,
+                    "application/json",
+                    br#"{\"error\":\"Invalid catalog comment\"}"#,
+                );
+            }
+        };
+        let comment = args
+            .get("comment")
+            .and_then(serde_json::Value::as_str)
+            .unwrap_or("");
+        let result = match args
+            .get("controller_key")
+            .and_then(serde_json::Value::as_str)
+        {
+            Some(key) => crate::db::set_controller_comment(key, comment),
+            None => match args.get("artifact_id").and_then(serde_json::Value::as_str) {
+                Some(id) => crate::db::set_firmware_comment(id, comment),
+                None => Err("controller_key or artifact_id is required".into()),
+            },
+        };
+        let mut socket = reader.into_inner();
+        return match result {
+            Ok(value) => reply(
+                &mut socket,
+                200,
+                "application/json",
+                &serde_json::to_vec(&value)?,
+            ),
+            Err(error) => reply(
+                &mut socket,
+                400,
+                "application/json",
+                &serde_json::to_vec(&serde_json::json!({"error": error}))?,
+            ),
+        };
+    }
+
     let mut socket = reader.into_inner();
     if method == "GET" && (path == "/" || path == "/health") {
-        reply(
-            &mut socket,
-            200,
-            "text/plain",
-            b"ArduLoops\n",
-        )?;
+        reply(&mut socket, 200, "text/plain", b"ArduLoops\n")?;
         return Ok(());
     }
     if method == "GET" && path == "/mcp.json" {
@@ -115,12 +228,70 @@ fn handle(stream: TcpStream, latest: Arc<Mutex<Sample>>, tx: Sender<Cmd>) -> std
     }
     if method == "GET" && path == "/state" {
         let json = {
-            let g = latest.lock().map_err(|_| {
-                std::io::Error::new(std::io::ErrorKind::Other, "lock")
-            })?;
+            let g = latest
+                .lock()
+                .map_err(|_| std::io::Error::new(std::io::ErrorKind::Other, "lock"))?;
             serde_json::to_vec(&state_view(&g)).unwrap_or_else(|_| b"{}".to_vec())
         };
         reply(&mut socket, 200, "application/json", &json)?;
+        return Ok(());
+    }
+    if method == "GET" && path == "/logs" {
+        let refresh = query
+            .get("refresh")
+            .map(|value| value == "1" || value.eq_ignore_ascii_case("true"))
+            .unwrap_or(true);
+        return logs_reply(&mut socket, &latest, &tx, refresh);
+    }
+    if method == "GET" && path == "/logs/download" {
+        let Some(id) = query.get("id").and_then(|value| value.parse::<u16>().ok()) else {
+            return reply(
+                &mut socket,
+                400,
+                "application/json",
+                br#"{\"error\":\"id is required\"}"#,
+            );
+        };
+        let timeout_s = query
+            .get("timeout_s")
+            .and_then(|value| value.parse::<u64>().ok())
+            .unwrap_or(120)
+            .clamp(5, 180);
+        return download_log_reply(&mut socket, &latest, &tx, id, timeout_s);
+    }
+    if method == "GET" && path == "/diagnostics" {
+        let g = latest.lock().map_err(|_| std::io::Error::other("lock"))?;
+        let missing: Vec<u16> = (0..g.param_count)
+            .filter(|i| !g.param_indices.contains(i))
+            .collect();
+        let body = serde_json::json!({"state": state_view(&g), "telemetry": g.telemetry,
+            "events": g.events, "params": {"cached": g.params.len(), "expected": g.param_count,
+            "received_indices": g.param_indices.len(), "complete": g.param_count > 0 && missing.is_empty(),
+            "missing_indices": missing}});
+        reply(
+            &mut socket,
+            200,
+            "application/json",
+            &serde_json::to_vec(&body)?,
+        )?;
+        return Ok(());
+    }
+    if method == "GET" && path == "/firmware-library" {
+        let g = latest.lock().map_err(|_| std::io::Error::other("lock"))?;
+        match crate::db::library(&g) {
+            Ok(body) => reply(
+                &mut socket,
+                200,
+                "application/json",
+                &serde_json::to_vec(&body)?,
+            )?,
+            Err(error) => reply(
+                &mut socket,
+                500,
+                "application/json",
+                &serde_json::to_vec(&serde_json::json!({"error": error}))?,
+            )?,
+        }
         return Ok(());
     }
     if method == "GET" && path == "/param" {
@@ -138,18 +309,27 @@ fn handle(stream: TcpStream, latest: Arc<Mutex<Sample>>, tx: Sender<Cmd>) -> std
                 reply(&mut socket, 200, "application/json", &json)?;
                 return Ok(());
             }
-        } else if let Ok(mut g) = latest.lock() {
-            g.params.remove(&name);
         }
-        let _ = tx.send(Cmd::ParamRead { name: name.clone() });
-        for _ in 0..25 {
-            std::thread::sleep(Duration::from_millis(40));
-            if let Some(json) = param_json(&latest, &name) {
-                reply(&mut socket, 200, "application/json", &json)?;
-                return Ok(());
+        let started = now();
+        for _ in 0..3 {
+            let _ = tx.send(Cmd::ParamRead { name: name.clone() });
+            for _ in 0..20 {
+                std::thread::sleep(Duration::from_millis(50));
+                let g = latest.lock().map_err(|_| std::io::Error::other("lock"))?;
+                if g.param_received.get(&name).is_some_and(|t| *t >= started) {
+                    let body = serde_json::json!({"name": name, "value": g.params.get(&name),
+                        "found": true, "received_at": g.param_received.get(&name), "source": "vehicle"});
+                    reply(
+                        &mut socket,
+                        200,
+                        "application/json",
+                        &serde_json::to_vec(&body)?,
+                    )?;
+                    return Ok(());
+                }
             }
         }
-        let body = serde_json::json!({ "name": name, "found": false });
+        let body = serde_json::json!({ "name": name, "found": false, "reason": "no_response", "attempts": 3 });
         reply(
             &mut socket,
             404,
@@ -161,9 +341,9 @@ fn handle(stream: TcpStream, latest: Arc<Mutex<Sample>>, tx: Sender<Cmd>) -> std
     if method == "GET" && path == "/params" {
         let glob = query.get("glob").cloned().unwrap_or_else(|| "*".into());
         let json = {
-            let g = latest.lock().map_err(|_| {
-                std::io::Error::new(std::io::ErrorKind::Other, "lock")
-            })?;
+            let g = latest
+                .lock()
+                .map_err(|_| std::io::Error::new(std::io::ErrorKind::Other, "lock"))?;
             let mut out = serde_json::Map::new();
             for (k, v) in &g.params {
                 if glob_match(&glob, k) {
@@ -180,11 +360,11 @@ fn handle(stream: TcpStream, latest: Arc<Mutex<Sample>>, tx: Sender<Cmd>) -> std
             .get("n")
             .and_then(|s| s.parse::<usize>().ok())
             .unwrap_or(10)
-            .clamp(1, 24);
+            .clamp(1, 256);
         let json = {
-            let g = latest.lock().map_err(|_| {
-                std::io::Error::new(std::io::ErrorKind::Other, "lock")
-            })?;
+            let g = latest
+                .lock()
+                .map_err(|_| std::io::Error::new(std::io::ErrorKind::Other, "lock"))?;
             let slice: Vec<&String> = g.texts.iter().take(n).collect();
             serde_json::to_vec(&slice).unwrap_or_else(|_| b"[]".to_vec())
         };
@@ -196,11 +376,336 @@ fn handle(stream: TcpStream, latest: Arc<Mutex<Sample>>, tx: Sender<Cmd>) -> std
     Ok(())
 }
 
+fn now() -> f64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs_f64()
+}
+
+fn mode_outcome(s: &Sample, mode: &str, started: f64) -> Option<serde_json::Value> {
+    if s.ok && s.mode == mode && s.heartbeat_at >= started {
+        return Some(serde_json::json!({"ok": true, "mode": mode, "confirmed_by": "HEARTBEAT"}));
+    }
+    for event in &s.events {
+        if event["message"] == "COMMAND_ACK"
+            && event["received_at"].as_f64().unwrap_or(0.0) >= started
+            && event["data"]["command"] == "MAV_CMD_DO_SET_MODE"
+        {
+            let result = event["data"]["result"].as_str().unwrap_or("");
+            if result != "MAV_RESULT_ACCEPTED" && result != "MAV_RESULT_IN_PROGRESS" {
+                return Some(serde_json::json!({"ok": false, "requested_mode": mode,
+                    "actual_mode": s.mode, "ack": event, "texts": s.texts}));
+            }
+        }
+    }
+    None
+}
+
+fn set_mode_reply(
+    mut socket: TcpStream,
+    latest: &Mutex<Sample>,
+    tx: &Sender<Cmd>,
+    mode: &str,
+) -> std::io::Result<()> {
+    let mode = mode.trim().to_ascii_uppercase();
+    let started = now();
+    {
+        let g = latest.lock().map_err(|_| std::io::Error::other("lock"))?;
+        if !g.ok || started - g.heartbeat_at > 3.0 || mode_custom(&g.frame, &mode).is_none() {
+            let body = serde_json::json!({"ok": false, "error": "No fresh vehicle heartbeat or unsupported mode", "mode": mode});
+            return reply(
+                &mut socket,
+                400,
+                "application/json",
+                &serde_json::to_vec(&body)?,
+            );
+        }
+    }
+    tx.send(Cmd::Mode { mode: mode.clone() })
+        .map_err(|_| std::io::Error::other("link stopped"))?;
+    for _ in 0..80 {
+        std::thread::sleep(Duration::from_millis(50));
+        let g = latest.lock().map_err(|_| std::io::Error::other("lock"))?;
+        if let Some(body) = mode_outcome(&g, &mode, started) {
+            let code = if body["ok"] == true { 200 } else { 409 };
+            return reply(
+                &mut socket,
+                code,
+                "application/json",
+                &serde_json::to_vec(&body)?,
+            );
+        }
+    }
+    let g = latest.lock().map_err(|_| std::io::Error::other("lock"))?;
+    let body = serde_json::json!({"ok": false, "error": "Mode not confirmed before timeout",
+        "requested_mode": mode, "actual_mode": g.mode, "texts": g.texts});
+    reply(
+        &mut socket,
+        409,
+        "application/json",
+        &serde_json::to_vec(&body)?,
+    )
+}
+
+fn bootloader_allowed(s: &Sample, at: f64) -> bool {
+    s.ok && !s.armed && at - s.heartbeat_at <= 3.0
+}
+
+fn logs_allowed(s: &Sample, at: f64) -> bool {
+    bootloader_allowed(s, at)
+}
+
+fn logs_reply(
+    socket: &mut TcpStream,
+    latest: &Mutex<Sample>,
+    tx: &Sender<Cmd>,
+    refresh: bool,
+) -> std::io::Result<()> {
+    let started = now();
+    {
+        let sample = latest.lock().map_err(|_| std::io::Error::other("lock"))?;
+        if !logs_allowed(&sample, started) {
+            return reply(
+                socket,
+                409,
+                "application/json",
+                &serde_json::to_vec(&serde_json::json!({
+                    "error": "A fresh disarmed vehicle heartbeat is required before accessing DataFlash logs"
+                }))?,
+            );
+        }
+    }
+    if refresh {
+        tx.send(Cmd::LogList)
+            .map_err(|_| std::io::Error::other("link stopped"))?;
+    }
+    for _ in 0..160 {
+        std::thread::sleep(Duration::from_millis(50));
+        let sample = latest.lock().map_err(|_| std::io::Error::other("lock"))?;
+        let ready = sample
+            .log_list_expected
+            .is_some_and(|expected| expected == 0 || sample.logs.len() >= expected as usize);
+        if ready && (!refresh || sample.log_list_at >= started) {
+            let body = serde_json::json!({
+                "logs": sample.logs,
+                "count": sample.log_list_expected.unwrap_or(0),
+                "updated_at": sample.log_list_at,
+            });
+            drop(sample);
+            let _ = tx.send(Cmd::LogEnd);
+            return reply(socket, 200, "application/json", &serde_json::to_vec(&body)?);
+        }
+    }
+    let _ = tx.send(Cmd::LogEnd);
+    reply(
+        socket,
+        409,
+        "application/json",
+        &serde_json::to_vec(&serde_json::json!({
+            "error": "The vehicle did not return a complete DataFlash log list before timeout"
+        }))?,
+    )
+}
+
+fn download_log_reply(
+    socket: &mut TcpStream,
+    latest: &Mutex<Sample>,
+    tx: &Sender<Cmd>,
+    id: u16,
+    timeout_s: u64,
+) -> std::io::Result<()> {
+    let started = now();
+    {
+        let sample = latest.lock().map_err(|_| std::io::Error::other("lock"))?;
+        if !logs_allowed(&sample, started) {
+            return reply(
+                socket,
+                409,
+                "application/json",
+                &serde_json::to_vec(&serde_json::json!({
+                    "error": "A fresh disarmed vehicle heartbeat is required before downloading a DataFlash log"
+                }))?,
+            );
+        }
+        if !sample.logs.iter().any(|log| log.id == id) {
+            return reply(
+                socket,
+                404,
+                "application/json",
+                &serde_json::to_vec(&serde_json::json!({
+                    "error": "Unknown log ID; request ardupilot_list_logs first", "id": id
+                }))?,
+            );
+        }
+    }
+    tx.send(Cmd::LogDownload { id })
+        .map_err(|_| std::io::Error::other("link stopped"))?;
+    for _ in 0..timeout_s.saturating_mul(20) {
+        std::thread::sleep(Duration::from_millis(50));
+        let sample = latest.lock().map_err(|_| std::io::Error::other("lock"))?;
+        let Some(report) = sample.log_download.as_ref() else {
+            continue;
+        };
+        if report.id != id || report.updated_at < started || !report.complete {
+            continue;
+        }
+        let body = serde_json::to_vec(report)?;
+        let code = if report.error.is_empty() { 200 } else { 409 };
+        return reply(socket, code, "application/json", &body);
+    }
+    reply(
+        socket,
+        409,
+        "application/json",
+        &serde_json::to_vec(&serde_json::json!({
+            "error": "DataFlash log download is still in progress; try the same log ID again", "id": id
+        }))?,
+    )
+}
+
+fn erase_logs_reply(
+    socket: &mut TcpStream,
+    latest: &Mutex<Sample>,
+    tx: &Sender<Cmd>,
+    confirmed: bool,
+) -> std::io::Result<()> {
+    if !confirmed {
+        return reply(
+            socket,
+            400,
+            "application/json",
+            &serde_json::to_vec(&serde_json::json!({
+                "error": "Erasing DataFlash logs is permanent; send confirm: true to continue"
+            }))?,
+        );
+    }
+    let at = now();
+    let sample = latest.lock().map_err(|_| std::io::Error::other("lock"))?;
+    if !logs_allowed(&sample, at) {
+        return reply(
+            socket,
+            409,
+            "application/json",
+            &serde_json::to_vec(&serde_json::json!({
+                "error": "A fresh disarmed vehicle heartbeat is required before erasing DataFlash logs"
+            }))?,
+        );
+    }
+    drop(sample);
+    tx.send(Cmd::LogErase)
+        .map_err(|_| std::io::Error::other("link stopped"))?;
+    reply(
+        socket,
+        200,
+        "application/json",
+        &serde_json::to_vec(&serde_json::json!({
+            "ok": true,
+            "message": "DataFlash erase requested. Refresh the log list to verify it completed."
+        }))?,
+    )
+}
+
+fn flash_reply(
+    socket: &mut TcpStream,
+    latest: &Mutex<Sample>,
+    tx: &Sender<Cmd>,
+    args: &serde_json::Value,
+) -> std::io::Result<()> {
+    let action = args
+        .get("action")
+        .and_then(serde_json::Value::as_str)
+        .unwrap_or("");
+    if action == "prepare" {
+        request_missing_params(latest, tx)?;
+    }
+    if action != "start_bootloader" {
+        return match crate::firmware::call("flash", args) {
+            Ok(value) => reply(
+                socket,
+                200,
+                "application/json",
+                &serde_json::to_vec(&value)?,
+            ),
+            Err(error) => reply(
+                socket,
+                400,
+                "application/json",
+                &serde_json::to_vec(&serde_json::json!({"error": error}))?,
+            ),
+        };
+    }
+    let at = now();
+    {
+        let sample = latest.lock().map_err(|_| std::io::Error::other("lock"))?;
+        if !bootloader_allowed(&sample, at) {
+            let body = serde_json::json!({"error": "A fresh disarmed vehicle heartbeat is required before entering bootloader"});
+            return reply(socket, 409, "application/json", &serde_json::to_vec(&body)?);
+        }
+    }
+    let mut start = args.clone();
+    start["action"] = serde_json::json!("start");
+    let worker = match crate::firmware::call("flash", &start) {
+        Ok(value) => value,
+        Err(error) => {
+            return reply(
+                socket,
+                400,
+                "application/json",
+                &serde_json::to_vec(&serde_json::json!({"error": error}))?,
+            )
+        }
+    };
+    tx.send(Cmd::RebootBootloader)
+        .map_err(|_| std::io::Error::other("link stopped"))?;
+    let body = serde_json::json!({
+        "state": "bootloader_requested",
+        "worker": worker,
+        "next_step": "The uploader is waiting on the selected USB port. The vehicle was asked to reboot into the ArduPilot serial bootloader; read status for verification."
+    });
+    reply(socket, 200, "application/json", &serde_json::to_vec(&body)?)
+}
+
+fn request_missing_params(latest: &Mutex<Sample>, tx: &Sender<Cmd>) -> std::io::Result<()> {
+    // A full PARAM_REQUEST_LIST can take several seconds and can lose a few
+    // packets. Wait for the initial download, then request only its gaps.
+    let mut requested_list = false;
+    for _ in 0..40 {
+        let missing = {
+            let sample = latest.lock().map_err(|_| std::io::Error::other("lock"))?;
+            if sample.param_count == 0 {
+                return Ok(());
+            }
+            (0..sample.param_count)
+                .filter(|index| !sample.param_indices.contains(index))
+                .collect::<Vec<_>>()
+        };
+        if missing.is_empty() {
+            return Ok(());
+        }
+        if missing.len() > 64 && !requested_list {
+            tx.send(Cmd::ParamsList)
+                .map_err(|_| std::io::Error::other("link stopped"))?;
+            requested_list = true;
+        } else if missing.len() <= 64 {
+            for index in missing {
+                tx.send(Cmd::ParamReadIndex {
+                    index: index as i16,
+                })
+                .map_err(|_| std::io::Error::other("link stopped"))?;
+            }
+        }
+        std::thread::sleep(Duration::from_millis(500));
+    }
+    Ok(())
+}
+
 fn reply(socket: &mut TcpStream, code: u16, ctype: &str, body: &[u8]) -> std::io::Result<()> {
     let reason = match code {
         200 => "OK",
         400 => "Bad Request",
         404 => "Not Found",
+        409 => "Conflict",
         _ => "OK",
     };
     socket.write_all(
@@ -249,6 +754,8 @@ fn param_json(latest: &Mutex<Sample>, name: &str) -> Option<Vec<u8>> {
 fn state_view(s: &Sample) -> serde_json::Value {
     serde_json::json!({
         "ok": s.ok,
+        "heartbeat_at": s.heartbeat_at,
+        "telemetry": s.telemetry,
         "detail": s.detail,
         "mode": s.mode,
         "armed": s.armed,
@@ -268,6 +775,10 @@ fn state_view(s: &Sample) -> serde_json::Value {
         "gain_p": s.gain_p,
         "gain_i": s.gain_i,
         "gain_d": s.gain_d,
+        "logs": s.logs,
+        "log_list_expected": s.log_list_expected,
+        "log_list_at": s.log_list_at,
+        "log_download": s.log_download,
     })
 }
 
@@ -355,9 +866,9 @@ fn sse(mut socket: TcpStream, latest: Arc<Mutex<Sample>>) -> std::io::Result<()>
     )?;
     loop {
         let json = {
-            let g = latest.lock().map_err(|_| {
-                std::io::Error::new(std::io::ErrorKind::Other, "lock")
-            })?;
+            let g = latest
+                .lock()
+                .map_err(|_| std::io::Error::new(std::io::ErrorKind::Other, "lock"))?;
             serde_json::to_string(&*g).unwrap_or_else(|_| "{}".into())
         };
         if socket
@@ -370,4 +881,39 @@ fn sse(mut socket: TcpStream, latest: Arc<Mutex<Sample>>) -> std::io::Result<()>
         std::thread::sleep(Duration::from_millis(40));
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod diagnostics_tests {
+    use super::*;
+
+    #[test]
+    fn mode_requires_fresh_heartbeat_and_reports_rejection() {
+        let mut s = Sample::empty();
+        s.ok = true;
+        s.mode = "FLOWHOLD".into();
+        s.heartbeat_at = 9.0;
+        assert!(mode_outcome(&s, "FLOWHOLD", 10.0).is_none());
+        s.heartbeat_at = 11.0;
+        assert_eq!(mode_outcome(&s, "FLOWHOLD", 10.0).unwrap()["ok"], true);
+        s.mode = "STABILIZE".into();
+        s.events.push(
+            serde_json::json!({"message": "COMMAND_ACK", "received_at": 11.0,
+            "data": {"command": "MAV_CMD_DO_SET_MODE", "result": "MAV_RESULT_FAILED"}}),
+        );
+        assert_eq!(mode_outcome(&s, "FLOWHOLD", 10.0).unwrap()["ok"], false);
+        assert!(mode_outcome(&s, "FLOWHOLD", 12.0).is_none());
+    }
+
+    #[test]
+    fn bootloader_requires_fresh_disarmed_vehicle() {
+        let mut s = Sample::empty();
+        s.ok = true;
+        s.heartbeat_at = 10.0;
+        assert!(bootloader_allowed(&s, 12.0));
+        s.armed = true;
+        assert!(!bootloader_allowed(&s, 12.0));
+        s.armed = false;
+        assert!(!bootloader_allowed(&s, 14.0));
+    }
 }

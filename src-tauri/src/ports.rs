@@ -15,8 +15,14 @@ pub fn list() -> Vec<Port> {
         .into_iter()
         .filter(|p| !p.port_name.is_empty())
         .map(|p| {
-            let label = named.get(&p.port_name).cloned().unwrap_or_else(|| friendly(&p));
-            Port { name: p.port_name, label }
+            let label = named
+                .get(&p.port_name)
+                .cloned()
+                .unwrap_or_else(|| friendly(&p));
+            Port {
+                name: p.port_name,
+                label,
+            }
         })
         .collect();
     ports.sort_by(|a, b| a.name.cmp(&b.name));
@@ -36,9 +42,18 @@ fn friendly(p: &serialport::SerialPortInfo) -> String {
         serialport::SerialPortType::PciPort => Some("PCI".into()),
         serialport::SerialPortType::Unknown => None,
     };
-    match extra.map(|s| s.trim().to_string()).filter(|s| !s.is_empty()) {
+    match extra
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
+    {
         Some(extra) if extra.eq_ignore_ascii_case(&p.port_name) => p.port_name.clone(),
-        Some(extra) if extra.to_ascii_lowercase().contains(&p.port_name.to_ascii_lowercase()) => extra,
+        Some(extra)
+            if extra
+                .to_ascii_lowercase()
+                .contains(&p.port_name.to_ascii_lowercase()) =>
+        {
+            extra
+        }
         Some(extra) => format!("{} — {extra}", p.port_name),
         None => p.port_name.clone(),
     }
@@ -68,20 +83,56 @@ fn windows_names() -> std::collections::HashMap<String, String> {
         let mut buf = [0u16; 256];
         let mut len = buf.len() as u32;
         let rc = unsafe {
-            RegEnumKeyExW(key, index, buf.as_mut_ptr(), &mut len, std::ptr::null_mut(), std::ptr::null_mut(), std::ptr::null_mut(), std::ptr::null_mut())
+            RegEnumKeyExW(
+                key,
+                index,
+                buf.as_mut_ptr(),
+                &mut len,
+                std::ptr::null_mut(),
+                std::ptr::null_mut(),
+                std::ptr::null_mut(),
+                std::ptr::null_mut(),
+            )
         };
-        if rc != ERROR_SUCCESS { return None; }
+        if rc != ERROR_SUCCESS {
+            return None;
+        }
         Some(String::from_utf16_lossy(&buf[..len as usize]))
     }
     fn friendly(key: HKEY) -> Option<String> {
-        let name: Vec<u16> = "FriendlyName".encode_utf16().chain(std::iter::once(0)).collect();
+        let name: Vec<u16> = "FriendlyName"
+            .encode_utf16()
+            .chain(std::iter::once(0))
+            .collect();
         let mut kind = 0u32;
         let mut bytes = 0u32;
-        let rc = unsafe { RegQueryValueExW(key, name.as_ptr(), std::ptr::null_mut(), &mut kind, std::ptr::null_mut(), &mut bytes) };
-        if rc != ERROR_SUCCESS || kind != REG_SZ || bytes < 4 { return None; }
+        let rc = unsafe {
+            RegQueryValueExW(
+                key,
+                name.as_ptr(),
+                std::ptr::null_mut(),
+                &mut kind,
+                std::ptr::null_mut(),
+                &mut bytes,
+            )
+        };
+        if rc != ERROR_SUCCESS || kind != REG_SZ || bytes < 4 {
+            return None;
+        }
         let mut buf = vec![0u16; (bytes as usize / 2) + 1];
-        let rc = unsafe { RegQueryValueExW(key, name.as_ptr(), std::ptr::null_mut(), &mut kind, buf.as_mut_ptr() as *mut u8, &mut bytes) };
-        if rc != ERROR_SUCCESS { return None; }
+        let rc = unsafe {
+            RegQueryValueExW(
+                key,
+                name.as_ptr(),
+                std::ptr::null_mut(),
+                &mut kind,
+                buf.as_mut_ptr() as *mut u8,
+                &mut bytes,
+            )
+        };
+        if rc != ERROR_SUCCESS {
+            return None;
+        }
         let n = buf.iter().position(|c| *c == 0).unwrap_or(buf.len());
         let text = String::from_utf16_lossy(&buf[..n]);
         let text = text.trim();
@@ -89,21 +140,33 @@ fn windows_names() -> std::collections::HashMap<String, String> {
     }
 
     let mut out = HashMap::new();
-    let Some(root) = open(HKEY_LOCAL_MACHINE, "SYSTEM\\CurrentControlSet\\Enum") else { return out };
+    let Some(root) = open(HKEY_LOCAL_MACHINE, "SYSTEM\\CurrentControlSet\\Enum") else {
+        return out;
+    };
     let mut i = 0;
     while let Some(class) = enum_key(root, i) {
         i += 1;
-        let Some(class_key) = open(root, &class) else { continue };
+        let Some(class_key) = open(root, &class) else {
+            continue;
+        };
         let mut j = 0;
         while let Some(dev) = enum_key(class_key, j) {
             j += 1;
-            let Some(dev_key) = open(class_key, &dev) else { continue };
+            let Some(dev_key) = open(class_key, &dev) else {
+                continue;
+            };
             let mut k = 0;
             while let Some(inst) = enum_key(dev_key, k) {
                 k += 1;
-                let Some(inst_key) = open(dev_key, &inst) else { continue };
+                let Some(inst_key) = open(dev_key, &inst) else {
+                    continue;
+                };
                 if let Some(name) = friendly(inst_key) {
-                    if let Some(com) = name.rsplit_once("(COM").and_then(|(_, rest)| rest.strip_suffix(')')).map(|n| format!("COM{n}")) {
+                    if let Some(com) = name
+                        .rsplit_once("(COM")
+                        .and_then(|(_, rest)| rest.strip_suffix(')'))
+                        .map(|n| format!("COM{n}"))
+                    {
                         out.insert(com, name);
                     }
                 }

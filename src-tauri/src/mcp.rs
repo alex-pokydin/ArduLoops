@@ -124,7 +124,7 @@ fn tool_result(id: Option<Value>, obj: &Value, is_error: bool) {
 }
 
 fn tools() -> Value {
-    json!([
+    let mut list = json!([
         {
             "name": "ardupilot_connect",
             "description": "Point ArduLoops at a MAVLink URL. Default tcpout:127.0.0.1:5763.",
@@ -187,6 +187,41 @@ fn tools() -> Value {
             "inputSchema": { "type": "object", "properties": {} }
         },
         {
+            "name": "ardupilot_diagnostics",
+            "description": "Firmware, optical flow quality/rates, sensor health, timestamped STATUSTEXT and command ACKs, parameter download completeness. Read-only refresh optionally requests telemetry streams.",
+            "inputSchema": {"type": "object", "properties": {"refresh": {"type": "boolean"}}}
+        },
+        {
+            "name": "ardupilot_list_logs",
+            "description": "List on-board ArduPilot DataFlash logs with ID, UTC timestamp and size. This read-only transfer requires a fresh disarmed vehicle heartbeat.",
+            "inputSchema": {"type": "object", "properties": {"refresh": {"type": "boolean"}}}
+        },
+        {
+            "name": "ardupilot_download_log",
+            "description": "Download one on-board DataFlash log by log_id to ArduLoops local storage. Returns the saved .bin path and transfer metadata; it never embeds log bytes in MCP. Requires a fresh disarmed vehicle heartbeat.",
+            "inputSchema": {"type": "object", "properties": {"log_id": {"type": "integer", "minimum": 1}, "timeout_s": {"type": "integer", "minimum": 5, "maximum": 180}}, "required": ["log_id"]}
+        },
+        {
+            "name": "ardupilot_erase_logs",
+            "description": "Permanently erase every on-board DataFlash log. Requires a fresh disarmed vehicle heartbeat and explicit confirm: true. Download the needed logs first.",
+            "inputSchema": {"type": "object", "properties": {"confirm": {"type": "boolean"}}, "required": ["confirm"]}
+        },
+        {
+            "name": "ardupilot_firmware_library",
+            "description": "Read the local SQLite firmware library. Each artifact includes its stable artifact ID for flashing, build ID, version, git revision, selected feature IDs, image size, description, build timestamps, user comment and compatibility with the connected controller. The controller includes board name, persistent local identity and user comment when available.",
+            "inputSchema": {"type": "object", "properties": {}}
+        },
+        {
+            "name": "ardupilot_set_controller_comment",
+            "description": "Create, replace or clear the local user comment for a known controller. Read the controller key from ardupilot_firmware_library.",
+            "inputSchema": {"type": "object", "properties": {"controller_key": {"type": "string"}, "comment": {"type": "string", "maxLength": 2000}}, "required": ["controller_key", "comment"]}
+        },
+        {
+            "name": "ardupilot_set_firmware_comment",
+            "description": "Create, replace or clear the local user comment for a firmware artifact. Read the artifact ID from ardupilot_firmware_library.",
+            "inputSchema": {"type": "object", "properties": {"artifact_id": {"type": "string"}, "comment": {"type": "string", "maxLength": 2000}}, "required": ["artifact_id", "comment"]}
+        },
+        {
             "name": "ardupilot_recent_statustext",
             "description": "Recent STATUSTEXT, newest first.",
             "inputSchema": {
@@ -194,20 +229,29 @@ fn tools() -> Value {
                 "properties": { "n": { "type": "integer" } }
             }
         }
-    ])
+    ]);
+    list.as_array_mut()
+        .unwrap()
+        .extend(crate::firmware::tools());
+    list
 }
 
 fn call_tool(name: &str, args: &Value) -> Result<Value, String> {
     match name {
+        "ardupilot_firmware_catalog" => crate::firmware::call("catalog", args),
+        "ardupilot_firmware_build" => crate::firmware::call("build", args),
+        "ardupilot_firmware_flash"
+            if args.get("action").and_then(Value::as_str) == Some("start_bootloader") =>
+        {
+            parse_body(cli::http_post("/firmware/flash", &args.to_string())?)
+        }
+        "ardupilot_firmware_flash" => crate::firmware::call("flash", args),
         "ardupilot_connect" => {
             let url = args
                 .get("conn_str")
                 .and_then(Value::as_str)
                 .unwrap_or(DEFAULT_URL);
-            cli::http_post(
-                "/cmd",
-                &json!({ "op": "connect", "url": url }).to_string(),
-            )?;
+            cli::http_post("/cmd", &json!({ "op": "connect", "url": url }).to_string())?;
             Ok(json!({ "ok": true, "url": url }))
         }
         "ardupilot_vehicle_state" => parse_body(cli::http_get("/state")?),
@@ -239,11 +283,14 @@ fn call_tool(name: &str, args: &Value) -> Result<Value, String> {
         }
         "ardupilot_set_mode" => {
             let mode = args.get("mode").and_then(Value::as_str).ok_or("mode")?;
-            cli::http_post(
+            let result = parse_body(cli::http_post(
                 "/cmd",
                 &json!({ "op": "mode", "mode": mode }).to_string(),
-            )?;
-            Ok(json!({ "ok": true, "mode": mode }))
+            )?)?;
+            if result.get("ok") == Some(&Value::Bool(false)) {
+                return Err(result.to_string());
+            }
+            Ok(result)
         }
         "ardupilot_arm" => {
             cli::http_post("/cmd", r#"{"op":"arm","on":true}"#)?;
@@ -252,6 +299,69 @@ fn call_tool(name: &str, args: &Value) -> Result<Value, String> {
         "ardupilot_disarm" => {
             cli::http_post("/cmd", r#"{"op":"arm","on":false}"#)?;
             Ok(json!({ "ok": true }))
+        }
+        "ardupilot_diagnostics" => {
+            if args
+                .get("refresh")
+                .and_then(Value::as_bool)
+                .unwrap_or(false)
+            {
+                cli::http_post("/cmd", r#"{"op":"diagnostics"}"#)?;
+            }
+            parse_body(cli::http_get("/diagnostics")?)
+        }
+        "ardupilot_list_logs" => {
+            let refresh = args.get("refresh").and_then(Value::as_bool).unwrap_or(true);
+            parse_body(cli::http_get(&format!(
+                "/logs?refresh={}",
+                if refresh { 1 } else { 0 }
+            ))?)
+        }
+        "ardupilot_download_log" => {
+            let id = args.get("log_id").and_then(Value::as_u64).ok_or("log_id")?;
+            let timeout = args
+                .get("timeout_s")
+                .and_then(Value::as_u64)
+                .unwrap_or(120)
+                .clamp(5, 180);
+            parse_body(cli::http_get(&format!(
+                "/logs/download?id={id}&timeout_s={timeout}"
+            ))?)
+        }
+        "ardupilot_erase_logs" => {
+            if args.get("confirm").and_then(Value::as_bool) != Some(true) {
+                return Err("Erasing DataFlash logs is permanent; pass confirm: true".into());
+            }
+            parse_body(cli::http_post("/logs/erase", r#"{"confirm":true}"#)?)
+        }
+        "ardupilot_firmware_library" => parse_body(cli::http_get("/firmware-library")?),
+        "ardupilot_set_controller_comment" => {
+            let key = args
+                .get("controller_key")
+                .and_then(Value::as_str)
+                .ok_or("controller_key")?;
+            let comment = args
+                .get("comment")
+                .and_then(Value::as_str)
+                .ok_or("comment")?;
+            parse_body(cli::http_post(
+                "/firmware-library/comment",
+                &json!({"controller_key": key, "comment": comment}).to_string(),
+            )?)
+        }
+        "ardupilot_set_firmware_comment" => {
+            let id = args
+                .get("artifact_id")
+                .and_then(Value::as_str)
+                .ok_or("artifact_id")?;
+            let comment = args
+                .get("comment")
+                .and_then(Value::as_str)
+                .ok_or("comment")?;
+            parse_body(cli::http_post(
+                "/firmware-library/comment",
+                &json!({"artifact_id": id, "comment": comment}).to_string(),
+            )?)
         }
         "ardupilot_recent_statustext" => {
             let n = args.get("n").and_then(Value::as_u64).unwrap_or(10);

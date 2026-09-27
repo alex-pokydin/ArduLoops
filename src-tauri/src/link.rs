@@ -1,15 +1,18 @@
 //! MAVLink bridge for ArduLoops.
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
+use std::fs;
 use std::sync::mpsc::{Receiver, TryRecvError};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use mavlink::ardupilotmega::{
     MavAutopilot, MavCmd, MavMessage, MavModeFlag, MavParamType, MavType, PidTuningAxis,
-    ATTITUDE_DATA, ATTITUDE_TARGET_DATA, COMMAND_LONG_DATA, GLOBAL_POSITION_INT_DATA, HEARTBEAT_DATA,
-    NAV_CONTROLLER_OUTPUT_DATA, PARAM_REQUEST_LIST_DATA, PARAM_REQUEST_READ_DATA, PARAM_SET_DATA,
-    PARAM_VALUE_DATA, PID_TUNING_DATA, RC_CHANNELS_DATA, RC_CHANNELS_OVERRIDE_DATA,
-    RC_CHANNELS_RAW_DATA, REQUEST_DATA_STREAM_DATA, STATUSTEXT_DATA, VFR_HUD_DATA,
+    ATTITUDE_DATA, ATTITUDE_TARGET_DATA, COMMAND_LONG_DATA, GLOBAL_POSITION_INT_DATA,
+    HEARTBEAT_DATA, LOG_DATA_DATA, LOG_ENTRY_DATA, LOG_ERASE_DATA, LOG_REQUEST_DATA_DATA,
+    LOG_REQUEST_END_DATA, LOG_REQUEST_LIST_DATA, NAV_CONTROLLER_OUTPUT_DATA,
+    PARAM_REQUEST_LIST_DATA, PARAM_REQUEST_READ_DATA, PARAM_SET_DATA, PARAM_VALUE_DATA,
+    PID_TUNING_DATA, RC_CHANNELS_DATA, RC_CHANNELS_OVERRIDE_DATA, RC_CHANNELS_RAW_DATA,
+    REQUEST_DATA_STREAM_DATA, STATUSTEXT_DATA, VFR_HUD_DATA,
 };
 use mavlink::{MavConnection, MavHeader};
 use serde::{Deserialize, Serialize};
@@ -279,6 +282,39 @@ const MSG_NAV_CONTROLLER_OUTPUT: f32 = 62.0;
 const MSG_RC_CHANNELS: f32 = 65.0;
 const MSG_GLOBAL_POSITION_INT: f32 = 33.0;
 const MSG_VFR_HUD: f32 = 74.0;
+const LOG_BLOCK: usize = 90;
+const MAX_LOG_BYTES: usize = 512 * 1024 * 1024;
+
+#[derive(Debug, Clone, Serialize)]
+pub struct OnboardLog {
+    pub id: u16,
+    pub num_logs: u16,
+    pub last_log_num: u16,
+    pub time_utc: u32,
+    pub size: u32,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct LogDownload {
+    pub id: u16,
+    pub size: u32,
+    pub received: u32,
+    pub complete: bool,
+    pub path: String,
+    pub error: String,
+    pub updated_at: f64,
+}
+
+struct ActiveLogDownload {
+    id: u16,
+    size: usize,
+    bytes: Vec<u8>,
+    received: Vec<u64>,
+    received_chunks: usize,
+    started: Instant,
+    last_data: Instant,
+    last_request: Instant,
+}
 
 #[derive(Debug, Clone, Serialize)]
 pub struct Sample {
@@ -329,7 +365,21 @@ pub struct Sample {
     pub att_hz: u32,
     pub rx: String,
     pub frame: String,
+    /// Board identity announced in the ArduPilot boot banner. Keep it after
+    /// COMMAND_ACK events push the banner out of the short diagnostics queue.
+    pub board_name: String,
+    pub boot_uid: String,
     pub params: HashMap<String, f64>,
+    #[serde(skip)]
+    pub param_received: HashMap<String, f64>,
+    #[serde(skip)]
+    pub param_indices: HashSet<u16>,
+    pub param_count: u16,
+    pub heartbeat_at: f64,
+    #[serde(skip)]
+    pub telemetry: HashMap<String, serde_json::Value>,
+    #[serde(skip)]
+    pub events: Vec<serde_json::Value>,
     /// Newest first. STATUSTEXT from the vehicle.
     pub texts: Vec<String>,
     /// Init dump progress. `init_total == 0` means not running.
@@ -347,6 +397,10 @@ pub struct Sample {
     pub sitl_cpu: f32,
     #[serde(default)]
     pub sitl_rss_mb: f32,
+    pub logs: Vec<OnboardLog>,
+    pub log_list_expected: Option<u16>,
+    pub log_list_at: f64,
+    pub log_download: Option<LogDownload>,
 }
 
 impl Sample {
@@ -399,7 +453,15 @@ impl Sample {
             att_hz: 0,
             rx: String::new(),
             frame: String::new(),
+            board_name: String::new(),
+            boot_uid: String::new(),
             params: HashMap::new(),
+            param_received: HashMap::new(),
+            param_indices: HashSet::new(),
+            param_count: 0,
+            heartbeat_at: 0.0,
+            telemetry: HashMap::new(),
+            events: Vec::new(),
             texts: Vec::new(),
             init_done: 0,
             init_total: 0,
@@ -409,6 +471,10 @@ impl Sample {
             sitl_running: false,
             sitl_cpu: 0.0,
             sitl_rss_mb: 0.0,
+            logs: Vec::new(),
+            log_list_expected: None,
+            log_list_at: 0.0,
+            log_download: None,
         }
     }
 }
@@ -416,6 +482,8 @@ impl Sample {
 #[derive(Debug, Deserialize)]
 #[serde(tag = "op")]
 pub enum Cmd {
+    #[serde(skip)]
+    Calibrate { kind: String, reply: std::sync::mpsc::Sender<String> },
     #[serde(rename = "param")]
     Param { name: String, value: f64 },
     #[serde(rename = "preset")]
@@ -444,15 +512,27 @@ pub enum Cmd {
     #[serde(rename = "disconnect")]
     Disconnect,
     #[serde(rename = "init")]
-    Init {
-        params: HashMap<String, f64>,
-    },
+    Init { params: HashMap<String, f64> },
     #[serde(rename = "param_read")]
     ParamRead { name: String },
     #[serde(rename = "params_list")]
     ParamsList,
+    #[serde(rename = "diagnostics")]
+    Diagnostics,
+    #[serde(rename = "param_read_index")]
+    ParamReadIndex { index: i16 },
     #[serde(rename = "reboot")]
     Reboot,
+    #[serde(rename = "reboot_bootloader")]
+    RebootBootloader,
+    #[serde(rename = "log_list")]
+    LogList,
+    #[serde(rename = "log_download")]
+    LogDownload { id: u16 },
+    #[serde(rename = "log_erase")]
+    LogErase,
+    #[serde(rename = "log_end")]
+    LogEnd,
     #[serde(rename = "sitl_start")]
     SitlStart {
         vehicle: String,
@@ -527,6 +607,7 @@ struct LinkState {
     alt_error: Option<f64>,
     target_system: u8,
     target_component: u8,
+    active_log_download: Option<ActiveLogDownload>,
 }
 
 impl LinkState {
@@ -557,6 +638,7 @@ impl LinkState {
             alt_error: None,
             target_system: 1,
             target_component: 1,
+            active_log_download: None,
         }
     }
 }
@@ -609,6 +691,7 @@ fn copter_mode(custom: u32) -> String {
         9 => "LAND",
         16 => "POSHOLD",
         17 => "BRAKE",
+        22 => "FLOWHOLD",
         _ => return format!("mode{custom}"),
     }
     .into()
@@ -636,7 +719,7 @@ fn plane_mode(custom: u32) -> String {
     .into()
 }
 
-fn mode_custom(frame: &str, name: &str) -> Option<u32> {
+pub(crate) fn mode_custom(frame: &str, name: &str) -> Option<u32> {
     if frame == "plane" {
         return Some(match name {
             "MANUAL" => 0,
@@ -668,6 +751,7 @@ fn mode_custom(frame: &str, name: &str) -> Option<u32> {
         "LAND" => 9,
         "POSHOLD" => 16,
         "BRAKE" => 17,
+        "FLOWHOLD" => 22,
         _ => return None,
     })
 }
@@ -802,13 +886,7 @@ fn wait_param(
     false
 }
 
-fn send_param_set(
-    conn: &dyn MavConnection<MavMessage>,
-    sys: u8,
-    comp: u8,
-    name: &str,
-    value: f64,
-) {
+fn send_param_set(conn: &dyn MavConnection<MavMessage>, sys: u8, comp: u8, name: &str, value: f64) {
     send_msg(
         conn,
         &MavMessage::PARAM_SET(PARAM_SET_DATA {
@@ -821,12 +899,7 @@ fn send_param_set(
     );
 }
 
-fn set_param_now(
-    conn: &dyn MavConnection<MavMessage>,
-    st: &mut LinkState,
-    name: &str,
-    value: f64,
-) {
+fn set_param_now(conn: &dyn MavConnection<MavMessage>, st: &mut LinkState, name: &str, value: f64) {
     set_param(conn, st, name, value);
     pump_rx(conn, st);
 }
@@ -843,12 +916,7 @@ fn set_param_wait(
     wait_param(conn, st, name, value, Duration::from_millis(1500))
 }
 
-fn set_param(
-    conn: &dyn MavConnection<MavMessage>,
-    st: &mut LinkState,
-    name: &str,
-    value: f64,
-) {
+fn set_param(conn: &dyn MavConnection<MavMessage>, st: &mut LinkState, name: &str, value: f64) {
     send_param_set(conn, st.target_system, st.target_component, name, value);
     st.sample.params.insert(name.to_string(), value);
 }
@@ -957,6 +1025,50 @@ fn request_streams(conn: &dyn MavConnection<MavMessage>, st: &LinkState) {
     }
 }
 
+fn request_diagnostics(conn: &dyn MavConnection<MavMessage>, st: &LinkState) {
+    // Read-only requests; do not change persistent sensor/stream parameters.
+    for (id, interval) in [
+        (1.0, 1_000_000.0),
+        (100.0, 100_000.0),
+        (106.0, 100_000.0),
+        (132.0, 200_000.0),
+        (193.0, 500_000.0),
+    ] {
+        command_long(
+            conn,
+            st.target_system,
+            st.target_component,
+            MavCmd::MAV_CMD_SET_MESSAGE_INTERVAL,
+            id,
+            interval,
+        );
+        command_long(
+            conn,
+            st.target_system,
+            st.target_component,
+            MavCmd::MAV_CMD_REQUEST_MESSAGE,
+            id,
+            0.0,
+        );
+    }
+    command_long(
+        conn,
+        st.target_system,
+        st.target_component,
+        MavCmd::MAV_CMD_REQUEST_MESSAGE,
+        148.0,
+        0.0,
+    );
+    command_long(
+        conn,
+        st.target_system,
+        st.target_component,
+        MavCmd::MAV_CMD_REQUEST_MESSAGE,
+        253.0,
+        0.0,
+    );
+}
+
 fn request_param_list(conn: &dyn MavConnection<MavMessage>, st: &LinkState) {
     send_msg(
         conn,
@@ -980,6 +1092,161 @@ fn request_params(conn: &dyn MavConnection<MavMessage>, st: &LinkState) {
             }),
         );
     }
+}
+
+fn request_log_list(conn: &dyn MavConnection<MavMessage>, st: &mut LinkState) {
+    st.sample.logs.clear();
+    st.sample.log_list_expected = None;
+    st.sample.log_list_at = wall_time();
+    send_msg(
+        conn,
+        &MavMessage::LOG_REQUEST_LIST(LOG_REQUEST_LIST_DATA {
+            start: 0,
+            end: u16::MAX,
+            target_system: st.target_system,
+            target_component: st.target_component,
+        }),
+    );
+}
+
+fn end_log_request(conn: &dyn MavConnection<MavMessage>, st: &LinkState) {
+    send_msg(
+        conn,
+        &MavMessage::LOG_REQUEST_END(LOG_REQUEST_END_DATA {
+            target_system: st.target_system,
+            target_component: st.target_component,
+        }),
+    );
+}
+
+fn request_log_range(
+    conn: &dyn MavConnection<MavMessage>,
+    st: &LinkState,
+    id: u16,
+    ofs: usize,
+    count: usize,
+) {
+    send_msg(
+        conn,
+        &MavMessage::LOG_REQUEST_DATA(LOG_REQUEST_DATA_DATA {
+            ofs: ofs.min(u32::MAX as usize) as u32,
+            count: count.min(u32::MAX as usize) as u32,
+            id,
+            target_system: st.target_system,
+            target_component: st.target_component,
+        }),
+    );
+}
+
+fn log_bit_received(bits: &[u64], index: usize) -> bool {
+    bits.get(index / 64)
+        .is_some_and(|word| (word & (1_u64 << (index % 64))) != 0)
+}
+
+fn mark_log_bit(bits: &mut [u64], index: usize) -> bool {
+    let Some(word) = bits.get_mut(index / 64) else {
+        return false;
+    };
+    let mask = 1_u64 << (index % 64);
+    let was_set = *word & mask != 0;
+    *word |= mask;
+    !was_set
+}
+
+fn update_log_download_report(st: &mut LinkState, error: String) {
+    if let Some(active) = &st.active_log_download {
+        st.sample.log_download = Some(LogDownload {
+            id: active.id,
+            size: active.size as u32,
+            received: active
+                .received_chunks
+                .saturating_mul(LOG_BLOCK)
+                .min(active.size) as u32,
+            complete: false,
+            path: String::new(),
+            error,
+            updated_at: wall_time(),
+        });
+    }
+}
+
+fn first_missing_log_chunk(active: &ActiveLogDownload) -> Option<usize> {
+    let chunks = active.size.div_ceil(LOG_BLOCK);
+    (0..chunks).find(|index| !log_bit_received(&active.received, *index))
+}
+
+fn save_completed_log(st: &mut LinkState, active: ActiveLogDownload) {
+    let key = if st.sample.boot_uid.is_empty() {
+        format!("system-{}", st.target_system)
+    } else {
+        st.sample
+            .boot_uid
+            .chars()
+            .filter(|c| c.is_ascii_alphanumeric())
+            .collect()
+    };
+    let root = crate::db::data_dir().join("logs").join(key);
+    let path = root.join(format!("log-{:05}.bin", active.id));
+    let result = fs::create_dir_all(&root).and_then(|_| fs::write(&path, &active.bytes));
+    let (complete, path, error) = match result {
+        Ok(()) => (true, path.display().to_string(), String::new()),
+        Err(error) => (true, String::new(), format!("Could not save log: {error}")),
+    };
+    st.sample.log_download = Some(LogDownload {
+        id: active.id,
+        size: active.size as u32,
+        received: active.size as u32,
+        complete,
+        path,
+        error,
+        updated_at: wall_time(),
+    });
+}
+
+fn drive_log_download(conn: &dyn MavConnection<MavMessage>, st: &mut LinkState) {
+    let now = Instant::now();
+    let complete = st
+        .active_log_download
+        .as_ref()
+        .is_some_and(|active| active.received_chunks == active.size.div_ceil(LOG_BLOCK));
+    if complete {
+        let active = st.active_log_download.take().expect("active log");
+        end_log_request(conn, st);
+        save_completed_log(st, active);
+        return;
+    }
+    let Some(active) = st.active_log_download.as_mut() else {
+        return;
+    };
+    if now.duration_since(active.started) > Duration::from_secs(120) {
+        let id = active.id;
+        let size = active.size as u32;
+        st.active_log_download = None;
+        st.sample.log_download = Some(LogDownload {
+            id,
+            size,
+            received: 0,
+            complete: true,
+            path: String::new(),
+            error: "Log download timed out".into(),
+            updated_at: wall_time(),
+        });
+        end_log_request(conn, st);
+        return;
+    }
+    if now.duration_since(active.last_data) < Duration::from_millis(900)
+        || now.duration_since(active.last_request) < Duration::from_millis(900)
+    {
+        return;
+    }
+    let Some(chunk) = first_missing_log_chunk(active) else {
+        return;
+    };
+    let id = active.id;
+    let offset = chunk * LOG_BLOCK;
+    let count = (active.size - offset).min(LOG_BLOCK * 512);
+    active.last_request = now;
+    request_log_range(conn, st, id, offset, count);
 }
 
 fn gcs_heartbeat() -> MavMessage {
@@ -1161,6 +1428,19 @@ fn reboot_fc(conn: &dyn MavConnection<MavMessage>, st: &LinkState) {
     );
 }
 
+fn reboot_to_bootloader(conn: &dyn MavConnection<MavMessage>, st: &LinkState) {
+    // MAVLink REBOOT_SHUTDOWN_ACTION_REBOOT_TO_BOOTLOADER. This is the same
+    // preflight command used by ground stations; never force it while armed.
+    command_long(
+        conn,
+        st.target_system,
+        st.target_component,
+        MavCmd::MAV_CMD_PREFLIGHT_REBOOT_SHUTDOWN,
+        3.0,
+        0.0,
+    );
+}
+
 fn apply_cmd(
     conn: &dyn MavConnection<MavMessage>,
     st: &mut LinkState,
@@ -1182,7 +1462,116 @@ fn apply_cmd(
                 }),
             );
         }
+        Cmd::Calibrate { kind, reply } => {
+            if !st.sample.ok || st.sample.armed || wall_time() - st.sample.heartbeat_at > 3.0 {
+                let _ = reply.send("Calibration requires a fresh disarmed connection".into());
+                return;
+            }
+            if kind != "level" && kind != "gyro" {
+                let _ = reply.send("Unsupported calibration".into());
+                return;
+            }
+            let message = MavMessage::COMMAND_LONG(COMMAND_LONG_DATA {
+                command: MavCmd::MAV_CMD_PREFLIGHT_CALIBRATION,
+                target_system: st.target_system, target_component: st.target_component,
+                confirmation: 0, param1: if kind == "gyro" { 1.0 } else { 0.0 },
+                param2: 0.0, param3: 0.0, param4: 0.0,
+                param5: if kind == "level" { 2.0 } else { 0.0 }, param6: 0.0, param7: 0.0,
+            });
+            if conn.send(&header(), &message).is_err() {
+                let _ = reply.send("Could not send calibration command".into());
+                return;
+            }
+            let deadline = Instant::now() + Duration::from_secs(35);
+            let mut result = "Calibration timed out; check vehicle messages before retrying".to_string();
+            while Instant::now() < deadline {
+                match conn.recv() {
+                    Ok((hdr, msg)) => {
+                        let ack = if hdr.system_id == st.target_system && hdr.component_id == st.target_component {
+                            if let MavMessage::COMMAND_ACK(v) = &msg {
+                                (v.command == MavCmd::MAV_CMD_PREFLIGHT_CALIBRATION).then_some(v.result as u8)
+                            } else { None }
+                        } else { None };
+                        handle_msg(st, &hdr, msg);
+                        emit_sample(on_sample, latest, st, sitl);
+                        if let Some(code) = ack {
+                            if code == 0 { result = "Calibration completed".into(); break; }
+                            if code != 5 { result = "Calibration rejected or failed; check vehicle messages".into(); break; }
+                        }
+                    }
+                    Err(mavlink::error::MessageReadError::Io(e)) if e.kind() == std::io::ErrorKind::TimedOut || e.kind() == std::io::ErrorKind::WouldBlock => {},
+                    Err(_) => { result = "Connection lost during calibration".into(); break; }
+                }
+            }
+            let _ = reply.send(result);
+        }
         Cmd::ParamsList => request_param_list(conn, st),
+        Cmd::Diagnostics => request_diagnostics(conn, st),
+        Cmd::LogList => request_log_list(conn, st),
+        Cmd::LogEnd => end_log_request(conn, st),
+        Cmd::LogErase => {
+            send_msg(
+                conn,
+                &MavMessage::LOG_ERASE(LOG_ERASE_DATA {
+                    target_system: st.target_system,
+                    target_component: st.target_component,
+                }),
+            );
+        }
+        Cmd::LogDownload { id } => {
+            let Some(entry) = st.sample.logs.iter().find(|entry| entry.id == id).cloned() else {
+                st.sample.log_download = Some(LogDownload {
+                    id,
+                    size: 0,
+                    received: 0,
+                    complete: true,
+                    path: String::new(),
+                    error: "Unknown log ID; refresh the log list first".into(),
+                    updated_at: wall_time(),
+                });
+                return;
+            };
+            let size = entry.size as usize;
+            if size == 0 || size > MAX_LOG_BYTES {
+                st.sample.log_download = Some(LogDownload {
+                    id,
+                    size: entry.size,
+                    received: 0,
+                    complete: true,
+                    path: String::new(),
+                    error: if size == 0 {
+                        "Log is empty".into()
+                    } else {
+                        "Log exceeds the 512 MiB download limit".into()
+                    },
+                    updated_at: wall_time(),
+                });
+                return;
+            }
+            let chunks = size.div_ceil(LOG_BLOCK);
+            let now = Instant::now();
+            st.active_log_download = Some(ActiveLogDownload {
+                id,
+                size,
+                bytes: vec![0; size],
+                received: vec![0; chunks.div_ceil(64)],
+                received_chunks: 0,
+                started: now,
+                last_data: now,
+                last_request: now,
+            });
+            update_log_download_report(st, String::new());
+            request_log_range(conn, st, id, 0, size);
+        }
+        Cmd::ParamReadIndex { index } => send_msg(
+            conn,
+            &MavMessage::PARAM_REQUEST_READ(PARAM_REQUEST_READ_DATA {
+                param_index: index,
+                target_system: st.target_system,
+                target_component: st.target_component,
+                param_id: [0; 16],
+            }),
+        ),
         Cmd::Init { params } => {
             if st.sample.armed {
                 return;
@@ -1199,7 +1588,11 @@ fn apply_cmd(
                     ordered.push(must.to_string());
                 }
             }
-            ordered.extend(names.into_iter().filter(|n| n != "FRAME_CLASS" && n != "FRAME_TYPE"));
+            ordered.extend(
+                names
+                    .into_iter()
+                    .filter(|n| n != "FRAME_CLASS" && n != "FRAME_TYPE"),
+            );
             let extra = usize::from(params.contains_key("FRAME_CLASS"));
             let total = (ordered.len() + extra) as u32;
             let mut done = 0u32;
@@ -1210,11 +1603,10 @@ fn apply_cmd(
                 if let Some(&value) = params.get(name) {
                     if name == "FRAME_CLASS" || name == "FRAME_TYPE" {
                         if !set_param_wait(conn, st, name, value) {
-                            st.sample.texts.insert(
-                                0,
-                                format!("WARNING Init: {name} not confirmed"),
-                            );
-                            st.sample.texts.truncate(24);
+                            st.sample
+                                .texts
+                                .insert(0, format!("WARNING Init: {name} not confirmed"));
+                            st.sample.texts.truncate(256);
                         }
                     } else {
                         set_param_now(conn, st, name, value);
@@ -1226,11 +1618,10 @@ fn apply_cmd(
             }
             if let Some(&v) = params.get("FRAME_CLASS") {
                 if !set_param_wait(conn, st, "FRAME_CLASS", v) {
-                    st.sample.texts.insert(
-                        0,
-                        "WARNING Init: FRAME_CLASS not confirmed".into(),
-                    );
-                    st.sample.texts.truncate(24);
+                    st.sample
+                        .texts
+                        .insert(0, "WARNING Init: FRAME_CLASS not confirmed".into());
+                    st.sample.texts.truncate(256);
                 }
                 done += 1;
                 st.sample.init_done = done;
@@ -1338,6 +1729,7 @@ fn apply_cmd(
         }
         Cmd::Connect { .. } | Cmd::Disconnect | Cmd::SitlStart { .. } | Cmd::SitlStop => {}
         Cmd::Reboot => reboot_fc(conn, st),
+        Cmd::RebootBootloader => reboot_to_bootloader(conn, st),
     }
 }
 
@@ -1353,6 +1745,51 @@ fn read_rc_chan(st: &LinkState, msg_chans: &[u16], axis: &str) -> Option<u16> {
 }
 
 fn handle_msg(st: &mut LinkState, header: &MavHeader, msg: MavMessage) {
+    // Ignore telemetry from other vehicles and GCS processes on a shared UDP link.
+    if !matches!(&msg, MavMessage::HEARTBEAT(_))
+        && (header.system_id != st.target_system || header.component_id != st.target_component)
+    {
+        return;
+    }
+    let diagnostic = match &msg {
+        MavMessage::AUTOPILOT_VERSION(v) => Some(("AUTOPILOT_VERSION", serde_json::json!(v))),
+        MavMessage::OPTICAL_FLOW(v) => Some(("OPTICAL_FLOW", serde_json::json!(v))),
+        MavMessage::OPTICAL_FLOW_RAD(v) => Some(("OPTICAL_FLOW_RAD", serde_json::json!(v))),
+        MavMessage::DISTANCE_SENSOR(v) => Some(("DISTANCE_SENSOR", serde_json::json!(v))),
+        MavMessage::SYS_STATUS(v) => Some(("SYS_STATUS", serde_json::json!(v))),
+        MavMessage::EKF_STATUS_REPORT(v) => Some(("EKF_STATUS_REPORT", serde_json::json!(v))),
+        MavMessage::COMMAND_ACK(v) => Some((
+            "COMMAND_ACK",
+            serde_json::json!({
+                "command": format!("{:?}", v.command), "command_id": v.command as u32,
+                "result": format!("{:?}", v.result), "result_id": v.result as u8
+            }),
+        )),
+        MavMessage::STATUSTEXT(v) => Some((
+            "STATUSTEXT",
+            serde_json::json!({
+                "severity": format!("{:?}", v.severity), "text": param_name(&v.text)
+            }),
+        )),
+        _ => None,
+    };
+    if let Some((kind, data)) = diagnostic {
+        let count = st
+            .sample
+            .telemetry
+            .get(kind)
+            .and_then(|v| v["count"].as_u64())
+            .unwrap_or(0)
+            + 1;
+        let event = serde_json::json!({"message": kind, "received_at": wall_time(),
+            "system_id": header.system_id, "component_id": header.component_id,
+            "count": count, "data": data});
+        st.sample.telemetry.insert(kind.into(), event.clone());
+        if kind == "STATUSTEXT" || kind == "COMMAND_ACK" {
+            st.sample.events.insert(0, event);
+            st.sample.events.truncate(256);
+        }
+    }
     st.sample.rx = msg_name(&msg).into();
     match msg {
         MavMessage::HEARTBEAT(HEARTBEAT_DATA {
@@ -1379,6 +1816,7 @@ fn handle_msg(st: &mut LinkState, header: &MavHeader, msg: MavMessage) {
                 st.target_component = header.component_id;
             }
             st.sample.ok = true;
+            st.sample.heartbeat_at = wall_time();
             st.sample.frame = frame;
             st.sample.mode = if st.sample.frame == "plane" {
                 plane_mode(custom_mode)
@@ -1542,18 +1980,84 @@ fn handle_msg(st: &mut LinkState, header: &MavHeader, msg: MavMessage) {
                 }
             }
         }
+        MavMessage::LOG_ENTRY(LOG_ENTRY_DATA {
+            id,
+            num_logs,
+            last_log_num,
+            time_utc,
+            size,
+        }) => {
+            st.sample.log_list_at = wall_time();
+            st.sample.log_list_expected = Some(num_logs);
+            if num_logs == 0 {
+                st.sample.logs.clear();
+                return;
+            }
+            let entry = OnboardLog {
+                id,
+                num_logs,
+                last_log_num,
+                time_utc,
+                size,
+            };
+            if let Some(existing) = st.sample.logs.iter_mut().find(|item| item.id == id) {
+                *existing = entry;
+            } else {
+                st.sample.logs.push(entry);
+                st.sample.logs.sort_by_key(|item| item.id);
+            }
+        }
+        MavMessage::LOG_DATA(LOG_DATA_DATA {
+            id,
+            ofs,
+            count,
+            data,
+        }) => {
+            let Some(active) = st.active_log_download.as_mut() else {
+                return;
+            };
+            if id != active.id || count == 0 {
+                return;
+            }
+            let offset = ofs as usize;
+            if offset >= active.size {
+                return;
+            }
+            let end = (offset + count as usize)
+                .min(active.size)
+                .min(offset + data.len());
+            if end <= offset {
+                return;
+            }
+            active.bytes[offset..end].copy_from_slice(&data[..end - offset]);
+            let first_chunk = offset / LOG_BLOCK;
+            let last_chunk = (end - 1) / LOG_BLOCK;
+            for chunk in first_chunk..=last_chunk {
+                if mark_log_bit(&mut active.received, chunk) {
+                    active.received_chunks += 1;
+                }
+            }
+            active.last_data = Instant::now();
+            update_log_download_report(st, String::new());
+        }
         MavMessage::STATUSTEXT(STATUSTEXT_DATA { severity, text, .. }) => {
             let msg = param_name(&text);
             if msg.is_empty() {
                 return;
             }
+            if let Some((name, uid)) = boot_identity(&msg) {
+                st.sample.board_name = name;
+                st.sample.boot_uid = uid;
+            }
             let sev = format!("{severity:?}").replace("MAV_SEVERITY_", "");
             st.sample.texts.insert(0, format!("{sev} {msg}"));
-            st.sample.texts.truncate(24);
+            st.sample.texts.truncate(256);
         }
         MavMessage::PARAM_VALUE(PARAM_VALUE_DATA {
             param_id,
             param_value,
+            param_count,
+            param_index,
             ..
         }) => {
             let name = param_name(&param_id);
@@ -1562,6 +2066,11 @@ fn handle_msg(st: &mut LinkState, header: &MavHeader, msg: MavMessage) {
             }
             let val = param_value as f64;
             st.sample.params.insert(name.clone(), val);
+            st.sample.param_received.insert(name.clone(), wall_time());
+            st.sample.param_count = param_count;
+            if param_index < param_count {
+                st.sample.param_indices.insert(param_index);
+            }
             match name.as_str() {
                 "ATC_RAT_RLL_P" => st.sample.gain_p = Some(val),
                 "ATC_RAT_RLL_I" => st.sample.gain_i = Some(val),
@@ -1593,6 +2102,20 @@ fn handle_msg(st: &mut LinkState, header: &MavHeader, msg: MavMessage) {
         }
         _ => {}
     }
+}
+
+fn boot_identity(message: &str) -> Option<(String, String)> {
+    let mut words = message.split_whitespace();
+    let name = words.next()?;
+    if !name.contains('_') || name.len() > 64 {
+        return None;
+    }
+    let uid = words
+        .filter(|part| {
+            part.len() >= 4 && part.len() <= 16 && part.bytes().all(|byte| byte.is_ascii_hexdigit())
+        })
+        .collect::<String>();
+    Some((name.to_owned(), uid))
 }
 
 fn msg_name(msg: &MavMessage) -> &'static str {
@@ -1648,6 +2171,10 @@ fn open_conn(url: &str) -> Result<Box<dyn MavConnection<MavMessage> + Send + Syn
             OpenErr::Connect
         }
     };
+    #[cfg(not(target_os = "android"))]
+    if strip_prefix_ci(url, "serial:").is_some() {
+        return crate::serial_link::connect(url).map_err(io_err);
+    }
     if udp {
         crate::udp::connect(url).map_err(io_err)
     } else {
@@ -1683,7 +2210,9 @@ fn is_udp(url: &str) -> bool {
     url.len() >= 3 && url[..3].eq_ignore_ascii_case("udp")
 }
 
-fn open_link(url: &str) -> Result<(Box<dyn MavConnection<MavMessage> + Send + Sync>, String), OpenErr> {
+fn open_link(
+    url: &str,
+) -> Result<(Box<dyn MavConnection<MavMessage> + Send + Sync>, String), OpenErr> {
     // UDP has no connect handshake. Keep the socket up and wait for HEARTBEAT in the read loop.
     // Closing it after a few seconds changes the source port, so the vehicle's reply is lost.
     if is_udp(url) {
@@ -1870,8 +2399,9 @@ pub fn run_loop(
             continue;
         };
 
-        request_streams(&*conn, &st);
-        request_params(&*conn, &st);
+        // UDP has no learned peer until a heartbeat arrives. Initial broadcast
+        // parameter requests used to be lost, leaving an almost empty cache.
+        let mut requested_initial = false;
 
         let mut last_rc = Instant::now() - Duration::from_millis(50);
         let mut last_stream = Instant::now();
@@ -1882,7 +2412,15 @@ pub fn run_loop(
         let mut last_att: Option<Instant> = None;
 
         loop {
-            match drain_cmds(&cmds, &url, Some(&*conn), &mut st, &on_sample, &latest, &sitl) {
+            match drain_cmds(
+                &cmds,
+                &url,
+                Some(&*conn),
+                &mut st,
+                &on_sample,
+                &latest,
+                &sitl,
+            ) {
                 Drain::None => {}
                 Drain::Reconnect => break,
                 Drain::Stop => return,
@@ -1922,11 +2460,18 @@ pub fn run_loop(
                 send_msg(&*conn, &gcs_heartbeat());
                 last_hb = now;
             }
+            drive_log_download(&*conn, &mut st);
 
             match conn.recv() {
                 Ok((hdr, msg)) => {
                     let is_att = matches!(msg, MavMessage::ATTITUDE(_));
                     handle_msg(&mut st, &hdr, msg);
+                    if !requested_initial && st.sample.heartbeat_at > 0.0 {
+                        request_streams(&*conn, &st);
+                        request_params(&*conn, &st);
+                        request_diagnostics(&*conn, &st);
+                        requested_initial = true;
+                    }
                     if st.sample.ok && st.sample.detail.starts_with("чекаємо HEARTBEAT") {
                         st.sample.detail = target.clone();
                     }
@@ -1962,8 +2507,67 @@ mod normalize_tests {
 
     #[test]
     fn mavlink_udp_port_is_not_tcp() {
-        assert_eq!(normalize_link("192.168.6.167:14550"), "udpout:192.168.6.167:14550");
-        assert_eq!(normalize_link("tcpout:192.168.6.167:5760"), "tcpout:192.168.6.167:5760");
+        assert_eq!(
+            normalize_link("192.168.6.167:14550"),
+            "udpout:192.168.6.167:14550"
+        );
+        assert_eq!(
+            normalize_link("tcpout:192.168.6.167:5760"),
+            "tcpout:192.168.6.167:5760"
+        );
         assert_eq!(normalize_link("udp:14550"), "udpin:0.0.0.0:14550");
+    }
+}
+
+#[cfg(test)]
+mod diagnostics_tests {
+    use super::*;
+    use mavlink::ardupilotmega::{MavResult, COMMAND_ACK_DATA, OPTICAL_FLOW_DATA};
+
+    #[test]
+    fn flowhold_mode_roundtrip() {
+        assert_eq!(mode_custom("copter", "FLOWHOLD"), Some(22));
+        assert_eq!(copter_mode(22), "FLOWHOLD");
+        assert_eq!(mode_custom("plane", "FLOWHOLD"), None);
+        assert_eq!(mode_custom("copter", "TYPO"), None);
+    }
+
+    #[test]
+    fn diagnostics_keep_ack_and_live_flow_but_ignore_other_vehicles() {
+        let mut st = LinkState::new();
+        let hdr = MavHeader {
+            system_id: 1,
+            component_id: 1,
+            sequence: 0,
+        };
+        handle_msg(
+            &mut st,
+            &hdr,
+            MavMessage::COMMAND_ACK(COMMAND_ACK_DATA {
+                command: MavCmd::MAV_CMD_DO_SET_MODE,
+                result: MavResult::MAV_RESULT_FAILED,
+            }),
+        );
+        assert_eq!(
+            st.sample.events[0]["data"]["command"],
+            "MAV_CMD_DO_SET_MODE"
+        );
+        assert_eq!(st.sample.events[0]["data"]["result"], "MAV_RESULT_FAILED");
+        let flow = MavMessage::OPTICAL_FLOW(OPTICAL_FLOW_DATA {
+            quality: 123,
+            ..Default::default()
+        });
+        handle_msg(&mut st, &hdr, flow.clone());
+        handle_msg(
+            &mut st,
+            &MavHeader {
+                system_id: 2,
+                ..hdr
+            },
+            flow,
+        );
+        assert_eq!(st.sample.telemetry["OPTICAL_FLOW"]["count"], 1);
+        assert_eq!(st.sample.telemetry["OPTICAL_FLOW"]["data"]["quality"], 123);
+        assert_eq!(st.sample.events.len(), 1);
     }
 }

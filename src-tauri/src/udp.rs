@@ -12,9 +12,7 @@ use std::time::Duration;
 
 use mavlink::ardupilotmega::{MavMessage, MavType};
 use mavlink::peek_reader::PeekReader;
-use mavlink::{
-    read_versioned_msg, write_versioned_msg, MavConnection, MavHeader, MavlinkVersion,
-};
+use mavlink::{read_versioned_msg, write_versioned_msg, MavConnection, MavHeader, MavlinkVersion};
 
 const READ_TIMEOUT: Duration = Duration::from_millis(100);
 const MTU: usize = 1500;
@@ -83,7 +81,11 @@ fn bind_gcs_socket(dest: &SocketAddr) -> io::Result<UdpSocket> {
             return Ok(socket);
         }
     }
-    let ephemeral = if dest.is_ipv6() { "[::]:0" } else { "0.0.0.0:0" };
+    let ephemeral = if dest.is_ipv6() {
+        "[::]:0"
+    } else {
+        "0.0.0.0:0"
+    };
     UdpSocket::bind(ephemeral)
 }
 
@@ -273,9 +275,7 @@ impl MavConnection<MavMessage> for UdpMav {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use mavlink::ardupilotmega::{
-        HEARTBEAT_DATA, MavAutopilot, MavModeFlag, MavState, MavType,
-    };
+    use mavlink::ardupilotmega::{MavAutopilot, MavModeFlag, MavState, MavType, HEARTBEAT_DATA};
 
     fn hb() -> MavMessage {
         MavMessage::HEARTBEAT(HEARTBEAT_DATA {
@@ -314,19 +314,29 @@ mod tests {
         let gcs = UdpMav::bind_out(&vehicle_addr.to_string(), false).unwrap();
         let sent = gcs
             .send(
-                &MavHeader { system_id: 255, component_id: 190, sequence: 0 },
+                &MavHeader {
+                    system_id: 255,
+                    component_id: 190,
+                    sequence: 0,
+                },
                 &hb(),
             )
             .expect("send");
         assert!(sent > 8, "heartbeat was not written");
         let mut buf = [0u8; 512];
-        let (n, from) = vehicle.recv_from(&mut buf).expect("vehicle never saw the GCS heartbeat");
+        let (n, from) = vehicle
+            .recv_from(&mut buf)
+            .expect("vehicle never saw the GCS heartbeat");
         assert!(n > 8);
         let mut reply = Vec::new();
         write_versioned_msg(
             &mut reply,
             MavlinkVersion::V2,
-            MavHeader { system_id: 1, component_id: 1, sequence: 0 },
+            MavHeader {
+                system_id: 1,
+                component_id: 1,
+                sequence: 0,
+            },
             &hb(),
         )
         .unwrap();

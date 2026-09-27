@@ -27,12 +27,9 @@ pub(crate) fn http_post(path: &str, body: &str) -> Result<String, String> {
 }
 
 fn request(method: &str, path: &str, body: Option<&str>) -> Result<String, String> {
-    let mut stream = TcpStream::connect(HTTP_ADDR).map_err(|_| {
-        format!("no ArduLoops at http://{HTTP_ADDR} — start the app first")
-    })?;
-    stream
-        .set_read_timeout(Some(Duration::from_secs(3)))
-        .ok();
+    let mut stream = TcpStream::connect(HTTP_ADDR)
+        .map_err(|_| format!("no ArduLoops at http://{HTTP_ADDR} — start the app first"))?;
+    stream.set_read_timeout(Some(Duration::from_secs(10))).ok();
     let extra = if let Some(b) = body {
         format!(
             "Content-Type: application/json\r\nContent-Length: {}\r\n\r\n{b}",
@@ -41,7 +38,8 @@ fn request(method: &str, path: &str, body: Option<&str>) -> Result<String, Strin
     } else {
         "\r\n".into()
     };
-    let req = format!("{method} {path} HTTP/1.1\r\nHost: {HTTP_ADDR}\r\nConnection: close\r\n{extra}");
+    let req =
+        format!("{method} {path} HTTP/1.1\r\nHost: {HTTP_ADDR}\r\nConnection: close\r\n{extra}");
     stream
         .write_all(req.as_bytes())
         .map_err(|e| e.to_string())?;

@@ -1,0 +1,12 @@
+---
+description: Require English source phrases and Ukrainian translations for every UI string.
+alwaysApply: true
+---
+
+# UI localization
+
+- Every user-visible UI phrase in `src/**/*.ts` and `src/**/*.tsx` must use `t("English source phrase")` from `src/i18n/i18n.ts`.
+- Add the matching Ukrainian entry to `src/i18n/uk.ts` in the same change. Do not add Russian UI literals or leave untranslated fallback strings.
+- Include button labels, tabs, placeholders, validation messages, empty states, `aria-label` values, and titles.
+- Keep telemetry, parameter names, firmware IDs, MAVLink text, and user-provided values unmodified.
+- Before finishing a UI change, run the web build and check that every new source phrase has its Ukrainian entry.

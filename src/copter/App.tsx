@@ -11,6 +11,8 @@ import { preferredLayoutWidth } from "../lib/layout";
 import { addLog } from "../log";
 import { axisLabel, type Axis } from "../mav/axis";
 import { CopterLoopView } from "./LoopView";
+import { FirmwareLibrary } from "../components/FirmwareLibrary";
+import { ParameterLibrary } from "../components/ParameterLibrary";
 
 export function CopterApp({
   log,
@@ -22,6 +24,7 @@ export function CopterApp({
   const [axis, setAxis] = useState<Axis>("roll");
   const [live3d, setLive3d] = useState(false);
   const [showAll, setShowAll] = useState(false);
+  const [workspace, setWorkspace] = useState<"loops" | "firmware" | "params">("loops");
   const col1Default = useMemo(() => preferredLayoutWidth(LAYERS), []);
 
   function onAxis(next: Axis) {
@@ -52,13 +55,52 @@ export function CopterApp({
     }
   }
 
+  if (workspace === "firmware") {
+    return (
+      <main>
+        <FirmwareLibrary onBack={() => setWorkspace("loops")} onParams={() => setWorkspace("params")} />
+        <Aside
+          log={log}
+          sel={sel}
+          onSel={onPick}
+          axis={axis}
+          live3d={live3d}
+          inspect={<CopterInspect sel={sel} onSel={onPick} axis={axis} showAll={showAll} />}
+        />
+      </main>
+    );
+  }
+
+  if (workspace === "params") {
+    return (
+      <main>
+        <ParameterLibrary onLoops={() => setWorkspace("loops")} onFirmware={() => setWorkspace("firmware")} />
+        <Aside
+          log={log}
+          sel={sel}
+          onSel={onPick}
+          axis={axis}
+          live3d={live3d}
+          inspect={<CopterInspect sel={sel} onSel={onPick} axis={axis} showAll={showAll} />}
+        />
+      </main>
+    );
+  }
+
   return (
     <main>
       <section className="scope">
         <Studio
           frame="copter"
           col1Default={col1Default}
-          toolbar={<AxisSwitch axis={axis} onAxis={onAxis} live3d={live3d} onLive3d={onLive3d} />}
+          toolbar={<>
+            <div className="studio-tabs" role="tablist" aria-label={t("Workspace")}>
+              <button type="button" role="tab" aria-selected onClick={() => setWorkspace("loops")}>{t("loops")}</button>
+              <button type="button" role="tab" aria-selected={false} onClick={() => setWorkspace("firmware")}>{t("controller")}</button>
+              <button type="button" role="tab" aria-selected={false} onClick={() => setWorkspace("params")}>{t("params")}</button>
+            </div>
+            <AxisSwitch axis={axis} onAxis={onAxis} live3d={live3d} onLive3d={onLive3d} />
+          </>}
           scheme={<Cascade sel={sel} onSel={onPick} axis={axis} showAll={showAll} onShowAll={setShowAll} />}
           loop={(compact) => <CopterLoopView sel={sel} axis={axis} compact={compact} />}
           scope={<Scope sel={sel} onSel={onPick} axis={axis} />}

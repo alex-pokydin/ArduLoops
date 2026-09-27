@@ -1,8 +1,13 @@
 mod cli;
+mod db;
+mod firmware;
+mod firmware_native;
 mod http;
 mod link;
 mod mcp;
 mod ports;
+#[cfg(not(target_os = "android"))]
+mod serial_link;
 mod sitl;
 mod udp;
 
@@ -17,6 +22,19 @@ use crate::http::HTTP_ADDR;
 use crate::link::{Cmd, OnSample, Sample};
 
 pub fn run_cli(args: &[String]) -> i32 {
+    if args.first().map(String::as_str) == Some("--firmware-worker") {
+        return args
+            .get(1)
+            .map(|id| {
+                firmware_native::run_worker(id)
+                    .map(|_| 0)
+                    .unwrap_or_else(|e| {
+                        eprintln!("{e}");
+                        1
+                    })
+            })
+            .unwrap_or(2);
+    }
     cli::run(args)
 }
 
@@ -43,12 +61,16 @@ pub fn run_bridge() {
 #[cfg(feature = "desktop")]
 mod desktop {
     use super::*;
+    use tauri::Manager;
 
     pub fn run() {
         let (tx, rx) = mpsc::channel::<Cmd>();
         tauri::Builder::default()
             .plugin(tauri_plugin_log::Builder::default().build())
-            .setup(move |_app| {
+            .setup(move |app| {
+                if let Ok(path) = app.path().app_local_data_dir() {
+                    crate::db::set_app_data_dir(path);
+                }
                 spawn_backend(rx, tx, Arc::new(|_: &Sample| {}));
                 Ok(())
             })

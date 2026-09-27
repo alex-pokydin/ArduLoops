@@ -2,3 +2,10 @@ node_modules
 dist
 *.local
 src-tauri/resources/sitl/
+scripts/__pycache__/
+scripts/firmware.py
+scripts/test_firmware.py
+
+# Local Rust test build output
+target-codex-test/
+target-codex-release/

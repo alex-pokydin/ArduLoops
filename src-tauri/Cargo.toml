@@ -31,6 +31,13 @@ tauri-plugin-log = { version = "2", optional = true }
 # direct-serial pulls the `serial` crate, whose termios 0.2 dependency does not build for Android.
 mavlink = { version = "0.13.1", default-features = false, features = ["std", "tcp", "udp", "serde", "ardupilotmega"] }
 ureq = { version = "2.12.1", default-features = false, features = ["tls"] }
+rusqlite = { version = "0.32.1", features = ["bundled"] }
+base64 = "0.22"
+flate2 = "1.0"
+sha2 = "0.10"
+tar = "0.4"
+uuid = { version = "1.11", features = ["v4"] }
+zip = { version = "0.6.6", default-features = false, features = ["deflate"] }
 
 [target.'cfg(not(target_os = "android"))'.dependencies]
 mavlink = { version = "0.13.1", default-features = false, features = ["direct-serial"] }
