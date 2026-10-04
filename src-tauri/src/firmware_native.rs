@@ -891,8 +891,6 @@ impl Boot {
         Ok(())
     }
 }
-#[cfg(target_os = "android")]
-struct Boot;
 fn crc(image: &[u8], flash: usize) -> u32 {
     let mut s = 0u32;
     for b in image
@@ -911,6 +909,19 @@ fn crc(image: &[u8], flash: usize) -> u32 {
     }
     s
 }
+#[cfg(target_os = "android")]
+pub fn run_worker(id: &str) -> Result<(), String> {
+    let dir = local("flash-plans", id)?;
+    let message = "This phone has no USB serial port for the bootloader.";
+    let _ = save(
+        &dir.join("status.json"),
+        &json!({"state":"failed","plan_id":id,"error":message,"programming_started":false}),
+    );
+    let _ = fs::remove_file(root().join("flash.lock"));
+    Ok(())
+}
+
+#[cfg(not(target_os = "android"))]
 pub fn run_worker(id: &str) -> Result<(), String> {
     let dir = local("flash-plans", id)?;
     let mut programming = false;
