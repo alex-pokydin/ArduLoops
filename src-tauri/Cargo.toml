@@ -38,7 +38,10 @@ sha2 = "0.10"
 tar = "0.4"
 uuid = { version = "1.11", features = ["v4"] }
 zip = { version = "0.6.6", default-features = false, features = ["deflate"] }
-genai = { version = "0.6.5", default-features = false, features = ["native-tls"] }
+# Model HTTPS uses rustls with ring. OpenSSL and aws-lc do not cross-compile into the Android app.
+genai = { version = "0.6.5", default-features = false }
+reqwest = { version = "0.13.5", default-features = false, features = ["rustls-no-provider"] }
+rustls = { version = "0.23.45", default-features = false, features = ["ring", "std", "tls12"] }
 futures-util = "0.3"
 tokio = { version = "1.53.1", features = ["rt-multi-thread", "time", "net", "io-util", "sync"] }
 

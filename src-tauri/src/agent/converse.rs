@@ -236,7 +236,15 @@ fn turn_options(provider: &str, model: &str, reasoning: &str) -> genai::chat::Ch
     options
 }
 
+fn install_tls() {
+    static ONCE: std::sync::Once = std::sync::Once::new();
+    ONCE.call_once(|| {
+        let _ = rustls::crypto::ring::default_provider().install_default();
+    });
+}
+
 fn provider_client(key: &str, timeout_s: u64) -> genai::Client {
+    install_tls();
     let key = key.to_string();
     genai::Client::builder()
         .with_web_config(genai::WebConfig::default().with_timeout(std::time::Duration::from_secs(timeout_s)))
@@ -373,4 +381,14 @@ fn call_provider(provider: &str, model: &str, key: &str, prompt: &str, _tools: &
         return Err("empty provider response".into());
     }
     Ok(text)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::provider_client;
+
+    #[test]
+    fn a_model_client_builds_with_ring() {
+        let _client = provider_client("key", 5);
+    }
 }
