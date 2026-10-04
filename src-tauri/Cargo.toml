@@ -46,9 +46,5 @@ tokio = { version = "1.53.1", features = ["rt-multi-thread", "time", "net", "io-
 mavlink = { version = "0.13.1", default-features = false, features = ["direct-serial"] }
 serialport = "4.7.2"
 
-# The assistant's TLS uses the system library. Android has none, so that target builds OpenSSL in.
-[target.'cfg(target_os = "android")'.dependencies]
-openssl = { version = "0.10.81", features = ["vendored"] }
-
 [target.'cfg(windows)'.dependencies]
 windows-sys = { version = "0.59", features = ["Win32_Foundation", "Win32_Devices_DeviceAndDriverInstallation", "Win32_NetworkManagement_IpHelper", "Win32_System_Registry"] }
