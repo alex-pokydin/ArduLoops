@@ -243,11 +243,35 @@ fn install_tls() {
     });
 }
 
+fn mozilla_tls() -> rustls::ClientConfig {
+    install_tls();
+    let roots = rustls::RootCertStore::from_iter(webpki_roots::TLS_SERVER_ROOTS.iter().cloned());
+    rustls::ClientConfig::builder()
+        .with_root_certificates(roots)
+        .with_no_client_auth()
+}
+
 fn provider_client(key: &str, timeout_s: u64) -> genai::Client {
     install_tls();
     let key = key.to_string();
-    genai::Client::builder()
-        .with_web_config(genai::WebConfig::default().with_timeout(std::time::Duration::from_secs(timeout_s)))
+    let mut builder = genai::Client::builder();
+    // Desktop keeps the OS trust store. Android uses the Mozilla roots baked in above.
+    #[cfg(target_os = "android")]
+    {
+        let http = reqwest::Client::builder()
+            .use_preconfigured_tls(mozilla_tls())
+            .timeout(std::time::Duration::from_secs(timeout_s))
+            .build()
+            .expect("model client");
+        builder = builder.with_reqwest(http);
+    }
+    #[cfg(not(target_os = "android"))]
+    {
+        builder = builder.with_web_config(
+            genai::WebConfig::default().with_timeout(std::time::Duration::from_secs(timeout_s)),
+        );
+    }
+    builder
         .with_auth_resolver_fn(move |_model: genai::ModelIden| -> genai::resolver::Result<Option<genai::resolver::AuthData>> {
             Ok(Some(genai::resolver::AuthData::from_single(key.clone())))
         })
@@ -390,5 +414,10 @@ mod tests {
     #[test]
     fn a_model_client_builds_with_ring() {
         let _client = provider_client("key", 5);
+    }
+
+    #[test]
+    fn mozilla_roots_build_a_rustls_client() {
+        let _config = super::mozilla_tls();
     }
 }

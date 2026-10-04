@@ -86,14 +86,23 @@ fn handle(stream: TcpStream, latest: Arc<Mutex<Sample>>, tx: Sender<Cmd>) -> std
         };
         let sample = latest.lock().map(|g| g.clone()).unwrap_or_else(|_| Sample::empty());
         let mut socket = reader.into_inner();
-        return match crate::agent::route(&method, &path, &query, &body, &sample, &tx) {
-            Ok(value) => {
+        // A panic inside the model call used to close this socket with no status line.
+        // The WebView then reports the key check as "Failed to fetch".
+        let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            crate::agent::route(&method, &path, &query, &body, &sample, &tx)
+        }));
+        return match outcome {
+            Ok(Ok(value)) => {
                 let bytes = serde_json::to_vec(&value).unwrap_or_else(|_| b"{}".to_vec());
                 reply(&mut socket, 200, "application/json", &bytes)
             }
-            Err((code, message)) => {
+            Ok(Err((code, message))) => {
                 let bytes = serde_json::to_vec(&serde_json::json!({"ok": false, "message": message})).unwrap_or_default();
                 reply(&mut socket, code, "application/json", &bytes)
+            }
+            Err(_) => {
+                let bytes = br#"{"ok":false,"message":"The model request failed."}"#;
+                reply(&mut socket, 500, "application/json", bytes)
             }
         };
     }

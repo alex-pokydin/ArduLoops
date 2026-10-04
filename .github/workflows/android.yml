@@ -40,7 +40,11 @@ jobs:
         run: |
           npm run tauri -- android init --ci
           # Release builds default to no cleartext. The UI talks to the on-device backend at http://127.0.0.1:8767.
-          sed -i 's/usesCleartextTraffic"\] = "false"/usesCleartextTraffic"] = "true"/' src-tauri/gen/android/app/build.gradle.kts
+          gradle=src-tauri/gen/android/app/build.gradle.kts
+          grep -q 'usesCleartextTraffic"\] = "false"' "$gradle"
+          sed -i 's/usesCleartextTraffic"\] = "false"/usesCleartextTraffic"] = "true"/' "$gradle"
+          grep -q 'usesCleartextTraffic"\] = "false"' "$gradle" && exit 1
+          grep -q 'usesCleartextTraffic"\] = "true"' "$gradle"
       - name: APK
         run: npm run tauri -- android build --apk --target aarch64 --ci
       - name: Sign APK
