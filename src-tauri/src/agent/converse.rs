@@ -319,7 +319,23 @@ fn provider_turn(
         .with_system(system)
         .with_tools(chat_tools());
     let client = provider_client(key, 90);
-    block_on(stream_turn(client, iden, request, options))
+    block_on(stream_turn(client, iden, request, options, turn_gen()))
+}
+
+/// Poll a provider future often enough that Stop is seen while the socket is quiet.
+/// `gen` is the turn on the caller thread. The wait itself runs on the genai runtime.
+async fn until_halt<T>(gen: u64, fut: impl std::future::Future<Output = T> + Send) -> Result<T, String> {
+    let mut fut = std::pin::pin!(fut);
+    loop {
+        if gen_halted(gen) {
+            return Err("stopped".into());
+        }
+        let pause = std::pin::pin!(tokio::time::sleep(std::time::Duration::from_millis(200)));
+        match futures_util::future::select(fut.as_mut(), pause).await {
+            futures_util::future::Either::Left((value, _)) => return Ok(value),
+            futures_util::future::Either::Right((_, _)) => {}
+        }
+    }
 }
 
 async fn stream_turn(
@@ -327,18 +343,20 @@ async fn stream_turn(
     model: genai::ModelIden,
     request: genai::chat::ChatRequest,
     options: genai::chat::ChatOptions,
+    gen: u64,
 ) -> Result<ProviderTurn, String> {
     use futures_util::StreamExt;
-    let started = client.exec_chat_stream(model, request, Some(&options)).await.map_err(|err| err.to_string())?;
+    let started = until_halt(gen, client.exec_chat_stream(model, request, Some(&options))).await?
+        .map_err(|err| err.to_string())?;
     let mut stream = started.stream;
     let mut text = String::new();
     let mut thought = String::new();
     let mut calls: Vec<genai::chat::ToolCall> = Vec::new();
     let mut assistant: Option<genai::chat::ChatMessage> = None;
-    while let Some(item) = stream.next().await {
-        if turn_halted() {
-            return Err("stopped".into());
-        }
+    loop {
+        let Some(item) = until_halt(gen, stream.next()).await? else {
+            break;
+        };
         match item.map_err(|err| err.to_string())? {
             genai::chat::ChatStreamEvent::Start => {}
             genai::chat::ChatStreamEvent::Chunk(chunk) => {

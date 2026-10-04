@@ -49,10 +49,11 @@ export const ai = {
     json("/ai/chats/rename", { method: "POST", body: JSON.stringify({ id, title }) }),
   thread: (chat: string) => json<{ messages: Msg[]; proposals: Proposal[] }>(`/ai/messages?chat=${encodeURIComponent(chat)}`),
   live: (chat: string) => json<LiveTurn>(`/ai/live?chat=${encodeURIComponent(chat)}`),
-  send: (chat: string, text: string, lang: string, model: string, reasoning: string, log = "") =>
+  send: (chat: string, text: string, lang: string, model: string, reasoning: string, log = "", signal?: AbortSignal) =>
     json<{ ok: boolean; status?: string; message?: string; proposal?: Proposal | null }>("/ai/send", {
       method: "POST",
       body: JSON.stringify({ chat, text, lang, model, reasoning, log }),
+      signal,
     }),
   stop: () => json("/ai/stop", { method: "POST", body: "{}" }),
   proposal: (id: string, decision: "approve" | "reject", lang: string, model: string, reasoning: string, log = "", batch = "", comment?: string) =>

@@ -939,6 +939,17 @@ fn download_log_reply(
     tx.send(Cmd::LogDownload { id })
         .map_err(|_| std::io::Error::other("link stopped"))?;
     for _ in 0..timeout_s.saturating_mul(20) {
+        if crate::agent::turn_stop_requested() {
+            let _ = tx.send(Cmd::LogCancel);
+            return reply(
+                socket,
+                200,
+                "application/json",
+                &serde_json::to_vec(&serde_json::json!({
+                    "ok": false, "id": id, "complete": false, "error": "stopped"
+                }))?,
+            );
+        }
         std::thread::sleep(Duration::from_millis(50));
         let sample = latest.lock().map_err(|_| std::io::Error::other("lock"))?;
         let Some(report) = sample.log_download.as_ref() else {

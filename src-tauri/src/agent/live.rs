@@ -55,16 +55,35 @@ fn end_live(gen: u64) {
 }
 
 fn halt_turn() {
-    if let Ok(mut guard) = LIVE.lock() {
+    // Leave the live row up until the turn thread notices and calls end_live.
+    // Clearing it here let a new message start a second turn while this one was still blocked.
+    if let Ok(guard) = LIVE.lock() {
         if let Some(live) = guard.as_ref() {
             HALT.store(live.gen, Ordering::Relaxed);
         }
-        *guard = None;
     }
 }
 
+pub(crate) fn turn_stop_requested() -> bool {
+    let halt = HALT.load(Ordering::Relaxed);
+    if halt == 0 {
+        return false;
+    }
+    LIVE.lock()
+        .ok()
+        .and_then(|guard| guard.as_ref().map(|live| live.gen == halt))
+        .unwrap_or(false)
+}
+
+fn turn_gen() -> u64 {
+    THIS_TURN.with(|cell| cell.get())
+}
+
 fn turn_halted() -> bool {
-    let gen = THIS_TURN.with(|cell| cell.get());
+    gen_halted(turn_gen())
+}
+
+fn gen_halted(gen: u64) -> bool {
     gen != 0 && HALT.load(Ordering::Relaxed) == gen
 }
 

@@ -375,6 +375,7 @@ export function Assistant({
   const drag = useRef<{ dx: number; dy: number; w: number; h: number } | null>(null);
   const panel = useRef<HTMLElement>(null);
   const sendAbort = useRef<AbortController | null>(null);
+  const sending = useRef(false);
   const narrow = useNarrow();
 
   async function refreshStatus() {
@@ -422,16 +423,33 @@ export function Assistant({
   }, [chatId]);
 
   useEffect(() => {
-    if (!busy || !chatId) return;
+    if (!chatId || !status?.configured) return;
     let stop = false;
+    let wasLive = false;
     const tick = () => {
-      void ai.thread(chatId).then((thread) => {
-        if (stop) return;
-        setMessages(thread.messages);
-        setProposals(thread.proposals);
-      }).catch(() => {});
       void ai.live(chatId).then((row) => {
-        if (!stop) setLive(row.active ? row : null);
+        if (stop) return;
+        if (row.active) {
+          wasLive = true;
+          setBusy(true);
+          setLive(row);
+          void ai.thread(chatId).then((thread) => {
+            if (stop) return;
+            setMessages(thread.messages);
+            setProposals(thread.proposals);
+          }).catch(() => {});
+          return;
+        }
+        setLive(null);
+        if (!sending.current) setBusy(false);
+        if (wasLive) {
+          wasLive = false;
+          void ai.thread(chatId).then((thread) => {
+            if (stop) return;
+            setMessages(thread.messages);
+            setProposals(thread.proposals);
+          }).catch(() => {});
+        }
       }).catch(() => {});
     };
     tick();
@@ -439,9 +457,8 @@ export function Assistant({
     return () => {
       stop = true;
       window.clearInterval(timer);
-      setLive(null);
     };
-  }, [busy, chatId]);
+  }, [chatId, status?.configured]);
 
   async function onSend(ev?: FormEvent, preset?: string) {
     ev?.preventDefault();
@@ -475,6 +492,9 @@ export function Assistant({
     setNote("");
     setDraft("");
     setLogId("");
+    const ctrl = new AbortController();
+    sendAbort.current = ctrl;
+    sending.current = true;
     let id = chatId;
     try {
       if (!id) {
@@ -482,7 +502,7 @@ export function Assistant({
         id = created.id;
         setChatId(id);
       }
-      const res = await ai.send(id, text, getLang(), model, reasoning, attached);
+      const res = await ai.send(id, text, getLang(), model, reasoning, attached, ctrl.signal);
       if (!res.ok) setNote(res.status || "network unavailable");
       const thread = await ai.thread(id);
       setMessages(thread.messages);
@@ -490,6 +510,7 @@ export function Assistant({
       const list = await ai.chats();
       setChats(list.chats);
     } catch (err) {
+      if (ctrl.signal.aborted) return;
       if (!preset) setDraft(text);
       setLogId(attached);
       setNote(err instanceof Error && err.message !== "Failed to fetch" ? err.message : "This turn stopped before a reply.");
@@ -501,8 +522,15 @@ export function Assistant({
         }
       }
     } finally {
-      setBusy(false);
+      sending.current = false;
+      if (sendAbort.current === ctrl) sendAbort.current = null;
+      if (!ctrl.signal.aborted) setBusy(false);
     }
+  }
+
+  function stopTurn() {
+    sendAbort.current?.abort();
+    void ai.stop();
   }
 
   async function onDecision(decision: "approve" | "reject", ids?: string[], comment?: string) {
@@ -693,7 +721,7 @@ export function Assistant({
             onReasoning={setReasoning}
             provider={provider}
             onRename={(id, title) => void ai.rename(id, title).then(() => refreshChats())}
-            onCancel={() => { void ai.stop(); sendAbort.current?.abort(); setBusy(false); }}
+            onCancel={stopTurn}
             logs={logs}
             logId={logId}
             onLog={setLogId}
@@ -811,7 +839,7 @@ export function Assistant({
               onReasoning={setReasoning}
               provider={provider}
               onRename={(id, title) => void ai.rename(id, title).then(() => refreshChats())}
-              onCancel={() => { void ai.stop(); sendAbort.current?.abort(); setBusy(false); }}
+              onCancel={stopTurn}
             logs={logs}
             logId={logId}
             onLog={setLogId}

@@ -401,8 +401,10 @@ mod link_wait_tests {
         let first = begin_live("stopped-chat");
         assert!(turn_is_live("stopped-chat"));
         halt_turn();
-        assert!(!turn_is_live("stopped-chat"));
+        assert!(turn_is_live("stopped-chat"));
         assert!(turn_halted());
+        end_live(first);
+        assert!(!turn_is_live("stopped-chat"));
         let second = begin_live("stopped-chat");
         assert_ne!(first, second);
         assert!(turn_is_live("stopped-chat"));
