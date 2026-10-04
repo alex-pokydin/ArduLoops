@@ -26,6 +26,7 @@ type Scope = "this" | "all";
 type Copy = "any" | "missing";
 
 function sizeLabel(bytes: number): string {
+  if (bytes <= 0) return "0 B";
   if (bytes >= 1024 * 1024) return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
   return `${Math.max(1, Math.ceil(bytes / 1024))} KB`;
 }

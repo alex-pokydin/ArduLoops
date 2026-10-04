@@ -62,6 +62,20 @@ pub fn route(
     match (method, path) {
         ("GET", "/ai/status") => Ok(status(&c)),
         ("POST", "/ai/provider") => provider_op(&c, body),
+        ("POST", "/ai/login") => Ok(json!({"url": login_url()})),
+        ("POST", "/ai/logout") => {
+            logout_session();
+            Ok(status(&c))
+        }
+        ("POST", "/ai/checkout") => {
+            let plan = body["plan"].as_str().unwrap_or("start");
+            let url = checkout_url(plan).map_err(|e| (502, e))?;
+            Ok(json!({"url": url}))
+        }
+        ("POST", "/ai/portal") => {
+            let url = portal_url().map_err(|e| (502, e))?;
+            Ok(json!({"url": url}))
+        }
         ("GET", "/ai/chats") => Ok(list_chats(&c)),
         ("POST", "/ai/chats") => Ok(create_chat(&c, body)),
         ("POST", "/ai/chats/rename") => rename_chat(&c, body),
@@ -103,13 +117,20 @@ fn status(c: &Connection) -> Value {
         });
     }
     let active = rows.iter().find(|r| r["active"] == true).cloned();
+    let hosted = active.as_ref().map(|r| r["storage"] == "hosted").unwrap_or(false);
+    let ready = active.as_ref().map(|r| r["status"] == "ready").unwrap_or(false);
+    let own_key = active.as_ref()
+        .and_then(|r| r["provider"].as_str())
+        .and_then(|provider| load_secrets().get(provider).cloned())
+        .is_some_and(|key| !key.is_empty());
     let bench = bench_left(c);
     json!({
-        "configured": active.as_ref().map(|r| r["status"] == "ready").unwrap_or(false),
+        "configured": ready && ((hosted && signed_in()) || own_key),
         "active": active,
         "providers": rows,
         "storage": "Local storage (reduced protection)",
         "bench": bench,
+        "account": account_status(),
     })
 }
 
@@ -128,6 +149,19 @@ fn provider_op(c: &Connection, body: &Value) -> Result<Value, (u16, String)> {
         secrets.remove(provider);
         save_secrets(&secrets).map_err(|e| (500, e))?;
         c.execute("DELETE FROM ai_provider WHERE provider=?1", [provider]).ok();
+        return Ok(status(c));
+    }
+    if op == "hosted" {
+        if !signed_in() {
+            return Err((401, "Sign in required.".into()));
+        }
+        let model = default_model(provider);
+        c.execute("UPDATE ai_provider SET active=0", []).ok();
+        c.execute(
+            "INSERT INTO ai_provider (provider, active, model, status, storage, updated_at) VALUES (?1, 1, ?2, 'ready', 'hosted', ?3)
+             ON CONFLICT(provider) DO UPDATE SET active=1, model=excluded.model, status='ready', storage='hosted', updated_at=excluded.updated_at",
+            params![provider, model, now()],
+        ).map_err(|e| (500, e.to_string()))?;
         return Ok(status(c));
     }
     if op == "save" || op == "check" {
@@ -153,7 +187,7 @@ fn provider_op(c: &Connection, body: &Value) -> Result<Value, (u16, String)> {
         c.execute("UPDATE ai_provider SET active=0", []).ok();
         c.execute(
             "INSERT INTO ai_provider (provider, active, model, status, storage, updated_at) VALUES (?1, 1, ?2, 'ready', 'local', ?3)
-             ON CONFLICT(provider) DO UPDATE SET active=1, model=excluded.model, status='ready', updated_at=excluded.updated_at",
+             ON CONFLICT(provider) DO UPDATE SET active=1, model=excluded.model, status='ready', storage='local', updated_at=excluded.updated_at",
             params![provider, model, now()],
         ).map_err(|e| (500, e.to_string()))?;
         return Ok(status(c));
@@ -532,13 +566,17 @@ fn title_is_new(c: &Connection, chat: &str) -> bool {
 }
 
 fn active_key(c: &Connection, model_override: Option<&str>) -> Result<(String, String, String), (u16, String)> {
-    let row: Result<(String, String), _> = c.query_row(
-        "SELECT provider, model FROM ai_provider WHERE active=1 AND status='ready'",
+    let row: Result<(String, String, String), _> = c.query_row(
+        "SELECT provider, model, storage FROM ai_provider WHERE active=1 AND status='ready'",
         [],
-        |r| Ok((r.get(0)?, r.get(1)?)),
+        |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
     );
-    let (provider, model) = row.map_err(|_| (409, "not configured".to_string()))?;
+    let (provider, model, storage) = row.map_err(|_| (409, "not configured".to_string()))?;
     let model = model_override.filter(|s| !s.is_empty()).unwrap_or(&model).to_string();
-    let key = load_secrets().get(&provider).cloned().ok_or((409, "not configured".to_string()))?;
+    let key = load_secrets().get(&provider).cloned().filter(|key| !key.is_empty());
+    if storage == "hosted" && signed_in() {
+        return Ok((provider, model, String::new()));
+    }
+    let key = key.ok_or((409, "not configured".to_string()))?;
     Ok((provider, model, key))
 }

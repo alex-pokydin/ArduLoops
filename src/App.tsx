@@ -122,6 +122,19 @@ function serialPortRows(rows: unknown): SerialPort[] {
   });
 }
 
+function portChoice(name: string, label: string): string {
+  const port = name.trim();
+  let title = label.trim();
+  const wrapped = `(${port})`;
+  if (title.toLowerCase().endsWith(wrapped.toLowerCase())) {
+    title = title.slice(0, title.length - wrapped.length).trim().replace(/[\s—-]+$/, "");
+  } else if (title.toLowerCase().startsWith(port.toLowerCase())) {
+    title = title.slice(port.length).replace(/^[\s—-]+/, "");
+  }
+  if (!title || title.toLowerCase() === port.toLowerCase()) return port;
+  return `${port} — ${title}`;
+}
+
 function samePorts(a: SerialPort[], b: SerialPort[]): boolean {
   return a.length === b.length && a.every((port, i) => port.name === b[i]?.name && port.label === b[i]?.label);
 }
@@ -203,6 +216,7 @@ export function App() {
   const [serialPorts, setSerialPorts] = useState<{ name: string; label: string }[]>([]);
   const [linkHist, setLinkHist] = useState(loadLinkHistory);
   const [linkMenu, setLinkMenu] = useState(false);
+  const [portOpen, setPortOpen] = useState(false);
   const [labOpen, setLabOpen] = useState(false);
   const [sitlOpen, setSitlOpen] = useState(false);
   const [pick, setPick] = useState<Shell | null>(() => frameFromUrl());
@@ -303,12 +317,18 @@ export function App() {
   }, [face.ok, face.detail]);
 
   useEffect(() => {
-    if (!linkMenu) return;
+    if (!linkMenu && !portOpen) return;
     const onDoc = (ev: MouseEvent) => {
-      if (!linkCombo.current?.contains(ev.target as Node)) setLinkMenu(false);
+      if (!linkCombo.current?.contains(ev.target as Node)) {
+        setLinkMenu(false);
+        setPortOpen(false);
+      }
     };
     const onKey = (ev: KeyboardEvent) => {
-      if (ev.key === "Escape") setLinkMenu(false);
+      if (ev.key === "Escape") {
+        setLinkMenu(false);
+        setPortOpen(false);
+      }
     };
     document.addEventListener("mousedown", onDoc);
     window.addEventListener("keydown", onKey);
@@ -316,7 +336,7 @@ export function App() {
       document.removeEventListener("mousedown", onDoc);
       window.removeEventListener("keydown", onKey);
     };
-  }, [linkMenu]);
+  }, [linkMenu, portOpen]);
 
   function togglePause() {
     const next = !isPaused();
@@ -435,7 +455,8 @@ export function App() {
                 if (shell !== "home") onShell("home");
               }}
             >
-              ArduLoops
+              <img className="hdr-mark" src="/app-icon.png" alt="" />
+              <span className="hdr-name">ArduLoops</span>
             </a>
             <span className="hdr-dot" aria-hidden="true">·</span>
             <ShellPicker
@@ -501,10 +522,10 @@ export function App() {
                   </button>
                 ) : null}
                 {sourceKnown ? (
-                  <>
+                  <span className="src-bit">
                     {live ? " · " : ""}
                     <span className={sitl ? "src sitl" : "src board"}>{sitl ? t("SITL") : t("board")}</span>
-                  </>
+                  </span>
                 ) : null}
                 <AttRate />
               </span>
@@ -535,17 +556,39 @@ export function App() {
               <div className="link-combo" ref={linkCombo}>
                 {linkKind === "serial" ? (
                   <>
-                    <select
+                    <button
+                      type="button"
+                      className={portOpen ? "port-pick on" : "port-pick"}
                       aria-label="Serial port"
-                      value={linkValue.split("@")[0]}
+                      aria-haspopup="listbox"
+                      aria-expanded={portOpen}
+                      title={portChoice(linkValue.split("@")[0], serialPorts.find((port) => port.name === linkValue.split("@")[0])?.label || linkValue.split("@")[0])}
                       onPointerDown={() => refreshSerialPorts.current()}
-                      onChange={(ev) => setLinkValue(`${ev.target.value}@${linkValue.split("@")[1] || "115200"}`)}
+                      onClick={() => { setLinkMenu(false); setPortOpen((open) => !open); }}
                     >
-                      {serialPorts.length ? null : <option value="">—</option>}
-                      {serialPorts.map((port) => (
-                        <option key={port.name} value={port.name}>{port.label}</option>
-                      ))}
-                    </select>
+                      {linkValue.split("@")[0] || "—"}
+                    </button>
+                    {portOpen ? (
+                      <ul className="link-menu port-menu" role="listbox" aria-label="Serial port">
+                        {(serialPorts.length ? serialPorts : [{ name: linkValue.split("@")[0], label: linkValue.split("@")[0] }]).filter((port) => port.name).map((port) => {
+                          const choice = portChoice(port.name, port.label);
+                          const on = port.name === linkValue.split("@")[0];
+                          return (
+                            <li key={port.name} role="option" aria-selected={on}>
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  setLinkValue(`${port.name}@${linkValue.split("@")[1] || "115200"}`);
+                                  setPortOpen(false);
+                                }}
+                              >
+                                {choice}
+                              </button>
+                            </li>
+                          );
+                        })}
+                      </ul>
+                    ) : null}
                     <input
                       className="baud"
                       value={linkValue.split("@")[1] || "115200"}

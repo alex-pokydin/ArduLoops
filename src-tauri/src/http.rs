@@ -69,6 +69,39 @@ fn handle(stream: TcpStream, latest: Arc<Mutex<Sample>>, tx: Sender<Cmd>) -> std
 
     let (path, query) = split_query(&raw_path);
 
+    if method == "POST" && path == "/open" {
+        let len = headers
+            .get("content-length")
+            .and_then(|v| v.parse::<usize>().ok())
+            .unwrap_or(0)
+            .min(4_096);
+        let mut body = vec![0u8; len];
+        if len > 0 {
+            reader.read_exact(&mut body)?;
+        }
+        let url = serde_json::from_slice::<serde_json::Value>(&body)
+            .ok()
+            .and_then(|value| value.get("url").and_then(serde_json::Value::as_str).map(str::to_string))
+            .unwrap_or_default();
+        let mut socket = reader.into_inner();
+        return match open_https(&url) {
+            Ok(()) => reply(&mut socket, 204, "text/plain", b""),
+            Err(error) => reply(
+                &mut socket,
+                400,
+                "application/json",
+                &serde_json::to_vec(&serde_json::json!({ "error": error }))?,
+            ),
+        };
+    }
+
+    if method == "GET" && path == "/auth/callback" {
+        let nonce = query.get("nonce").map(String::as_str).unwrap_or("");
+        let page = crate::agent::finish_login(nonce);
+        let mut socket = reader.into_inner();
+        return reply(&mut socket, 200, "text/html; charset=utf-8", page.as_bytes());
+    }
+
     if path == "/tlog" && (method == "GET" || method == "POST") {
         return tlog_reply(reader, &method, &headers);
     }
@@ -1151,13 +1184,64 @@ fn tlog_reply(
     }
 }
 
+/// Open an https page in the system browser. The desktop webview ignores a plain link.
+fn open_https(url: &str) -> Result<(), String> {
+    if !https_page(url) {
+        return Err("only an https page".into());
+    }
+    #[cfg(windows)]
+    {
+        return std::process::Command::new("rundll32.exe")
+            .args(["url.dll,FileProtocolHandler", url])
+            .spawn()
+            .map(|_| ())
+            .map_err(|err| err.to_string());
+    }
+    #[cfg(target_os = "macos")]
+    {
+        return std::process::Command::new("open")
+            .arg(url)
+            .spawn()
+            .map(|_| ())
+            .map_err(|err| err.to_string());
+    }
+    #[cfg(all(unix, not(target_os = "macos"), not(target_os = "android")))]
+    {
+        return std::process::Command::new("xdg-open")
+            .arg(url)
+            .spawn()
+            .map(|_| ())
+            .map_err(|err| err.to_string());
+    }
+    #[cfg(target_os = "android")]
+    {
+        let _ = url;
+        Err("open the link in the browser".into())
+    }
+}
+
+fn https_page(url: &str) -> bool {
+    let Some(rest) = url.strip_prefix("https://") else {
+        return false;
+    };
+    if rest.is_empty() || url.len() > 2_000 || url.chars().any(|c| c.is_control() || c == '"' || c == '\\') {
+        return false;
+    }
+    let host = rest.split(['/', '?', '#']).next().unwrap_or("");
+    let host = host.split('@').next_back().unwrap_or("");
+    !host.is_empty() && host.contains('.')
+}
+
 fn reply(socket: &mut TcpStream, code: u16, ctype: &str, body: &[u8]) -> std::io::Result<()> {
     let reason = match code {
         200 => "OK",
         204 => "No Content",
         400 => "Bad Request",
         404 => "Not Found",
+        401 => "Unauthorized",
+        403 => "Forbidden",
         409 => "Conflict",
+        429 => "Too Many Requests",
         500 => "Error",
         503 => "Unavailable",
         _ => "OK",

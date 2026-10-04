@@ -40,6 +40,12 @@ type LinkFace = {
 let linkFaceCache: LinkFace = { ok: false, frame: "", mode: "", armed: false, boot_uid: "", board_name: "" };
 let linkFaceVehicle = "";
 
+function sameLive(a: LiveTurn | null, b: LiveTurn | null): boolean {
+  if (a === b) return true;
+  if (!a || !b) return !a && !b;
+  return a.active === b.active && a.tool === b.tool && a.input === b.input && a.thought === b.thought && a.reply === b.reply && a.note === b.note;
+}
+
 function sameFlow(a?: Sample["log_download"], b?: Sample["log_download"]): boolean {
   if (a === b) return true;
   if (!a || !b) return !a && !b;
@@ -376,6 +382,7 @@ export function Assistant({
   const panel = useRef<HTMLElement>(null);
   const sendAbort = useRef<AbortController | null>(null);
   const sending = useRef(false);
+  const pulled = useRef("");
   const narrow = useNarrow();
 
   async function refreshStatus() {
@@ -432,12 +439,16 @@ export function Assistant({
         if (row.active) {
           wasLive = true;
           setBusy(true);
-          setLive(row);
-          void ai.thread(chatId).then((thread) => {
-            if (stop) return;
-            setMessages(thread.messages);
-            setProposals(thread.proposals);
-          }).catch(() => {});
+          setLive((prev) => (sameLive(prev, row) ? prev : row));
+          const mark = `${row.tool ?? ""}\n${row.input ?? ""}\n${row.note ?? ""}`;
+          if (pulled.current !== mark) {
+            pulled.current = mark;
+            void ai.thread(chatId).then((thread) => {
+              if (stop) return;
+              setMessages(thread.messages);
+              setProposals(thread.proposals);
+            }).catch(() => {});
+          }
           return;
         }
         setLive(null);
@@ -452,6 +463,7 @@ export function Assistant({
         }
       }).catch(() => {});
     };
+    pulled.current = "";
     tick();
     const timer = window.setInterval(tick, 400);
     return () => {
@@ -630,7 +642,9 @@ export function Assistant({
 
   const configured = !!status?.configured;
   const provider = status?.active?.provider || "";
-  const models = MODELS[provider] || [];
+  const models = (status?.account?.signed_in && status.active?.storage === "hosted" && status.account.models?.[provider])
+    ? (status.account.models[provider] || [])
+    : (MODELS[provider] || []);
   useEffect(() => {
     const node = panel.current;
     if (!node) return;
@@ -851,7 +865,7 @@ export function Assistant({
           ) : (
             <div className="ai-setup">
               <Sparkle />
-              <p>{t("Add an API key in Options to start the assistant.")}</p>
+              <p>{t("Sign in from Options to start the assistant. Your own key still works.")}</p>
               <button type="button" className="cyan" onClick={onOpenOptions}>{t("Options")}</button>
             </div>
           )}
@@ -970,24 +984,33 @@ function ChatPane({
   const [renaming, setRenaming] = useState("");
   const [scope, setScope] = useState<"all" | "drone">("drone");
   const [filterOpen, setFilterOpen] = useState(false);
+  const narrow = useNarrow();
+  const [chatsOpen, setChatsOpen] = useState(() => !window.matchMedia("(max-width: 768px)").matches);
+  useEffect(() => {
+    if (narrow) setChatsOpen(false);
+  }, [narrow]);
   const thread = useMemo(() => placeProposals(groupMessages(messages), proposals), [messages, proposals]);
-  const liveView = useMemo(() => latestLive(thread), [thread]);
+  const [earlier, setEarlier] = useState(0);
+  useEffect(() => { setEarlier(0); }, [chatId]);
+  const shownThread = useMemo(() => tailTurns(thread, 6 + earlier), [thread, earlier]);
+  const hidden = thread.length - shownThread.length;
+  const liveView = useMemo(() => latestLive(shownThread), [shownThread]);
   const [liveOpen, setLiveOpen] = useState(false);
   useEffect(() => { setLiveOpen(false); }, [chatId]);
   const [keptThoughts, setKeptThoughts] = useState<Record<string, string>>({});
-  const liveTools = thread.reduce((found, block, index) => block.kind === "tools" ? index : found, -1);
-  const lastProposal = thread.reduce((found, block, index) => block.kind === "proposal" ? index : found, -1);
+  const liveTools = shownThread.reduce((found, block, index) => block.kind === "tools" ? index : found, -1);
+  const lastProposal = shownThread.reduce((found, block, index) => block.kind === "proposal" ? index : found, -1);
   const liveOnTools = liveTools > lastProposal;
   const seenChat = useRef(chatId);
   useEffect(() => { setKeptThoughts({}); }, [chatId]);
   useEffect(() => {
     if (!live?.reply || !live.thought?.trim() || !liveOnTools) return;
-    const block = thread[liveTools];
+    const block = shownThread[liveTools];
     if (block?.kind !== "tools") return;
     const text = live.thought;
     const key = block.key;
     setKeptThoughts((prev) => prev[key] === text ? prev : { ...prev, [key]: text });
-  }, [live?.reply, live?.thought, liveOnTools, liveTools, thread]);
+  }, [live?.reply, live?.thought, liveOnTools, liveTools, shownThread]);
   const followBottom = useRef(true);
   const wasBusy = useRef(false);
   useLayoutEffect(() => {
@@ -1049,10 +1072,11 @@ function ChatPane({
   const waiting = proposals.some((p) => p.status === "pending");
 
   return (
-    <div className={`ai-pane${compact ? " compact" : ""}`}>
-      {compact ? null : (
+    <div className={`ai-pane${compact ? " compact" : ""}${!compact && !chatsOpen ? " chats-shut" : ""}`}>
+      {compact || !chatsOpen ? null : (
       <aside className="ai-chats">
         <div className="ai-chat-bar">
+          <button type="button" className="ai-chats-fold" aria-label={t("Hide chats")} aria-expanded={true} title={t("Hide chats")} onClick={() => setChatsOpen(false)}><ChatsIcon /></button>
           <button type="button" className="ai-new" aria-label={t("New chat")} title={t("New chat")} onClick={onNew}><NewChatIcon /></button>
           <input value={query} onChange={(ev) => onQuery(ev.target.value)} placeholder={t("Search chats")} aria-label={t("Search chats")} />
           <div className="ai-filter-wrap">
@@ -1090,7 +1114,7 @@ function ChatPane({
                   type="button"
                   className={chat.id === chatId ? "on" : ""}
                   title={chat.title}
-                  onClick={() => onPick(chat.id)}
+                  onClick={() => { onPick(chat.id); if (narrow) setChatsOpen(false); }}
                   onDoubleClick={() => setRenaming(chat.id)}
                 >
                   {chat.title}
@@ -1101,7 +1125,13 @@ function ChatPane({
         </ul>
       </aside>
       )}
+      {narrow && chatsOpen ? (
+        <button type="button" className="ai-chats-back" aria-label={t("Hide chats")} onClick={() => setChatsOpen(false)} />
+      ) : null}
       <div className="ai-thread">
+        {!compact && !chatsOpen ? (
+          <button type="button" className="ai-chats-toggle" aria-label={t("Show chats")} aria-expanded={false} title={t("Show chats")} onClick={() => setChatsOpen(true)}><ChatsIcon /></button>
+        ) : null}
         <Mesh visible={messages.length === 0 && !busy} />
         <div
           className={`ai-msgs${messages.length ? " has" : ""}`}
@@ -1128,8 +1158,13 @@ function ChatPane({
                 </div>
               </div>
             ) : null}
-            {thread.map((block, index) => block.kind === "tools" ? (
-              <ToolGroup key={block.key} t={t} items={block.items} workedMs={block.workedMs} note={block.note} flow={flow} thought={keptThoughts[block.key]} live={busy && liveOnTools && index === liveTools ? live : null} />
+            {hidden > 0 ? (
+              <button type="button" className="ai-earlier" onClick={() => setEarlier((count) => count + 6)}>
+                {t("Show earlier")}
+              </button>
+            ) : null}
+            {shownThread.map((block, index) => block.kind === "tools" ? (
+              <ToolGroup key={block.key} t={t} items={block.items} workedMs={block.workedMs} note={block.note} flow={index === liveTools ? flow : undefined} thought={keptThoughts[block.key]} live={busy && liveOnTools && index === liveTools ? live : null} />
             ) : block.kind === "proposal" ? (
               <ProposalCard key={block.key} t={t} items={block.items} busy={busy} onDecision={onDecision} onCancelWait={onCancelWait} onOpenWizard={onOpenWizard} wizardOpenId={wizardOpenId} />
             ) : (
@@ -1147,7 +1182,7 @@ function ChatPane({
                     <button type="button" disabled={busy} onClick={() => onSend(t("The tools above already returned. Continue from those results and do not call them again."))}>{t("Continue")}</button>
                   </div>
                 ) : block.msg.role === "assistant" ? <AssistantMarkdown text={shownNotice(block.msg.body, t)} /> : block.msg.body}
-                {block.msg.role === "assistant" ? <ChartStrip charts={chartsUnder(thread, index)} /> : null}
+                {block.msg.role === "assistant" ? <ChartStrip charts={chartsUnder(shownThread, index)} /> : null}
                 {block.msg.role === "assistant" && liveView?.index === index ? <LiveView spec={liveView.spec} open={liveOpen} onOpen={() => setLiveOpen(true)} onClose={() => setLiveOpen(false)} /> : null}
               </article>
               )
@@ -1383,6 +1418,21 @@ function workMs(body: string): number | undefined {
     /* not a work record */
   }
   return undefined;
+}
+
+function turnStarts(blocks: ThreadBlock[]): number[] {
+  const starts = blocks.flatMap((block, index) =>
+    block.kind === "msg" && block.msg.role === "user" ? [index] : [],
+  );
+  if (starts.length === 0) return blocks.length ? [0] : [];
+  if (starts[0] > 0) starts.unshift(0);
+  return starts;
+}
+
+function tailTurns(blocks: ThreadBlock[], keep: number): ThreadBlock[] {
+  const starts = turnStarts(blocks);
+  if (!starts.length || starts.length <= keep) return blocks;
+  return blocks.slice(starts[starts.length - keep]);
 }
 
 function groupMessages(messages: Msg[]): ThreadBlock[] {
@@ -1845,7 +1895,7 @@ function ReasoningNote({ t, text }: { t: (k: string) => string; text: string }) 
   );
 }
 
-function ToolGroup({
+const ToolGroup = memo(function ToolGroup({
   t, items, workedMs, note, thought, live, flow,
 }: {
   t: (k: string, vars?: Record<string, string | number>) => string;
@@ -1859,9 +1909,8 @@ function ToolGroup({
   const running = live?.tool ? liveTitle(live, flow) : t("Thinking…");
   const passed = note || (live?.note ?? "");
   const moved = thought && !(live && !live.reply) ? thought : "";
-  const failed = items.map((item) => toolFailed(item.output));
-  const shown = items.map(shownOutput);
-  const heavyCount = shown.filter((text) => text.length > HEAVY_OUTPUT).length;
+  const failed = useMemo(() => items.map((item) => toolFailed(item.output)), [items]);
+  const heavyCount = useMemo(() => items.reduce((count, item) => count + (item.output.length > HEAVY_OUTPUT ? 1 : 0), 0), [items]);
   return (
     <div className="ai-tools-live">
     <details className={failed.some(Boolean) ? "ai-tools ai-has-fail" : "ai-tools"}>
@@ -1872,34 +1921,50 @@ function ToolGroup({
       <ul>
         {moved ? <ReasoningNote t={t} text={moved} /> : null}
         {passed ? <PassedNote t={t} text={passed} /> : null}
-        {items.map((item, index) => {
-          const hint = nameHint(item.input) || nameHint(item.output);
-          return (
-          <li key={item.key}>
-            <details className={failed[index] ? "ai-tool-fail" : undefined}>
-              <summary>
-                <span className="ai-tool-name">{item.name}</span>
-                {shown[index].length > HEAVY_OUTPUT ? (
-                  <SizeWarn title={t("Large result, kept whole. {n} characters.", { n: shown[index].length })} />
-                ) : null}
-                {hint ? <span className="ai-tool-hint" title={hint}>{` · ${hint}`}</span> : null}
-              </summary>
-              {item.input !== undefined ? (
-                <>
-                  <p className="ai-io">{t("Input")}</p>
-                  <pre>{formatTool(item.input)}</pre>
-                </>
-              ) : null}
-              <p className="ai-io">{t("Output")}</p>
-              <pre>{shown[index]}</pre>
-            </details>
-          </li>
-          );
-        })}
+        {items.map((item, index) => (
+          <ToolRow key={item.key} t={t} item={item} failed={failed[index]} />
+        ))}
       </ul>
     </details>
     {live && !live.reply && live.thought ? <ThoughtText text={live.thought} /> : null}
     </div>
+  );
+});
+
+function ToolRow({
+  t, item, failed,
+}: {
+  t: (k: string, vars?: Record<string, string | number>) => string;
+  item: ToolItem;
+  failed: boolean;
+}) {
+  const [open, setOpen] = useState(false);
+  const hint = nameHint(item.input) || nameHint(item.output);
+  const output = open ? shownOutput(item) : "";
+  return (
+    <li>
+      <details className={failed ? "ai-tool-fail" : undefined} onToggle={(ev) => setOpen(ev.currentTarget.open)}>
+        <summary>
+          <span className="ai-tool-name">{item.name}</span>
+          {item.output.length > HEAVY_OUTPUT ? (
+            <SizeWarn title={t("Large result, kept whole. {n} characters.", { n: item.output.length })} />
+          ) : null}
+          {hint ? <span className="ai-tool-hint" title={hint}>{` · ${hint}`}</span> : null}
+        </summary>
+        {open && item.input !== undefined ? (
+          <>
+            <p className="ai-io">{t("Input")}</p>
+            <pre>{formatTool(item.input)}</pre>
+          </>
+        ) : null}
+        {open ? (
+          <>
+            <p className="ai-io">{t("Output")}</p>
+            <pre>{output}</pre>
+          </>
+        ) : null}
+      </details>
+    </li>
   );
 }
 
@@ -1914,6 +1979,15 @@ function ThoughtText({ text }: { text: string }) {
     <div className="ai-thought" ref={box}>
       <AssistantMarkdown text={body} />
     </div>
+  );
+}
+
+function ChatsIcon() {
+  return (
+    <svg viewBox="0 0 16 16" width="15" height="15" aria-hidden="true">
+      <path d="M2.4 2.6h11.2v10.8H2.4z" fill="none" stroke="currentColor" strokeWidth="1.4" />
+      <path d="M6.2 2.6v10.8" fill="none" stroke="currentColor" strokeWidth="1.4" />
+    </svg>
   );
 }
 

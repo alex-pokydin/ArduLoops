@@ -48,7 +48,7 @@ struct CompactJobs {
 static COMPACT_JOBS: LazyLock<Mutex<CompactJobs>> = LazyLock::new(|| Mutex::new(CompactJobs { running: HashSet::new(), again: HashSet::new() }));
 
 fn schedule_compact(chat: &str, provider: &str, model: &str, key: &str) {
-    if chat.is_empty() || provider.is_empty() || key.is_empty() {
+    if chat.is_empty() || provider.is_empty() {
         return;
     }
     let mut jobs = match COMPACT_JOBS.lock() {

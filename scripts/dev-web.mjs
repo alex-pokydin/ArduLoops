@@ -31,6 +31,24 @@ function bridgeArgs() {
   ];
 }
 
+function startApi() {
+  const apiRoot = join(root, "..", "arduloops-api");
+  const script = join(apiRoot, "src", "server.mjs");
+  if (!existsSync(script)) return;
+  process.env.ARDULOOPS_API = process.env.ARDULOOPS_API || "http://127.0.0.1:8788";
+  const child = spawn(process.execPath, [script], {
+    stdio: "inherit",
+    cwd: apiRoot,
+    env: { ...process.env, ARDULOOPS_DEV: process.env.ARDULOOPS_DEV || "1", PORT: "8788" },
+  });
+  child.on("exit", (code) => {
+    if (stopping) return;
+    console.log(`arduloops-api exited (${code ?? 0})`);
+  });
+  return child;
+}
+
+let apiProc = null;
 let stopping = false;
 let viteProc = null;
 let bridgeProc = null;
@@ -146,6 +164,7 @@ function onStop() {
   clearTimeout(restartTimer);
   killTree(bridgeProc);
   killTree(viteProc);
+  killTree(apiProc);
   process.exit(0);
 }
 process.on("SIGINT", onStop);
@@ -159,6 +178,8 @@ if (!existsSync(cargoExe)) {
 console.log("ArduLoops  http://127.0.0.1:5173  (Vite HMR + Rust watch)");
 assertPortFree(5173, "Vite");
 assertPortFree(8767, "MAVLink HTTP");
+assertPortFree(8788, "ArduLoops API");
+apiProc = startApi();
 startBridge();
 startVite();
 

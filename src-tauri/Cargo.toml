@@ -42,7 +42,7 @@ zip = { version = "0.6.6", default-features = false, features = ["deflate"] }
 # Android cannot use the platform certificate verifier: that crate panics unless a Kotlin
 # component is initialized, and the dropped connection shows up in the WebView as "Failed to fetch".
 genai = { version = "0.6.5", default-features = false }
-reqwest = { version = "0.13.5", default-features = false, features = ["rustls-no-provider"] }
+reqwest = { version = "0.13.5", default-features = false, features = ["rustls-no-provider", "stream"] }
 rustls = { version = "0.23.45", default-features = false, features = ["ring", "std", "tls12"] }
 webpki-roots = "1"
 futures-util = "0.3"

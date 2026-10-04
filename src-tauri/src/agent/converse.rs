@@ -17,6 +17,7 @@ fn converse(
 ) -> Result<String, String> {
     let mut messages = vec![genai::chat::ChatMessage::user(prompt)];
     let mut steer_after = latest_message_id(c, chat);
+    let mut turn_id: Option<String> = None;
     let mut seen: HashMap<String, Value> = HashMap::new();
     let mut repeat_streak = 0u32;
     let mut used = 0u32;
@@ -33,7 +34,12 @@ fn converse(
             append_steer(&mut messages, &note);
         }
         live_thinking();
-        let turn = provider_turn(provider, model, key, reasoning, system, &messages)?;
+        let quota = if turn_id.is_some() { "continue" } else { "turn" };
+        let turn = if key.is_empty() {
+            hosted_turn(provider, model, reasoning, system, &messages, quota, &mut turn_id)?
+        } else {
+            provider_turn(provider, model, key, reasoning, system, &messages)?
+        };
         if turn.calls.is_empty() {
             if turn.text.trim().is_empty() {
                 return Err("empty provider response".into());
@@ -410,6 +416,9 @@ async fn stream_turn(
 }
 
 fn call_provider(provider: &str, model: &str, key: &str, prompt: &str, _tools: &[()]) -> Result<String, String> {
+    if key.is_empty() {
+        return hosted_complete(provider, model, prompt);
+    }
     let iden = provider_model(provider, model)?;
     let mut options = genai::chat::ChatOptions::default().with_capture_content(true);
     if provider == "gemini" || provider == "anthropic" {

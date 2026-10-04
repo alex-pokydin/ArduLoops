@@ -1,10 +1,20 @@
 import { APP_HTTP } from "../mav/link";
 
+export type AiAccount = {
+  signed_in: boolean;
+  email?: string;
+  plan?: string;
+  used?: number | null;
+  limit?: number | null;
+  models?: Record<string, string[]>;
+};
+
 export type AiStatus = {
   configured: boolean;
   storage: string;
-  active: { provider: string; model: string; status: string } | null;
+  active: { provider: string; model: string; status: string; storage?: string } | null;
   bench: { until_ms: number; left_s: number } | null;
+  account?: AiAccount;
 };
 
 export type Chat = { id: string; title: string; updated_at: number; vehicle_key?: string };
@@ -80,11 +90,15 @@ export const ai = {
     if (!r.ok || !body.id) throw new Error(body.error || body.message || "Could not load the log");
     return { id: body.id };
   },
-  saveProvider: (provider: string, api_key: string, op: "save" | "check" | "remove" | "disable") =>
+  saveProvider: (provider: string, api_key: string, op: "save" | "check" | "remove" | "disable" | "hosted") =>
     json<AiStatus & { ok?: boolean; status?: string }>("/ai/provider", {
       method: "POST",
       body: JSON.stringify({ provider, api_key, op }),
     }),
+  loginUrl: () => json<{ url: string }>("/ai/login", { method: "POST", body: "{}" }),
+  logout: () => json<AiStatus>("/ai/logout", { method: "POST", body: "{}" }),
+  checkout: (plan: "start" | "plus") => json<{ url: string }>("/ai/checkout", { method: "POST", body: JSON.stringify({ plan }) }),
+  portal: () => json<{ url: string }>("/ai/portal", { method: "POST", body: "{}" }),
   bench: (minutes: number) =>
     json("/ai/bench", {
       method: "POST",

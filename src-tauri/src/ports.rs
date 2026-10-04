@@ -59,6 +59,24 @@ fn friendly(p: &serialport::SerialPortInfo) -> String {
     }
 }
 
+#[cfg(windows)]
+fn port_first(com: &str, friendly: &str) -> String {
+    let title = friendly.trim();
+    let tail = format!("({com})");
+    let title = if title.len() >= tail.len() && title.to_ascii_lowercase().ends_with(&tail.to_ascii_lowercase()) {
+        title[..title.len() - tail.len()].trim().trim_end_matches(['—', '-', ' '])
+    } else if title.len() >= com.len() && title.to_ascii_lowercase().starts_with(&com.to_ascii_lowercase()) {
+        title[com.len()..].trim_start_matches(['—', '-', ' '])
+    } else {
+        title
+    };
+    if title.is_empty() || title.eq_ignore_ascii_case(com) {
+        com.to_string()
+    } else {
+        format!("{com} — {title}")
+    }
+}
+
 #[cfg(not(windows))]
 fn windows_names() -> std::collections::HashMap<String, String> {
     std::collections::HashMap::new()
@@ -103,7 +121,7 @@ fn windows_names() -> std::collections::HashMap<String, String> {
         else {
             continue;
         };
-        out.insert(com, name);
+        out.insert(com.clone(), port_first(&com, &name));
     }
     unsafe { SetupDiDestroyDeviceInfoList(set) };
     out

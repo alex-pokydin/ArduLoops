@@ -691,11 +691,21 @@ export function Aside({
 
   const tuneNode = nodes.find((n) => n.id === sel) ?? nodes.find((n) => n.guide) ?? nodes[0] ?? null;
   const stickAxis = vehicle === "plane" ? camStickAxis(planeCam) : axis;
+  const [controlsOpen, setControlsOpen] = useState(false);
 
   return (
     <aside className={alive ? undefined : "idle"}>
       <SignalLog vehicle={vehicle} holdUntil={holdUntil} shownGain={shownGain} />
       <CraftLive axis={axis} vehicle={vehicle} onCam={vehicle === "plane" ? setPlaneCam : undefined} />
+      <button
+        type="button"
+        className={controlsOpen ? "controls-toggle on" : "controls-toggle"}
+        aria-expanded={controlsOpen}
+        onClick={() => setControlsOpen((open) => !open)}
+      >
+        {t("Controls")}
+      </button>
+      <div className="controls" hidden={!controlsOpen}>
       <FlightBar modes={modes} vehicle={vehicle} onDisarm={resetSticks} />
       <div className={`sticks axis-${stickAxis}`} aria-label={t("Virtual Mode 2 sticks")}>
         <div className="stick thr" ref={stickL} role="button" tabIndex={0} title={stickAxis === "d" ? t("Left stick: throttle (up-down)") : stickAxis === "yaw" ? t("Left stick: yaw (left-right)") : t("Left stick: throttle and yaw")}>
@@ -714,6 +724,7 @@ export function Aside({
           <span className="tag e">{t("Roll+")}</span>
           <div className="knob" ref={knobR} />
         </div>
+      </div>
       </div>
       <FeelLive axis={axis} vehicle={vehicle} stickName={t(stickAxis)} />
       {presets ? <PresetBar alive={alive} onPick={applyPreset} /> : null}

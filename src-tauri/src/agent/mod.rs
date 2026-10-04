@@ -46,5 +46,8 @@ include!("actions.rs");
 // The model loop and provider requests.
 include!("converse.rs");
 
+// Hosted subscription: session, quota, and the provider proxy.
+include!("hosted.rs");
+
 // Tests.
 include!("tests.rs");

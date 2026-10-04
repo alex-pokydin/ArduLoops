@@ -471,7 +471,10 @@ pub fn run_loop(
                 request_streams(&*conn, &st);
                 last_stream = now;
             }
-            if let Some(t) = last_att {
+            // Log bytes can crowd ATTITUDE off a slow serial link. That is not a dead port.
+            if st.active_log_download.is_some() {
+                last_att = Some(now);
+            } else if let Some(t) = last_att {
                 if now.duration_since(t) > Duration::from_secs(12) {
                     st.sample.ok = false;
                     let serial = url.lock().ok().is_some_and(|g| serial_url(&g));

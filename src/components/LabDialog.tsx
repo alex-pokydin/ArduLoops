@@ -1,6 +1,6 @@
 import { useEffect, useState, type ReactNode } from "react";
 import { type Lang, useT, useLang, setLang } from "../i18n/i18n";
-import { ai } from "../assistant/api";
+import { ai, type AiAccount, type AiStatus } from "../assistant/api";
 import { APP_HTTP } from "../mav/link";
 import { PLOT_SPANS, getPlotSpan, setPlotSpan, type PlotSpan } from "../mav/store";
 
@@ -40,6 +40,8 @@ export function LabDialog({
   const [aiKey, setAiKey] = useState("");
   const [aiState, setAiState] = useState("");
   const [aiConfigured, setAiConfigured] = useState(false);
+  const [account, setAccount] = useState<AiAccount | null>(null);
+  const [ownKey, setOwnKey] = useState(false);
   const [savedProvider, setSavedProvider] = useState("");
   const [span, setSpan] = useState<PlotSpan>(getPlotSpan);
   const [tlogOn, setTlogOn] = useState(false);
@@ -93,6 +95,15 @@ export function LabDialog({
     }
   }
 
+  function applyAi(s: AiStatus) {
+    setAiConfigured(s.configured);
+    setAccount(s.account || null);
+    const provider = s.active?.provider || "disabled";
+    setSavedProvider(provider);
+    setAiProvider(provider);
+    setAiState(s.active?.status || "");
+  }
+
   useEffect(() => {
     if (!open) return;
     setSpan(getPlotSpan());
@@ -106,13 +117,17 @@ export function LabDialog({
       })
       .catch(() => {});
     void ai.status().then((s) => {
-      setAiConfigured(s.configured);
-      const provider = s.active?.provider || "disabled";
-      setSavedProvider(provider);
-      setAiProvider(provider);
-      setAiState(s.active?.status || "");
+      applyAi(s);
+      if (s.configured && s.active?.provider && s.active.provider !== "disabled") setOwnKey(true);
       setAiKey("");
     }).catch(() => {});
+    const timer = window.setInterval(() => {
+      void ai.status().then((s) => {
+        setAccount(s.account || null);
+        setAiConfigured(s.configured);
+      }).catch(() => {});
+    }, 2000);
+    return () => window.clearInterval(timer);
   }, [open]);
 
   useEffect(() => {
@@ -220,59 +235,144 @@ export function LabDialog({
           ) : null}
           <li className="opt ai-row">
             <div className="opt-body">
-              <b>{t("AI assistant")}</b>
+              <div className="ai-title">
+                <b>{t("AI assistant")}</b>
+                {account?.signed_in ? (
+                  <button type="button" onClick={() => void ai.logout().then(applyAi).catch((err: Error) => setAiState(err.message))}>
+                    {t("Sign out")}
+                  </button>
+                ) : (
+                  <button
+                    type="button"
+                    className="google-signin"
+                    onClick={() => {
+                      void ai.loginUrl().then((res) => {
+                        window.open(res.url, "arduloops-auth", "width=480,height=720");
+                      }).catch((err: Error) => setAiState(err.message));
+                    }}
+                  >
+                    <GoogleMark />
+                    {t("Sign in with Google")}
+                  </button>
+                )}
+              </div>
               <span>
-                {aiConfigured ? t("Local storage (reduced protection). The key is not shown again.") : t("Choose a provider, then check the key. A check can use a little API quota.")}
+                {account?.signed_in
+                  ? t("Signed in as {email}.", { email: account.email || "" })
+                  : t("Sign in to activate the ArduLoops assistant. Your own key still works.")}
+                {account?.signed_in && account.limit != null
+                  ? ` ${t("{left} of {limit} requests left today.", { left: Math.max(0, account.limit - (account.used || 0)), limit: account.limit })}`
+                  : ""}
                 {aiConfigured && savedProvider && aiProvider !== savedProvider && aiProvider !== "disabled" ? (
                   <> {t("Chats stay on this computer. The next message sends their selected context to this provider.")}</>
                 ) : null}
-                {KEY_PAGES[aiProvider] ? (
-                  <>
-                    {" "}
-                    <a href={KEY_PAGES[aiProvider]} target="_blank" rel="noreferrer">{t("Create a key")}</a>
-                  </>
-                ) : null}
               </span>
-              {aiState ? <span>{t(aiState)}</span> : null}
             </div>
-            <div className="ai-opt">
-              <select aria-label={t("AI assistant")} value={aiProvider} onChange={(ev) => { setAiProvider(ev.target.value); setAiState(""); }}>
-                <option value="disabled">{t("Disabled")}</option>
-                <option value="gemini">Gemini</option>
-                <option value="openai">OpenAI</option>
-                <option value="anthropic">Anthropic</option>
-                <option value="xai">xAI</option>
-              </select>
+            {account?.signed_in ? (
+              <div className="ai-opt">
+                <select aria-label={t("AI assistant")} value={aiProvider} onChange={(ev) => { setAiProvider(ev.target.value); setAiState(""); }}>
+                  <option value="disabled">{t("Disabled")}</option>
+                  <option value="gemini">Gemini</option>
+                  <option value="openai">OpenAI</option>
+                  <option value="anthropic">Anthropic</option>
+                  <option value="xai">xAI</option>
+                </select>
+                {aiProvider !== "disabled" ? (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setAiState(t("checking"));
+                      void ai.saveProvider(aiProvider, "", "hosted").then((res) => {
+                        applyAi(res);
+                        setAiState(res.ok === false ? (res.status || "network unavailable") : "ready");
+                        setAiKey("");
+                      }).catch((err: Error) => setAiState(err.message));
+                    }}
+                  >
+                    {t("Use ArduLoops")}
+                  </button>
+                ) : null}
+                <button type="button" onClick={() => void ai.checkout("start").then((res) => window.open(res.url)).catch((err: Error) => setAiState(err.message))}>
+                  {t("Start · 30 a day")}
+                </button>
+                <button type="button" onClick={() => void ai.checkout("plus").then((res) => window.open(res.url)).catch((err: Error) => setAiState(err.message))}>
+                  {t("Plus · 100 a day")}
+                </button>
+                <button type="button" onClick={() => void ai.portal().then((res) => window.open(res.url)).catch((err: Error) => setAiState(err.message))}>
+                  {t("Manage subscription")}
+                </button>
+              </div>
+            ) : null}
+            <button
+              type="button"
+              className={ownKey ? "own-key-toggle on" : "own-key-toggle"}
+              aria-expanded={ownKey}
+              onClick={() => setOwnKey((open) => !open)}
+            >
+              {t("Use my own key")}
+            </button>
+            <div className="ai-opt own-key" hidden={!ownKey}>
+              {account?.signed_in ? null : (
+                <select aria-label={t("AI assistant")} value={aiProvider} onChange={(ev) => { setAiProvider(ev.target.value); setAiState(""); }}>
+                  <option value="disabled">{t("Disabled")}</option>
+                  <option value="gemini">Gemini</option>
+                  <option value="openai">OpenAI</option>
+                  <option value="anthropic">Anthropic</option>
+                  <option value="xai">xAI</option>
+                </select>
+              )}
               {aiProvider !== "disabled" ? (
-                <input
-                  type="password"
-                  autoComplete="off"
-                  aria-label={t("API key")}
-                  placeholder={aiConfigured ? t("Replace key") : t("API key")}
-                  value={aiKey}
-                  onChange={(ev) => setAiKey(ev.target.value)}
-                />
-              ) : null}
-              <button
-                type="button"
-                onClick={() => {
-                  setAiState(t("checking"));
-                  const op = aiProvider === "disabled" ? "disable" : "check";
-                  void ai.saveProvider(aiProvider, aiKey, op).then((res) => {
-                    const failed = res.ok === false;
-                    setAiState(failed ? (res.status || "network unavailable") : "ready");
-                    setAiConfigured(!failed && aiProvider !== "disabled");
-                    setAiKey("");
-                  }).catch((err: Error) => setAiState(err.message));
-                }}
-              >
-                {aiProvider === "disabled" ? t("Save") : t("Check")}
-              </button>
+                <>
+                  <input
+                    type="password"
+                    autoComplete="off"
+                    aria-label={t("API key")}
+                    placeholder={aiConfigured ? t("Replace key") : t("API key")}
+                    value={aiKey}
+                    onChange={(ev) => setAiKey(ev.target.value)}
+                  />
+                  {KEY_PAGES[aiProvider] ? (
+                    <a
+                      href={KEY_PAGES[aiProvider]}
+                      onClick={(ev) => {
+                        ev.preventDefault();
+                        openExternal(KEY_PAGES[aiProvider]);
+                      }}
+                    >
+                      {t("Create a key")}
+                    </a>
+                  ) : null}
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setAiState(t("checking"));
+                      void ai.saveProvider(aiProvider, aiKey, "check").then((res) => {
+                        const failed = res.ok === false;
+                        setAiState(failed ? (res.status || "network unavailable") : "ready");
+                        applyAi(res);
+                        setAiKey("");
+                      }).catch((err: Error) => setAiState(err.message));
+                    }}
+                  >
+                    {t("Check")}
+                  </button>
+                </>
+              ) : (
+                <button
+                  type="button"
+                  onClick={() => {
+                    void ai.saveProvider("disabled", "", "disable").then(applyAi).catch((err: Error) => setAiState(err.message));
+                  }}
+                >
+                  {t("Save")}
+                </button>
+              )}
               {aiConfigured && aiProvider !== "disabled" ? (
-                <button type="button" onClick={() => void ai.saveProvider(aiProvider, "", "remove").then(() => { setAiConfigured(false); setAiState(""); })}>
+                <button type="button" onClick={() => void ai.saveProvider(aiProvider, "", "remove").then(applyAi).then(() => { setAiConfigured(false); setAiState(""); })}>
                   {t("Remove")}
                 </button>
               ) : null}
+              {aiState ? <span className="own-key-note">{t(aiState)}</span> : null}
             </div>
           </li>
           <li className="opt ai-row">
@@ -323,5 +423,28 @@ export function LabDialog({
         </ul>
       </div>
     </div>
+  );
+}
+
+function openExternal(url: string) {
+  void fetch(`${APP_HTTP}/open`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ url }),
+  }).then((res) => {
+    if (!res.ok) window.open(url, "_blank", "noopener");
+  }).catch(() => {
+    window.open(url, "_blank", "noopener");
+  });
+}
+
+function GoogleMark() {
+  return (
+    <svg viewBox="0 0 48 48" width="14" height="14" aria-hidden="true">
+      <path fill="#EA4335" d="M24 9.5c3.54 0 6.71 1.22 9.21 3.6l6.85-6.85C35.9 2.38 30.47 0 24 0 14.62 0 6.51 5.38 2.56 13.22l7.98 6.19C12.43 13.72 17.74 9.5 24 9.5z" />
+      <path fill="#4285F4" d="M46.98 24.55c0-1.57-.15-3.09-.38-4.55H24v9.02h12.94c-.58 2.96-2.26 5.48-4.78 7.18l7.73 6c4.51-4.18 7.09-10.36 7.09-17.65z" />
+      <path fill="#FBBC05" d="M10.53 28.59c-.48-1.45-.76-2.99-.76-4.59s.27-3.14.76-4.59l-7.98-6.19C.92 16.46 0 20.12 0 24c0 3.88.92 7.54 2.56 10.78l7.97-6.19z" />
+      <path fill="#34A853" d="M24 48c6.48 0 11.93-2.13 15.89-5.81l-7.73-6c-2.15 1.45-4.92 2.3-8.16 2.3-6.26 0-11.57-4.22-13.47-9.91l-7.98 6.19C6.51 42.62 14.62 48 24 48z" />
+    </svg>
   );
 }
