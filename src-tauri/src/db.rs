@@ -1,5 +1,6 @@
-//! Small SQLite catalog shared by the firmware MCP tools and the local UI.
-//! The file is intentionally local: it never contains MAVLink parameters or telemetry.
+//! Small SQLite catalog shared by the firmware tools, the assistant, and the local UI.
+//! The parameter cache is the last set received from a vehicle, not a live link.
+use std::collections::HashMap;
 use std::fs;
 use std::path::PathBuf;
 use std::sync::OnceLock;
@@ -14,6 +15,7 @@ static APP_DATA_DIR: OnceLock<PathBuf> = OnceLock::new();
 
 /// The Tauri runtime supplies the platform-owned app-data directory on desktop
 /// and Android. The headless bridge retains the environment-based fallback.
+#[cfg(feature = "desktop")]
 pub fn set_app_data_dir(path: PathBuf) {
     let _ = APP_DATA_DIR.set(path);
 }
@@ -74,6 +76,71 @@ fn manifest_build_time(manifest: &Value) -> i64 {
         .unwrap_or_else(now)
 }
 
+fn same_source(vehicle_git: &str, artifact_git: &str) -> bool {
+    let vehicle: String = vehicle_git
+        .chars()
+        .filter(|c| *c != '\0' && !c.is_whitespace())
+        .collect::<String>()
+        .to_ascii_lowercase();
+    vehicle.len() >= 7 && artifact_git.to_ascii_lowercase().contains(&vehicle)
+}
+
+fn mark_flashed(conn: &Connection, identity: &Value, artifact_id: &str, vehicle_id: &str) -> Result<(), String> {
+    let board_id = identity["board_id"].as_i64().unwrap_or(0);
+    let system_id = identity["system_id"].as_i64().unwrap_or(1);
+    let component_id = identity["component_id"].as_i64().unwrap_or(1);
+    let uid = identity
+        .pointer("/version/uid")
+        .and_then(Value::as_u64)
+        .filter(|id| *id != 0)
+        .map(|id| format!("{id:016x}"));
+    let key = uid.clone().unwrap_or_else(|| format!("{vehicle_id}:{board_id}:{system_id}:{component_id}"));
+    let at = now();
+    let by_uid = if let Some(uid) = &uid {
+        conn.execute(
+            "UPDATE controllers SET flashed_artifact_id=?1, last_seen=?2 WHERE uid=?3",
+            params![artifact_id, at, uid],
+        )
+        .map_err(|e| e.to_string())?
+    } else {
+        0
+    };
+    let by_key = conn
+        .execute(
+            "UPDATE controllers SET flashed_artifact_id=?1, last_seen=?2 WHERE controller_key=?3",
+            params![artifact_id, at, key],
+        )
+        .map_err(|e| e.to_string())?;
+    if by_uid == 0 && by_key == 0 {
+        conn.execute(
+            "INSERT INTO controllers (controller_key, board_id, vehicle_id, system_id, component_id, uid, flashed_artifact_id, first_seen, last_seen)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?8)",
+            params![key, board_id, vehicle_id, system_id, component_id, uid, artifact_id, at],
+        )
+        .map_err(|e| e.to_string())?;
+    }
+    let matches: i64 = conn
+        .query_row(
+            "SELECT COUNT(*) FROM controllers WHERE board_id=?1 AND vehicle_id=?2",
+            params![board_id, vehicle_id],
+            |row| row.get(0),
+        )
+        .unwrap_or(0);
+    if matches == 1 {
+        conn.execute(
+            "UPDATE controllers SET flashed_artifact_id=?1 WHERE board_id=?2 AND vehicle_id=?3",
+            params![artifact_id, board_id, vehicle_id],
+        )
+        .map_err(|e| e.to_string())?;
+    }
+    Ok(())
+}
+
+pub fn note_flashed(identity: &Value, artifact_id: &str, vehicle_id: &str) -> Result<(), String> {
+    let conn = open()?;
+    mark_flashed(&conn, identity, artifact_id, vehicle_id)
+}
+
 pub fn library(sample: &Sample) -> Result<Value, String> {
     let conn = open()?;
     let connected = connected_board(sample, &conn);
@@ -81,12 +148,23 @@ pub fn library(sample: &Sample) -> Result<Value, String> {
         .as_ref()
         .map(|identity| upsert_controller(&conn, identity))
         .transpose()?;
+    let flashed_id: Option<String> = connected.as_ref().and_then(|board| {
+        conn.query_row(
+            "SELECT flashed_artifact_id FROM controllers WHERE controller_key=?1",
+            [&board.key],
+            |row| row.get::<_, Option<String>>(0),
+        )
+        .ok()
+        .flatten()
+    });
+    let live_git = connected.as_ref().and_then(|board| board.git_identity.clone());
     let mut statement = conn.prepare(
         "SELECT artifact_id, build_id, vehicle_id, board_name, board_id, version_id, git_identity, image_size, description, file_path, features_json, created_at, updated_at, comment
          FROM firmware_artifacts ORDER BY updated_at DESC"
     ).map_err(|e| e.to_string())?;
     let mut rows = statement.query([]).map_err(|e| e.to_string())?;
     let mut artifacts = Vec::new();
+    let mut running_image = None;
     while let Some(row) = rows.next().map_err(|e| e.to_string())? {
         let board_id: i64 = row.get(4).map_err(|e| e.to_string())?;
         let vehicle: String = row.get(2).map_err(|e| e.to_string())?;
@@ -95,17 +173,30 @@ pub fn library(sample: &Sample) -> Result<Value, String> {
             board.vehicle == vehicle
                 && (board.board_id == board_id || board.board_name.as_ref() == board_name.as_ref())
         });
-        let features: String = row.get(10).map_err(|e| e.to_string())?;
         let artifact_id = row.get::<_, String>(0).map_err(|e| e.to_string())?;
         let build_id = row.get::<_, Option<String>>(1).map_err(|e| e.to_string())?;
         let version_id = row.get::<_, Option<String>>(5).map_err(|e| e.to_string())?;
         let git_identity = row.get::<_, Option<String>>(6).map_err(|e| e.to_string())?;
+        let features: Value = serde_json::from_str(&row.get::<_, String>(10).map_err(|e| e.to_string())?).unwrap_or_else(|_| json!([]));
+        let hash_matches = live_git.as_deref().zip(git_identity.as_deref()).is_some_and(|(live, stored)| same_source(live, stored));
+        let running = flashed_id.as_deref() == Some(artifact_id.as_str()) && hash_matches;
         let image_size = row.get::<_, Option<i64>>(7).map_err(|e| e.to_string())?;
         let description = row.get::<_, Option<String>>(8).map_err(|e| e.to_string())?;
         let file_path = row.get::<_, Option<String>>(9).map_err(|e| e.to_string())?;
         let created_at = row.get::<_, i64>(11).map_err(|e| e.to_string())?;
         let updated_at = row.get::<_, i64>(12).map_err(|e| e.to_string())?;
         let comment = row.get::<_, String>(13).map_err(|e| e.to_string())?;
+        if running {
+            running_image = Some(json!({
+                "artifact_id": artifact_id,
+                "build_id": build_id,
+                "vehicle_id": vehicle,
+                "board_id": board_id,
+                "version_id": version_id,
+                "git_identity": git_identity,
+                "features": features.clone(),
+            }));
+        }
         artifacts.push(json!({
             "artifact_id": artifact_id,
             "build_id": build_id,
@@ -117,17 +208,35 @@ pub fn library(sample: &Sample) -> Result<Value, String> {
             "image_size": image_size,
             "description": description,
             "file_path": file_path,
-            "features": serde_json::from_str::<Value>(&features).unwrap_or_else(|_| json!([])),
+            "features": features,
             "created_at": created_at,
             "updated_at": updated_at,
             "comment": comment,
             "build": {"id": build_id, "version_id": version_id, "git_identity": git_identity,
-                "features": serde_json::from_str::<Value>(&features).unwrap_or_else(|_| json!([])),
-                "image_size": image_size, "description": description, "created_at": created_at, "updated_at": updated_at, "comment": comment},
+                "features": features.clone(), "image_size": image_size, "description": description,
+                "created_at": created_at, "updated_at": updated_at, "comment": comment},
             "compatible": compatible,
+            "running": running,
         }));
     }
-    Ok(json!({"database": database_path(), "controller": controller, "artifacts": artifacts}))
+    Ok(json!({"database": database_path(), "controller": controller, "running": running_image, "artifacts": artifacts}))
+}
+
+pub fn controller_note(sample: &Sample) -> (Option<String>, String) {
+    let Ok(conn) = open() else {
+        return (None, String::new());
+    };
+    let Some(board) = connected_board(sample, &conn) else {
+        return (None, String::new());
+    };
+    let comment = conn
+        .query_row(
+            "SELECT comment FROM controllers WHERE controller_key=?1",
+            [&board.key],
+            |row| row.get::<_, String>(0),
+        )
+        .unwrap_or_default();
+    (Some(board.key), comment)
 }
 
 pub fn set_controller_comment(key: &str, comment: &str) -> Result<Value, String> {
@@ -312,26 +421,7 @@ pub fn database_path() -> String {
 fn open() -> Result<Connection, String> {
     let path = data_dir().join("catalog.sqlite3");
     let conn = Connection::open(path).map_err(|e| e.to_string())?;
-    conn.execute_batch("PRAGMA journal_mode=WAL; PRAGMA foreign_keys=ON;
-        CREATE TABLE IF NOT EXISTS firmware_artifacts (
-          artifact_id TEXT PRIMARY KEY, build_id TEXT, vehicle_id TEXT NOT NULL, board_name TEXT, board_id INTEGER NOT NULL,
-          version_id TEXT, git_identity TEXT, image_size INTEGER, description TEXT, file_path TEXT, features_json TEXT NOT NULL,
-          created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL, comment TEXT NOT NULL DEFAULT '');
-        CREATE TABLE IF NOT EXISTS controllers (
-          controller_key TEXT PRIMARY KEY, board_id INTEGER NOT NULL, vehicle_id TEXT NOT NULL, system_id INTEGER NOT NULL,
-          component_id INTEGER NOT NULL, vendor_id INTEGER, product_id INTEGER, uid TEXT, flight_version INTEGER,
-          git_identity TEXT, first_seen INTEGER NOT NULL, last_seen INTEGER NOT NULL, comment TEXT NOT NULL DEFAULT '');
-        CREATE TABLE IF NOT EXISTS controller_seen (
-          id INTEGER PRIMARY KEY, controller_key TEXT NOT NULL REFERENCES controllers(controller_key), seen_at INTEGER NOT NULL);"
-    ).map_err(|e| e.to_string())?;
-    let _ = conn.execute(
-        "ALTER TABLE firmware_artifacts ADD COLUMN comment TEXT NOT NULL DEFAULT ''",
-        [],
-    );
-    let _ = conn.execute(
-        "ALTER TABLE controllers ADD COLUMN comment TEXT NOT NULL DEFAULT ''",
-        [],
-    );
+    crate::migrate::apply(&conn)?;
     import_existing_artifacts(&conn);
     Ok(conn)
 }
@@ -382,6 +472,122 @@ fn now() -> i64 {
         .as_secs() as i64
 }
 
+pub struct ParamCache {
+    pub frame: String,
+    pub board_name: String,
+    pub boot_uid: String,
+    pub saved_at: i64,
+    pub params: HashMap<String, f64>,
+}
+
+pub(crate) fn vehicle_cache_key(frame: &str, board_name: &str, boot_uid: &str) -> String {
+    if !boot_uid.is_empty() {
+        return boot_uid.to_string();
+    }
+    if !board_name.is_empty() {
+        return format!("board:{board_name}");
+    }
+    if !frame.is_empty() {
+        return format!("frame:{frame}");
+    }
+    "last".into()
+}
+
+/// Stores the parameters received from a vehicle. A complete download replaces that vehicle's rows.
+pub fn remember_params(
+    frame: &str,
+    board_name: &str,
+    boot_uid: &str,
+    params: &HashMap<String, f64>,
+    replace_all: bool,
+) -> Result<(), String> {
+    if params.is_empty() {
+        return Ok(());
+    }
+    let conn = open()?;
+    let key = vehicle_cache_key(frame, board_name, boot_uid);
+    let at = now();
+    if replace_all {
+        conn.execute("DELETE FROM param_cache WHERE vehicle_key=?1", [&key])
+            .map_err(|e| e.to_string())?;
+    }
+    let mut insert = conn
+        .prepare(
+            "INSERT INTO param_cache (vehicle_key, name, value, saved_at) VALUES (?1, ?2, ?3, ?4)
+             ON CONFLICT(vehicle_key, name) DO UPDATE SET value=excluded.value, saved_at=excluded.saved_at",
+        )
+        .map_err(|e| e.to_string())?;
+    for (name, value) in params {
+        insert.execute(params![key, name, value, at]).map_err(|e| e.to_string())?;
+    }
+    drop(insert);
+    let count: i64 = conn
+        .query_row("SELECT COUNT(*) FROM param_cache WHERE vehicle_key=?1", [&key], |row| row.get(0))
+        .unwrap_or(params.len() as i64);
+    conn.execute(
+        "INSERT INTO param_cache_meta (vehicle_key, frame, board_name, boot_uid, saved_at, count) VALUES (?1, ?2, ?3, ?4, ?5, ?6)
+         ON CONFLICT(vehicle_key) DO UPDATE SET frame=excluded.frame, board_name=excluded.board_name, boot_uid=excluded.boot_uid, saved_at=excluded.saved_at, count=excluded.count",
+        params![key, frame, board_name, boot_uid, at, count],
+    )
+    .map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+/// One parameter changed after the full set was saved.
+pub fn remember_param(frame: &str, board_name: &str, boot_uid: &str, name: &str, value: f64) -> Result<(), String> {
+    if name.is_empty() {
+        return Ok(());
+    }
+    let mut one = HashMap::new();
+    one.insert(name.to_string(), value);
+    remember_params(frame, board_name, boot_uid, &one, false)
+}
+
+/// Saved parameters for this vehicle identity. Empty when that vehicle has never been cached.
+pub fn params_for(frame: &str, board_name: &str, boot_uid: &str) -> Result<Option<ParamCache>, String> {
+    load_cache_key(&vehicle_cache_key(frame, board_name, boot_uid))
+}
+
+/// The newest saved parameter set. Used when no vehicle is linked.
+pub fn latest_params() -> Result<Option<ParamCache>, String> {
+    let conn = open()?;
+    let key: String = match conn.query_row(
+        "SELECT vehicle_key FROM param_cache_meta ORDER BY saved_at DESC LIMIT 1",
+        [],
+        |row| row.get(0),
+    ) {
+        Ok(key) => key,
+        Err(_) => return Ok(None),
+    };
+    load_cache_key(&key)
+}
+
+fn load_cache_key(key: &str) -> Result<Option<ParamCache>, String> {
+    let conn = open()?;
+    let meta = conn.query_row(
+        "SELECT frame, board_name, boot_uid, saved_at FROM param_cache_meta WHERE vehicle_key=?1",
+        [key],
+        |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?, row.get::<_, String>(2)?, row.get::<_, i64>(3)?)),
+    );
+    let Ok((frame, board_name, boot_uid, saved_at)) = meta else {
+        return Ok(None);
+    };
+    let mut params = HashMap::new();
+    let mut stmt = conn
+        .prepare("SELECT name, value FROM param_cache WHERE vehicle_key=?1")
+        .map_err(|e| e.to_string())?;
+    let rows = stmt
+        .query_map([key], |row| Ok((row.get::<_, String>(0)?, row.get::<_, f64>(1)?)))
+        .map_err(|e| e.to_string())?;
+    for row in rows.flatten() {
+        params.insert(row.0, row.1);
+    }
+    if params.is_empty() {
+        return Ok(None);
+    }
+    Ok(Some(ParamCache { frame, board_name, boot_uid, saved_at, params }))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -415,6 +621,42 @@ mod tests {
         let c = connected_board(&s, &conn).unwrap();
         assert_eq!(c.board_id, 1081);
         assert_eq!(c.uid.as_deref(), Some("002F00354D53501220303932"));
+    }
+
+    #[test]
+    fn source_hash_matches_the_build_hash() {
+        assert!(same_source("dbe79216", "dbe792162d06cab66c3475fd5556bf7a120f119e"));
+        assert!(same_source("dbe79216", "ArduCopter V4.6.3 (dbe79216)"));
+        assert!(!same_source("dbe79216", "aaaaaaaa"));
+        assert!(!same_source("", "dbe79216"));
+    }
+
+    #[test]
+    fn recorded_flash_follows_the_controller_uid() {
+        let conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch(
+            "CREATE TABLE controllers (
+                controller_key TEXT PRIMARY KEY, board_id INTEGER NOT NULL, vehicle_id TEXT NOT NULL,
+                system_id INTEGER NOT NULL, component_id INTEGER NOT NULL, uid TEXT,
+                flashed_artifact_id TEXT, first_seen INTEGER NOT NULL, last_seen INTEGER NOT NULL)",
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO controllers VALUES ('abc', 1081, 'copter', 1, 1, '0000000000000001', NULL, 1, 1)",
+            [],
+        )
+        .unwrap();
+        mark_flashed(
+            &conn,
+            &json!({"board_id":1081,"system_id":1,"component_id":1,"version":{"uid":1}}),
+            "artifact-a",
+            "copter",
+        )
+        .unwrap();
+        let stored: String = conn
+            .query_row("SELECT flashed_artifact_id FROM controllers WHERE controller_key='abc'", [], |row| row.get(0))
+            .unwrap();
+        assert_eq!(stored, "artifact-a");
     }
 
     #[test]

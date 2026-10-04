@@ -2,9 +2,9 @@ import { useEffect, useLayoutEffect, useRef, useState, useSyncExternalStore } fr
 import { useT } from "../i18n/i18n";
 import type { NodeDef } from "../lib/gains";
 import { CUSTOM_ID, ROLE_CLASS, TONE, traceId, traceValue, type CatalogTrace, type Pane } from "../lib/traces";
-import { getPlotSpan, isPaused, subscribe } from "../mav/store";
+import { getBuffer, getPlotSpan, isPaused, subscribe } from "../mav/store";
 import type { Sample } from "../mav/types";
-import { useVehicle, useViewSample, viewBuffer } from "../mav/view";
+import { usePicked, useStorePicked, useVehicle, viewBuffer } from "../mav/view";
 import { drawPane } from "../plot";
 import { PaneHead } from "./Studio";
 
@@ -17,6 +17,16 @@ function digits(unit: string): number {
 function fmt(v: unknown, d: number): string {
   if (typeof v !== "number" || Number.isNaN(v)) return "—";
   return v.toFixed(d);
+}
+
+function LegVal({ read, d, unit }: { read: (s: Sample) => number | null; d: number; unit?: string }) {
+  const v = usePicked(read);
+  return (
+    <b className="leg-val">
+      {fmt(v, d)}
+      {unit ? ` ${unit}` : ""}
+    </b>
+  );
 }
 
 function useLegendFit(ref: { current: HTMLDivElement | null }) {
@@ -67,13 +77,12 @@ export function TracePanes({
 }) {
   const t = useT();
   const vehicle = useVehicle();
-  const s = useViewSample();
   const refs = useRef<Array<HTMLCanvasElement | null>>([]);
   const panesRef = useRef(panes);
   panesRef.current = panes;
   const paused = isPaused();
   const span = useSyncExternalStore(subscribe, getPlotSpan, getPlotSpan);
-  const frozen = !s.ok;
+  const frozen = !usePicked((s) => s.ok);
 
   useEffect(() => {
     const pull = () => viewBuffer(vehicle);
@@ -127,7 +136,6 @@ export function TracePanes({
           key={pane.custom ? "custom" : (pane.fromIds?.join("+") || pane.title) + pane.traces.map((tr) => traceId(tr)).join(",")}
           pane={pane}
           blocks={blocks}
-          sample={s}
           frozen={frozen}
           paused={paused}
           lines={
@@ -240,14 +248,28 @@ function WatchPicker({
   );
 }
 
+function clipBox(el: HTMLElement): { top: number; bottom: number } {
+  let top = 0;
+  let bottom = window.innerHeight;
+  for (let n = el.parentElement; n && n !== document.documentElement; n = n.parentElement) {
+    const oy = getComputedStyle(n).overflowY;
+    if (oy !== "auto" && oy !== "hidden" && oy !== "scroll" && oy !== "clip") continue;
+    const b = n.getBoundingClientRect();
+    top = Math.max(top, b.top);
+    bottom = Math.min(bottom, b.bottom);
+  }
+  return { top, bottom };
+}
+
 function menuPlace(el: HTMLElement): { up: boolean; max: number } {
   const r = (el.querySelector("summary") ?? el).getBoundingClientRect();
-  const gap = 8;
-  const pad = 4;
-  const below = window.innerHeight - r.bottom - pad - gap;
-  const above = r.top - pad - gap;
+  const clip = clipBox(el);
+  const gap = 4;
+  const inset = 8;
+  const below = clip.bottom - inset - (r.bottom + gap);
+  const above = r.top - gap - (clip.top + inset);
   const up = below < 280 && above > below;
-  return { up, max: Math.max(180, Math.floor(up ? above : below)) };
+  return { up, max: Math.max(0, Math.floor(up ? above : below)) };
 }
 
 function LinePicker({
@@ -366,10 +388,88 @@ function LinePicker({
   );
 }
 
+export function PlotStack({ panes }: { panes: Pane[] }) {
+  const t = useT();
+  const refs = useRef<Array<HTMLCanvasElement | null>>([]);
+  const panesRef = useRef(panes);
+  panesRef.current = panes;
+  const paused = useSyncExternalStore(subscribe, isPaused, isPaused);
+  const span = useSyncExternalStore(subscribe, getPlotSpan, getPlotSpan);
+  const frozen = !useStorePicked((s) => s.ok);
+  const sig = panes.map((pane) => pane.title + pane.traces.map(traceId).join(",")).join("|");
+
+  useEffect(() => {
+    const paint = () => {
+      const buf = getBuffer();
+      panesRef.current.forEach((pane, i) => {
+        const c = refs.current[i];
+        const ctx = c?.getContext("2d");
+        if (c && ctx) drawPane(c, ctx, buf, pane);
+      });
+    };
+    if (frozen) {
+      paint();
+      window.addEventListener("resize", paint);
+      return () => window.removeEventListener("resize", paint);
+    }
+    let raf = 0;
+    const loop = () => {
+      raf = requestAnimationFrame(loop);
+      paint();
+    };
+    loop();
+    window.addEventListener("resize", paint);
+    return () => {
+      cancelAnimationFrame(raf);
+      window.removeEventListener("resize", paint);
+    };
+  }, [frozen, span, sig]);
+
+  return (
+    <div className="plots">
+      {panes.map((pane, i) => (
+        <div className="plot-card" key={traceId(pane.traces[0] ?? { role: "actual", label: String(i) }) + i}>
+          <div className="plot-head">
+            <b title={pane.title}>{pane.title}</b>
+            {pane.hint ? <span>{t(pane.hint)}</span> : null}
+          </div>
+          <div className={frozen ? "plot idle" : paused ? "plot paused" : "plot"}>
+            <canvas ref={(el) => { refs.current[i] = el; }} />
+          </div>
+          <div className="caption">
+            <PlotLegend pane={pane} />
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function StoreLegVal({ read, d }: { read: (s: Sample) => number | null; d: number }) {
+  const v = useStorePicked(read);
+  return <b className="leg-val">{fmt(v, d)}</b>;
+}
+
+function PlotLegend({ pane }: { pane: Pane }) {
+  const d = digits(pane.unit);
+  const legendRef = useRef<HTMLDivElement>(null);
+  useLegendFit(legendRef);
+  return (
+    <div ref={legendRef} className="legend">
+      {pane.traces.map((tr, i) => (
+        <span key={traceId(tr)} className="leg" title={tr.label}>
+          <i className={pane.custom ? TONE[i % TONE.length] : ROLE_CLASS[tr.role]} />
+          <span className="leg-name">{tr.label}</span>
+          <StoreLegVal d={d} read={(s) => traceValue(s, tr)} />
+        </span>
+      ))}
+    </div>
+  );
+}
+
 function PaneBlock({
   pane,
   blocks,
-  sample,
   frozen,
   paused,
   lines,
@@ -377,7 +477,6 @@ function PaneBlock({
 }: {
   pane: Pane;
   blocks: NodeDef[];
-  sample: Sample;
   frozen: boolean;
   paused: boolean;
   lines?: {
@@ -415,19 +514,19 @@ function PaneBlock({
             <span key={traceId(tr)} className="leg" title={tr.label}>
               <i className={pane.custom ? TONE[i % TONE.length] : ROLE_CLASS[tr.role]} />
               <span className="leg-name">{tr.label}</span>
-              <b className="leg-val">{fmt(traceValue(sample, tr), d)}</b>
+              <LegVal d={d} read={(s) => traceValue(s, tr)} />
             </span>
           ))}
           {pane.hud?.includes("aspd") ? (
             <span className="leg" title="VFR_HUD.airspeed">
               <span className="leg-name">VFR_HUD.airspeed</span>
-              <b className="leg-val">{fmt(sample.aspd, 1)} m/s</b>
+              <LegVal d={1} unit="m/s" read={(s) => s.aspd ?? null} />
             </span>
           ) : null}
           {pane.hud?.includes("gspd") ? (
             <span className="leg" title="VFR_HUD.groundspeed">
               <span className="leg-name">VFR_HUD.groundspeed</span>
-              <b className="leg-val">{fmt(sample.gspd, 1)} m/s</b>
+              <LegVal d={1} unit="m/s" read={(s) => s.gspd ?? null} />
             </span>
           ) : null}
         </div>

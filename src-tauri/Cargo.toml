@@ -1,10 +1,10 @@
 [package]
 name = "arduloops"
-version = "1.4.0"
+version = "2.0.0"
 description = "ArduLoops"
 authors = ["IAMPM"]
 edition = "2021"
-rust-version = "1.77.2"
+rust-version = "1.85"
 default-run = "arduloops"
 
 [lib]
@@ -38,10 +38,13 @@ sha2 = "0.10"
 tar = "0.4"
 uuid = { version = "1.11", features = ["v4"] }
 zip = { version = "0.6.6", default-features = false, features = ["deflate"] }
+genai = { version = "0.6.5", default-features = false, features = ["native-tls"] }
+futures-util = "0.3"
+tokio = { version = "1.53.1", features = ["rt-multi-thread", "time", "net", "io-util", "sync"] }
 
 [target.'cfg(not(target_os = "android"))'.dependencies]
 mavlink = { version = "0.13.1", default-features = false, features = ["direct-serial"] }
 serialport = "4.7.2"
 
 [target.'cfg(windows)'.dependencies]
-windows-sys = { version = "0.59", features = ["Win32_Foundation", "Win32_System_Registry"] }
+windows-sys = { version = "0.59", features = ["Win32_Foundation", "Win32_Devices_DeviceAndDriverInstallation", "Win32_NetworkManagement_IpHelper", "Win32_System_Registry"] }

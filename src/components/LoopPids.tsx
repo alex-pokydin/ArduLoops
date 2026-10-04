@@ -2,7 +2,7 @@ import { useId, type KeyboardEvent, type MouseEvent, type SVGProps } from "react
 import { pidTerms, type NodeDef } from "../cascade";
 import { useT } from "../i18n/i18n";
 import { axisTar, axisView, remapGainKey, type Axis } from "../mav/axis";
-import { useVehicle, viewBuffer, viewSample } from "../mav/view";
+import { useVehicle, useViewSample, viewBuffer } from "../mav/view";
 import type { Sample } from "../mav/types";
 import { sparkSeries } from "../plot";
 import { paramOf } from "./GainRow";
@@ -325,7 +325,7 @@ export function LoopPidBlock({
 }) {
   const t = useT();
   const vehicle = useVehicle();
-  const s = viewSample(vehicle);
+  const s = useViewSample();
   const on = pidTerms(node).includes(letter);
   const kp = kpOf(node, s, axis);
   const v = termOf(letter, node, s, axis, kp);
@@ -384,7 +384,7 @@ export function LoopSumBlock({
   mark?: LoopMark;
 }) {
   const vehicle = useVehicle();
-  const s = viewSample(vehicle);
+  const s = useViewSample();
   const kp = kpOf(node, s, axis);
   const u = termSum(node, s, axis, kp);
   const sparkW = w - 12;
@@ -418,7 +418,10 @@ export function LoopLiveBox({
   stroke,
   title,
   sub,
+  note,
   value,
+  liveText,
+  label,
   pick,
   pick2,
   stroke2,
@@ -436,7 +439,10 @@ export function LoopLiveBox({
   stroke: string;
   title: string;
   sub?: string;
+  note?: (s: Sample) => string;
   value: string;
+  liveText?: (n: number | null) => string;
+  label?: (s: Sample) => string;
   pick: (s: Sample) => number | null;
   pick2?: (s: Sample) => number | null;
   stroke2?: string;
@@ -450,6 +456,9 @@ export function LoopLiveBox({
   const sparkW = w - 12;
   const sparkH = 24;
   const vehicle = useVehicle();
+  const sample = useViewSample();
+  const shown = label ? label(sample) : liveText ? liveText(pick(sample)) : value;
+  const caption = note ? note(sample) : sub;
   const clip = useId().replace(/:/g, "");
   const picks = pick2 ? [pick, pick2] : [pick];
   const { ds } = sparkSeries(viewBuffer(vehicle), picks, sparkW, sparkH, { fit, spanMin });
@@ -460,11 +469,11 @@ export function LoopLiveBox({
         {title}
       </text>
       <text x={x + w - 8} y={y + 13} textAnchor="end" fill={stroke} fontSize="11" fontWeight="700">
-        {value}
+        {shown}
       </text>
-      {sub ? (
+      {caption ? (
         <text x={x + 10} y={y + 24} fill={subColor ?? PID_COL.dim} fontSize="9">
-          {sub}
+          {caption}
         </text>
       ) : null}
       <defs>

@@ -2,9 +2,9 @@ import { useEffect, useRef, useState } from "react";
 import type { Gain, NodeDef } from "../lib/gains";
 import { addLog } from "../log";
 import { gainKeysForAxis, remapGainKey, type Axis } from "../mav/axis";
-import { send } from "../mav/cmd";
+import { noteUi, send } from "../mav/cmd";
 import { getLatest } from "../mav/store";
-import { frameLive, useVehicle } from "../mav/view";
+import { frameLive, usePicked, useVehicle } from "../mav/view";
 import type { Sample } from "../mav/types";
 
 export function paramOf(s: Sample, key: string): number | null {
@@ -94,55 +94,103 @@ export function paramNames(g: Gain): string[] {
 
 export function GainRow({
   gain,
-  sample,
   node,
   axis = "roll",
 }: {
   gain: Gain;
-  sample: Sample;
   node: NodeDef;
   axis?: Axis;
 }) {
-  const live = liveGain(gain, sample, axis);
   const vehicle = useVehicle();
+  const live = usePicked(
+    (s) => liveGain(gain, s, axis),
+    (a, b) => a.name === b.name && a.scale === b.scale,
+  );
   const readKey = live.name;
   const writeKeys = gain.legacy
     ? [live.name]
     : gainKeysForAxis(gain, axis);
-  const remote = paramUi(sample, gain, axis);
+  const remote = usePicked((s) => paramUi(s, gain, axis));
+  const linked = usePicked((s) => frameLive(vehicle, s));
   const [local, setLocal] = useState<number | null>(null);
   const dragging = useRef(false);
   const timer = useRef(0);
+  const origin = useRef<Map<string, number | null> | null>(null);
   const shown = dragging.current && local != null ? local : (local ?? remote ?? Number(gain.min));
 
   useEffect(() => {
     if (!dragging.current && remote != null) setLocal(remote);
   }, [remote]);
 
+  function writes(v: number, s: Sample): { name: string; value: number }[] {
+    if (gain.tune && s.frame !== "plane" && axis !== "yaw" && axis !== "d") {
+      const p = gain.tune === "p" ? v : paramOf(s, "ATC_RAT_RLL_P") ?? 0.135;
+      const i = gain.tune === "i" ? v : paramOf(s, "ATC_RAT_RLL_I") ?? 0.135;
+      const d = gain.tune === "d" ? v : paramOf(s, "ATC_RAT_RLL_D") ?? 0.0036;
+      const rows = [];
+      for (const ax of ["RLL", "PIT"]) {
+        rows.push({ name: `ATC_RAT_${ax}_P`, value: p });
+        rows.push({ name: `ATC_RAT_${ax}_I`, value: i });
+        rows.push({ name: `ATC_RAT_${ax}_D`, value: d });
+      }
+      return rows;
+    }
+    if (gain.tune && axis === "yaw") {
+      const p = gain.tune === "p" ? v : paramOf(s, "ATC_RAT_YAW_P") ?? 0.18;
+      const i = gain.tune === "i" ? v : paramOf(s, "ATC_RAT_YAW_I") ?? 0.018;
+      const d = gain.tune === "d" ? v : paramOf(s, "ATC_RAT_YAW_D") ?? 0;
+      return [
+        { name: "ATC_RAT_YAW_P", value: p },
+        { name: "ATC_RAT_YAW_I", value: i },
+        { name: "ATC_RAT_YAW_D", value: d },
+      ];
+    }
+    return writeKeys.map((name) => ({ name, value: v * live.scale }));
+  }
+
+  function remember() {
+    if (origin.current) return;
+    const s = getLatest();
+    const map = new Map<string, number | null>();
+    for (const row of writes(shown, s)) map.set(row.name, paramOf(s, row.name));
+    origin.current = map;
+  }
+
   function push(v: number, logIt: boolean) {
-    if (!frameLive(vehicle, getLatest())) return;
+    if (!frameLive(vehicle, getLatest())) {
+      if (logIt) origin.current = null;
+      return;
+    }
     setLocal(v);
     const fire = () => {
-      if (gain.tune && sample.frame !== "plane" && axis !== "yaw" && axis !== "d") {
-        const p = gain.tune === "p" ? v : paramOf(sample, "ATC_RAT_RLL_P") ?? 0.135;
-        const i = gain.tune === "i" ? v : paramOf(sample, "ATC_RAT_RLL_I") ?? 0.135;
-        const d = gain.tune === "d" ? v : paramOf(sample, "ATC_RAT_RLL_D") ?? 0.0036;
+      const now = getLatest();
+      const rows = writes(v, now);
+      if (gain.tune && now.frame !== "plane" && axis !== "yaw" && axis !== "d") {
+        const p = rows.find((row) => row.name.endsWith("_P"))?.value ?? v;
+        const i = rows.find((row) => row.name.endsWith("_I"))?.value ?? v;
+        const d = rows.find((row) => row.name.endsWith("_D"))?.value ?? v;
         send({ op: "tune", p, i, d });
         if (logIt) addLog(`P ${p.toFixed(3)}  I ${i.toFixed(3)}  D ${d.toFixed(4)}`, "cmd");
-        return;
+      } else {
+        for (const row of rows) send({ op: "param", name: row.name, value: row.value });
+        if (logIt && gain.tune && axis === "yaw") {
+          const p = rows.find((row) => row.name.endsWith("_P"))?.value ?? v;
+          const i = rows.find((row) => row.name.endsWith("_I"))?.value ?? v;
+          const d = rows.find((row) => row.name.endsWith("_D"))?.value ?? v;
+          addLog(`YAW P ${p.toFixed(3)}  I ${i.toFixed(3)}  D ${d.toFixed(4)}`, "cmd");
+        } else if (logIt) {
+          addLog(`${readKey} ${fmtGain(gain, v, readKey)}`, "cmd");
+        }
       }
-      if (gain.tune && axis === "yaw") {
-        const p = gain.tune === "p" ? v : paramOf(sample, "ATC_RAT_YAW_P") ?? 0.18;
-        const i = gain.tune === "i" ? v : paramOf(sample, "ATC_RAT_YAW_I") ?? 0.018;
-        const d = gain.tune === "d" ? v : paramOf(sample, "ATC_RAT_YAW_D") ?? 0;
-        send({ op: "param", name: "ATC_RAT_YAW_P", value: p });
-        send({ op: "param", name: "ATC_RAT_YAW_I", value: i });
-        send({ op: "param", name: "ATC_RAT_YAW_D", value: d });
-        if (logIt) addLog(`YAW P ${p.toFixed(3)}  I ${i.toFixed(3)}  D ${d.toFixed(4)}`, "cmd");
-        return;
-      }
-      for (const name of writeKeys) send({ op: "param", name, value: v * live.scale });
-      if (logIt) addLog(`${readKey} ${fmtGain(gain, v, readKey)}`, "cmd");
+      if (!logIt) return;
+      const froms = origin.current;
+      origin.current = null;
+      noteUi(rows.map((row) => ({
+        kind: "param",
+        name: row.name,
+        value: row.value,
+        from: froms?.get(row.name) ?? paramOf(now, row.name),
+      })));
     };
     if (logIt) {
       window.clearTimeout(timer.current);
@@ -162,12 +210,25 @@ export function GainRow({
         max={gain.max}
         step={gain.step}
         value={shown}
-        disabled={!frameLive(vehicle, sample)}
+        disabled={!linked}
         title={`${readKey} · ${node.param}`}
         onPointerDown={() => {
           dragging.current = true;
+          remember();
         }}
         onPointerUp={(ev) => {
+          dragging.current = false;
+          push(Number((ev.currentTarget as HTMLInputElement).value), true);
+        }}
+        onPointerCancel={(ev) => {
+          dragging.current = false;
+          push(Number((ev.currentTarget as HTMLInputElement).value), true);
+        }}
+        onKeyDown={(ev) => {
+          if (ev.key.startsWith("Arrow") || ev.key === "PageUp" || ev.key === "PageDown" || ev.key === "Home" || ev.key === "End") remember();
+        }}
+        onKeyUp={(ev) => {
+          if (!(ev.key.startsWith("Arrow") || ev.key === "PageUp" || ev.key === "PageDown" || ev.key === "Home" || ev.key === "End")) return;
           dragging.current = false;
           push(Number((ev.currentTarget as HTMLInputElement).value), true);
         }}

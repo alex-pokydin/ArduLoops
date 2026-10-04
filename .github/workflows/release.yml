@@ -9,7 +9,7 @@ on:
       tag:
         description: GitHub release tag to upload installers to
         required: true
-        default: "1.2.0"
+        default: "2.0.0"
       only:
         description: Run one job (linux, windows, macos, android). Empty runs all.
         required: false
@@ -38,12 +38,22 @@ jobs:
           sudo apt-get install -y libwebkit2gtk-4.1-dev libayatana-appindicator3-dev \
             librsvg2-dev patchelf libfuse2 xdg-utils pkg-config libudev-dev
       - run: npm ci
+      - name: Release notes
+        id: notes
+        shell: bash
+        run: |
+          {
+            echo 'body<<ENDNOTES'
+            cat .release-notes.md
+            echo 'ENDNOTES'
+          } >> "$GITHUB_OUTPUT"
       - uses: tauri-apps/tauri-action@v1
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
           tagName: ${{ github.event.inputs.tag || github.ref_name }}
           releaseName: ArduLoops ${{ github.event.inputs.tag || github.ref_name }}
+          releaseBody: ${{ steps.notes.outputs.body }}
           releaseDraft: false
           uploadUpdaterJson: false
           tauriScript: node scripts/with-cargo.mjs tauri
@@ -63,12 +73,22 @@ jobs:
         with:
           workspaces: src-tauri
       - run: npm ci
+      - name: Release notes
+        id: notes
+        shell: bash
+        run: |
+          {
+            echo 'body<<ENDNOTES'
+            cat .release-notes.md
+            echo 'ENDNOTES'
+          } >> "$GITHUB_OUTPUT"
       - uses: tauri-apps/tauri-action@v1
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
           tagName: ${{ github.event.inputs.tag || github.ref_name }}
           releaseName: ArduLoops ${{ github.event.inputs.tag || github.ref_name }}
+          releaseBody: ${{ steps.notes.outputs.body }}
           releaseDraft: false
           uploadUpdaterJson: false
           tauriScript: node scripts/with-cargo.mjs tauri
@@ -99,12 +119,22 @@ jobs:
       - run: npm ci
       - name: Build macOS SITL
         run: bash scripts/build-sitl-macos.sh ${{ matrix.target }}
+      - name: Release notes
+        id: notes
+        shell: bash
+        run: |
+          {
+            echo 'body<<ENDNOTES'
+            cat .release-notes.md
+            echo 'ENDNOTES'
+          } >> "$GITHUB_OUTPUT"
       - uses: tauri-apps/tauri-action@v1
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
           tagName: ${{ github.event.inputs.tag || github.ref_name }}
           releaseName: ArduLoops ${{ github.event.inputs.tag || github.ref_name }}
+          releaseBody: ${{ steps.notes.outputs.body }}
           releaseDraft: false
           uploadUpdaterJson: false
           tauriScript: node scripts/with-cargo.mjs tauri

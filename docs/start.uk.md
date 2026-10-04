@@ -93,10 +93,14 @@ Wiki: [перше налаштування](https://ardupilot.org/copter/docs/in
 
 Wiki: [перше налаштування](https://ardupilot.org/plane/docs/first-time-setup.html) · [швидкий старт тюнінгу](https://ardupilot.org/plane/docs/tuning-quickstart.html) · [крен/тангаж/рискання](https://ardupilot.org/plane/docs/new-roll-and-pitch-tuning.html) · [TECS](https://ardupilot.org/plane/docs/tecs-total-energy-control-system-for-speed-height-tuning-guide.html) · [навігація L1](https://ardupilot.org/plane/docs/navigation-tuning.html) · [кермо на землі](https://ardupilot.org/plane/docs/tuning-ground-steering-for-a-plane.html)
 
+## Асистент і контролер
+
+**Асистент** праворуч читає цей лінк, параметри і DataFlash-лог після завантаження. Цифра у відповіді — вимір, який повернув лог. Налаштування, логи, параметри і прошивка — робочий простір **контролера**. **Аудит** показує, що було записано.
+
 ## Межі
 
-Стенд показує контури першого налаштування / перших польотів, наживо по MAVLink (`ATTITUDE`, `PID_TUNING`, `VFR_HUD`, відстежувані параметри).
+Стенд показує контури першого налаштування / перших польотів, наживо по MAVLink (`ATTITUDE`, `PID_TUNING`, `VFR_HUD`, відстежувані параметри). Завантажений лог додає помилку слідування, утримання і спектр цього файла.
 
 **У стенді.** Copter `ATC_*` / `PSC_*`. Plane `RLL_*` / `PTCH_*` / `YAW2SRV_*` / `NAVL1_*` / `TECS_*` / `STEER2SRV_*`.
 
-**Поза стендом.** QuadPlane, flare автопосадки, повний harmonic-notch, дерево параметрів Mission Planner, FFT / Autotune як протокол з лога. Якщо wiki і стенд розходяться — wiki.
+**Поза стендом.** QuadPlane, flare автопосадки, повний harmonic-notch, Autotune як процедура. Якщо wiki і стенд розходяться — wiki.

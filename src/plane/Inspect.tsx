@@ -1,7 +1,8 @@
 import { fmtGain, liveGain, paramUi } from "../components/GainRow";
 import { t, useT } from "../i18n/i18n";
+import type { Gain } from "../lib/gains";
 import { axisTar, axisView, type Axis } from "../mav/axis";
-import { useViewSample } from "../mav/view";
+import { usePicked } from "../mav/view";
 import type { Sample } from "../mav/types";
 import {
   BAND_COPY,
@@ -54,20 +55,36 @@ function liveBits(node: NodeDef, s: Sample): string {
   return parts.join(" · ");
 }
 
-function ParamList({ node, sample }: { node: NodeDef; sample: Sample }) {
+function LiveBits({ node }: { node: NodeDef }) {
+  const text = usePicked((s) => liveBits(node, s));
+  if (!text) return null;
+  return <div className="live">{text}</div>;
+}
+
+function ParamRead({ gain }: { gain: Gain }) {
+  const row = usePicked(
+    (s) => {
+      const live = liveGain(gain, s, "roll");
+      const v = paramUi(s, gain, "roll");
+      return { name: live.name, text: v == null ? "—" : fmtGain(gain, v, live.name) };
+    },
+    (a, b) => a.name === b.name && a.text === b.text,
+  );
+  return (
+    <div className="prow">
+      <code>{row.name}</code>
+      <b>{row.text}</b>
+    </div>
+  );
+}
+
+function ParamList({ node }: { node: NodeDef }) {
   if (!node.gains.length) return null;
   return (
     <div className="plist">
-      {node.gains.map((g) => {
-        const live = liveGain(g, sample, "roll");
-        const v = paramUi(sample, g, "roll");
-        return (
-          <div className="prow" key={g.key}>
-            <code>{live.name}</code>
-            <b>{v == null ? "—" : fmtGain(g, v, live.name)}</b>
-          </div>
-        );
-      })}
+      {node.gains.map((g) => (
+        <ParamRead key={g.key} gain={g} />
+      ))}
     </div>
   );
 }
@@ -82,9 +99,19 @@ export function PlaneInspect({
   showAll: boolean;
 }) {
   const t = useT();
-  const s = useViewSample();
-  const modeKey = showAll ? "ALL" : s.mode;
-  const live = !s.ok ? new Set<string>() : nodesLiveIn(modeKey, s);
+  const link = usePicked(
+    (s) => {
+      const mode = showAll ? "ALL" : s.mode;
+      return {
+        ok: s.ok,
+        mode,
+        ids: s.ok ? [...nodesLiveIn(mode, s)].sort().join(",") : "",
+      };
+    },
+    (a, b) => a.ok === b.ok && a.mode === b.mode && a.ids === b.ids,
+  );
+  const modeKey = link.mode;
+  const live = link.ids ? new Set(link.ids.split(",")) : new Set<string>();
   const band = isBandId(sel) ? sel : null;
   const node = band ? null : NODES.find((n) => n.id === sel) ?? null;
   const incoming = EDGES.filter((e) => e.to === sel && edgeLiveIn(e, modeKey, live));
@@ -101,10 +128,10 @@ export function PlaneInspect({
           <div className={"kind " + nodeBand(node.id)}>
             {t(BAND_LABEL[nodeBand(node.id)])} · {t(node.unit)} · {t(node.kind)}
           </div>
-          {dimmed && s.ok ? (
+          {dimmed && link.ok ? (
             <p className="warn">
               {t("In {mode} this loop is not running: the autopilot is not turning it. You can inspect gains, but they will not change behaviour until the mode closes the loop.", {
-                mode: s.mode || t("this mode"),
+                mode: link.mode || t("this mode"),
               })}
             </p>
           ) : null}
@@ -114,8 +141,8 @@ export function PlaneInspect({
               <b>{t("typical")}</b> {t(node.trap)}
             </p>
           ) : null}
-          {liveBits(node, s) ? <div className="live">{liveBits(node, s)}</div> : null}
-          <ParamList node={node} sample={s} />
+          <LiveBits node={node} />
+          <ParamList node={node} />
           {incoming.length ? (
             <div className="io">
               {t("In")}

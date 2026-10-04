@@ -47,13 +47,57 @@ export type Sample = {
   hdg: number | null;
   /** VFR_HUD throttle 0…100. */
   thr_out: number | null;
+  /** Rangefinder distance, metres. */
+  rng_m?: number | null;
+  /** RANGEFINDER voltage. */
+  rng_v?: number | null;
+  /** OPTICAL_FLOW flow_comp_m_x, metres per second. */
+  flow_x?: number | null;
+  /** OPTICAL_FLOW flow_comp_m_y, metres per second. */
+  flow_y?: number | null;
+  /** OPTICAL_FLOW quality, 0–255. */
+  flow_q?: number | null;
+  /** MAVLink fields that have arrived, keyed `MESSAGE.field`. */
+  live_nums?: Record<string, number>;
   att_hz: number;
   rx: string;
   /** HEARTBEAT.type → copter | plane. Empty until the vehicle speaks. */
   frame: "copter" | "plane" | "";
+  board_name?: string;
+  boot_uid?: string;
   params: Record<string, number>;
+  /** PARAM_VALUE count announced by the vehicle. The backup is full only when `params` reaches it. */
+  param_count?: number;
+  /** Unix seconds of the last HEARTBEAT. Optional on older samples. */
+  heartbeat_at?: number;
+  /** RC_CHANNELS raw PWM, channel 1 first, up to 18. Empty until a frame arrives. */
+  rc?: number[];
   /** STATUSTEXT, newest first. Optional so older bridge samples still parse. */
   texts?: string[];
+  /** Face the vehicle is asking for during a six-face accelerometer calibration. */
+  accel_cal?: { pos: number; at: number };
+  /** Compass calibration progress and the latest report for each compass id. */
+  mag_cal?: {
+    id: number;
+    status: number;
+    attempt: number;
+    pct: number;
+    mask: number[];
+    fitness: number | null;
+    ofs: number[];
+    diag: number[];
+    offdiag: number[];
+    autosaved: number | null;
+  }[];
+  /** Live DataFlash transfer. Absent until a download starts. */
+  log_download?: {
+    id: number;
+    size: number;
+    received: number;
+    complete: boolean;
+    path: string;
+    error: string;
+  };
   init_done?: number;
   init_total?: number;
   sitl_phase?: string;

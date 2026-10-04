@@ -1,0 +1,11 @@
+---
+description: Do not hardcode live field names or units the link can report.
+globs: src-tauri/src/link/**/*.rs,src-tauri/src/agent/**/*.rs,skills/**/*.md
+alwaysApply: false
+---
+
+# Live data
+
+A field name and its value come from the MAVLink message that arrived. A unit the message did not carry is unknown.
+
+Do not add a table of field names, aliases, or units for data the link already provides. A conversion used by a scope plot stays on the sample field that plot reads. It does not replace the live field.

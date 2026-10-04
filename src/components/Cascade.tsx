@@ -21,7 +21,7 @@ import { fitScale, preferredLayoutWidth } from "../lib/layout";
 import { FrameGuide } from "./FrameGuide";
 import { t, useT } from "../i18n/i18n";
 import { axisTar, axisView, type Axis } from "../mav/axis";
-import { useViewSample } from "../mav/view";
+import { usePicked } from "../mav/view";
 import type { Sample } from "../mav/types";
 
 /** One figure on the map card. Outer PSC stays as units — we don't have NE pos/vel. */
@@ -39,6 +39,12 @@ function cardLive(node: NodeDef, s: Sample, axis: Axis): string | null {
     return `${v.ang.toFixed(1)}°`;
   }
   return null;
+}
+
+function CardReadout({ node, axis, on }: { node: NodeDef; axis: Axis; on: boolean }) {
+  const tr = useT();
+  const text = usePicked((s) => (on ? cardLive(node, s, axis) : null));
+  return <span className={text ? "p live" : "p"}>{text ?? tr(node.unit)}</span>;
 }
 
 function rankFill(band: Band): string {
@@ -67,15 +73,18 @@ export function Cascade({
   onShowAll: (on: boolean) => void;
 }) {
   const t = useT();
-  const s = useViewSample();
+  const link = usePicked(
+    (s) => ({ ok: s.ok, mode: s.mode }),
+    (a, b) => a.ok === b.ok && a.mode === b.mode,
+  );
   const wrapRef = useRef<HTMLDivElement>(null);
   const prefW = useMemo(() => preferredLayoutWidth(LAYERS), []);
   const [box, setBox] = useState({ w: 0, h: 0 });
   const layout = useMemo(() => layoutCopter(prefW, 0), [prefW]);
   const scale = fitScale(box.w, box.h, layout.width, layout.height);
-  const modeKey = showAll ? "ALL" : s.mode;
+  const modeKey = showAll ? "ALL" : link.mode;
   const closed = nodesLiveIn(modeKey);
-  const live = !s.ok ? new Set<string>() : closed;
+  const live = !link.ok ? new Set<string>() : closed;
   const band = isBandId(sel) ? sel : null;
   const node = band ? null : NODES.find((n) => n.id === sel) ?? null;
   const boxById = useMemo(() => {
@@ -184,7 +193,7 @@ export function Cascade({
                 if (!a || !b) return null;
                 if (!edgeShownIn(e, modeKey, closed)) return null;
                 const r = edgeRoute(a, b);
-                const on = s.ok && edgeLiveIn(e, modeKey, closed);
+                const on = link.ok && edgeLiveIn(e, modeKey, closed);
                 const connected = !band && sel != null && (e.from === sel || e.to === sel);
                 const bandEdge = !!band && (nodeBand(e.from) === band || nodeBand(e.to) === band);
                 const hot = connected;
@@ -252,7 +261,6 @@ export function Cascade({
               ]
                 .filter(Boolean)
                 .join(" ");
-              const liveTxt = on ? cardLive(n, s, axis) : null;
               return (
                 <button
                   key={n.id}
@@ -274,7 +282,7 @@ export function Cascade({
                     </span>
                   ) : null}
                   <span className="t">{t(n.title)}</span>
-                  <span className={liveTxt ? "p live" : "p"}>{liveTxt ?? t(n.unit)}</span>
+                  <CardReadout node={n} axis={axis} on={on} />
                 </button>
               );
             })}

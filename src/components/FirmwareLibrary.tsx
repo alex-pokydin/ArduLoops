@@ -1,5 +1,4 @@
-import { CalibrationPanel } from "./CalibrationPanel";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { APP_HTTP } from "../mav/link";
 import { t, useT } from "../i18n/i18n";
 
@@ -57,7 +56,7 @@ function dateLabel(value?: number | null): string {
     : "";
 }
 
-export function FirmwareLibrary({ onBack, onParams }: { onBack: () => void; onParams: () => void }) {
+export function FirmwareLibrary() {
   const tr = useT();
   const [library, setLibrary] = useState<Library>(EMPTY);
   const [showAll, setShowAll] = useState(false);
@@ -70,10 +69,14 @@ export function FirmwareLibrary({ onBack, onParams }: { onBack: () => void; onPa
   const [confirmation, setConfirmation] = useState("");
   const [flashBusy, setFlashBusy] = useState(false);
   const [flashState, setFlashState] = useState("");
-  const [controllerComment, setControllerComment] = useState("");
   const [firmwareComments, setFirmwareComments] = useState<Record<string, string>>({});
   const [commentBusy, setCommentBusy] = useState(false);
   const [commentState, setCommentState] = useState<{ key: string; text: string } | null>(null);
+  const [commentOpen, setCommentOpen] = useState<string | null>(null);
+  const [importing, setImporting] = useState(false);
+  const [importNote, setImportNote] = useState("");
+  const [pick, setPick] = useState<string | null>(null);
+  const fileRef = useRef<HTMLInputElement>(null);
 
   const refresh = useCallback(() => {
     const controller = new AbortController();
@@ -85,7 +88,6 @@ export function FirmwareLibrary({ onBack, onParams }: { onBack: () => void; onPa
         if (!value || typeof value !== "object" || !Array.isArray((value as Library).artifacts)) throw new Error(tr("Invalid firmware library response"));
         const next = value as Library;
         setLibrary(next);
-        setControllerComment(next.controller?.comment ?? "");
         setFirmwareComments(Object.fromEntries(next.artifacts.map((artifact) => [artifact.artifact_id, artifact.comment ?? ""])));
       })
       .catch((reason: unknown) => {
@@ -96,6 +98,47 @@ export function FirmwareLibrary({ onBack, onParams }: { onBack: () => void; onPa
   }, []);
 
   useEffect(() => refresh(), [refresh]);
+
+  useEffect(() => {
+    if (!pick) return;
+    const found = library.artifacts.find((artifact) => artifact.artifact_id === pick);
+    if (!found) return;
+    setSelectedFirmware(found);
+    setPlan(null);
+    setConfirmation("");
+    setFlashState("");
+    setPick(null);
+  }, [library.artifacts, pick]);
+
+  async function addFirmware(file: File) {
+    if (file.size <= 0 || file.size > 16 * 1024 * 1024) {
+      setImportNote(tr(file.size <= 0 ? "The file is empty." : "This firmware file is larger than 16 MB."));
+      return;
+    }
+    const name = file.name.toLowerCase();
+    const connected = library.controller?.vehicle_id === "plane" ? "plane" : "copter";
+    const vehicle = name.includes("plane") ? "plane" : name.includes("copter") ? "copter" : connected;
+    setImporting(true);
+    setImportNote(tr("Adding…"));
+    try {
+      const response = await fetch(`${APP_HTTP}/firmware-library/import?vehicle=${vehicle}`, {
+        method: "POST",
+        headers: { "content-type": "application/octet-stream" },
+        body: await file.arrayBuffer(),
+      });
+      const value = await response.json().catch(() => ({} as { error?: string; artifact_id?: string; request?: { board_id?: string }; board_id?: number }));
+      if (!response.ok) throw new Error(value.error || `HTTP ${response.status}`);
+      const board = value.request?.board_id || (value.board_id ? `#${value.board_id}` : tr("unknown board"));
+      setImportNote(tr("Added firmware for {board}", { board }));
+      if (value.artifact_id) setPick(value.artifact_id);
+      refresh();
+    } catch (reason) {
+      const message = reason instanceof Error ? reason.message : tr("Could not add firmware");
+      setImportNote(tr(message));
+    } finally {
+      setImporting(false);
+    }
+  }
 
   const flashRequest = useCallback(async (payload: Record<string, string>) => {
     setFlashBusy(true);
@@ -173,83 +216,84 @@ export function FirmwareLibrary({ onBack, onParams }: { onBack: () => void; onPa
     () => showAll ? library.artifacts : library.artifacts.filter((artifact) => artifact.compatible),
     [library.artifacts, showAll],
   );
-  const controller = library.controller;
 
   return (
-      <section className="scope firmware-library">
-        <div className="firmware-head">
-          <div className="firmware-tabs" role="tablist" aria-label={tr("Workspace")}>
-            <button type="button" role="tab" aria-selected={false} onClick={onBack}>{tr("loops")}</button>
-            <button type="button" role="tab" aria-selected>{tr("controller")}</button>
-            <button type="button" role="tab" aria-selected={false} onClick={onParams}>{tr("params")}</button>
+      <>
+        <div className="table-tools">
+          <div className="firmware-filter">
+            <button type="button" className={showAll ? undefined : "on"} onClick={() => setShowAll(false)}>{tr("compatible")}</button>
+            <button type="button" className={showAll ? "on" : undefined} onClick={() => setShowAll(true)}>{tr("all local")}</button>
           </div>
-          <button type="button" className="firmware-refresh" onClick={() => refresh()} disabled={loading}>
+          <span className="work-count">{artifacts.length}</span>
+          <button type="button" className="firmware-refresh" onClick={() => refresh()} disabled={loading || importing}>
             {loading ? tr("Refreshing…") : tr("Refresh")}
           </button>
+          <button type="button" className="firmware-refresh" onClick={() => fileRef.current?.click()} disabled={importing}>
+            {importing ? tr("Adding…") : tr("Add firmware")}
+          </button>
+          <input
+            ref={fileRef}
+            className="sr-only"
+            type="file"
+            accept=".apj,application/json"
+            aria-label={tr("Add firmware")}
+            onChange={(event) => {
+              const file = event.target.files?.[0];
+              event.target.value = "";
+              if (file) void addFirmware(file);
+            }}
+          />
         </div>
-        <div className="firmware-summary">
-          {controller ? (
-            <>
-              <b>{controller.board_name ?? tr("unknown board")} · {controller.vehicle_id} · board #{controller.board_id}</b>
-              <span>{tr("System ID {id}", { id: controller.system_id })}{controller.git_identity ? ` · ${controller.git_identity}` : ""}</span>
-              {(controller.uid || controller.key) ? <details className="controller-identity"><summary>{tr("Identity")}</summary><code>{controller.uid ?? controller.key}</code></details> : null}
-              <details className="catalog-comment" open={Boolean(controllerComment)}>
-                <summary>{tr("Comment")}</summary>
-                <label className="sr-only" htmlFor="controller-comment">{tr("Comment")}</label>
-                <textarea id="controller-comment" value={controllerComment} onChange={(event) => setControllerComment(event.target.value)} placeholder={tr("Add a comment")} maxLength={2000} />
-                <button type="button" onClick={() => controller.key && void saveComment({ controller_key: controller.key }, controllerComment)} disabled={commentBusy || !controller.key}>{commentBusy ? tr("Saving…") : tr("Save comment")}</button>
-                {commentState?.key === controller.key ? <p className="catalog-comment-state" role="status">{commentState?.text}</p> : null}
-              </details>
-            </>
-          ) : <span>{tr("Vehicle identity is loading. The library will filter images by board and vehicle type.")}</span>}
-        </div>
-        <CalibrationPanel />
-        <div className="firmware-filter">
-          <button type="button" className={showAll ? undefined : "on"} onClick={() => setShowAll(false)}>{tr("compatible")}</button>
-          <button type="button" className={showAll ? "on" : undefined} onClick={() => setShowAll(true)}>{tr("all local")}</button>
-        </div>
-        {error ? <p className="firmware-empty">{error}</p> : null}
+        {importNote ? <p className="param-job" role="status">{importNote}</p> : null}
+        {error ? <p className="work-empty">{error}</p> : null}
         {!error && !loading && artifacts.length === 0 ? (
-          <p className="firmware-empty">
+          <p className="work-empty">
             {showAll ? tr("The local library has no images yet.") : tr("There are no compatible local images.")}
             {" "}{tr("Download a successful build through MCP and it will appear here automatically.")}
           </p>
         ) : null}
-        <div className="firmware-list">
+        <div className="work-list">
           {artifacts.map((firmware) => (
-            <article className={firmware.compatible ? "firmware-card compatible" : "firmware-card"} key={firmware.artifact_id}>
-              <div>
-                <b>Ardu{vehicleLabel(firmware.vehicle_id)} · {versionLabel(firmware.version_id)}</b>
-                <span>{firmware.board_name ?? tr("unknown board")} · #{firmware.board_id}{firmware.created_at ? ` · ${tr("Built {time}", { time: dateLabel(firmware.created_at) })}` : ""}</span>
-              </div>
-              <div className="firmware-meta">
-                {firmware.features.includes("MODE_FLOWHOLD") ? <i>FlowHold</i> : null}
-                {firmware.compatible ? <i className="match">{tr("compatible")}</i> : null}
-                <small>{sizeLabel(firmware.image_size)}</small>
+            <article className={firmware.compatible ? "work-item match" : "work-item"} key={firmware.artifact_id}>
+              <div className="work-row firmware-line">
+                <div>
+                  <b>Ardu{vehicleLabel(firmware.vehicle_id)} · {versionLabel(firmware.version_id)}</b>
+                  <span>{firmware.board_name ?? tr("unknown board")} · #{firmware.board_id}{firmware.created_at ? ` · ${dateLabel(firmware.created_at)}` : ""}</span>
+                </div>
+                <div className="firmware-meta">
+                  {firmware.features.includes("MODE_FLOWHOLD") ? <i>FlowHold</i> : null}
+                  {showAll && firmware.compatible ? <i className="match">{tr("compatible")}</i> : null}
+                  <small>{sizeLabel(firmware.image_size)}</small>
+                </div>
                 <button type="button" className="firmware-expand" aria-expanded={selectedFirmware?.artifact_id === firmware.artifact_id} aria-label={tr(selectedFirmware?.artifact_id === firmware.artifact_id ? "Collapse firmware" : "Expand firmware")} onClick={() => {
                   if (selectedFirmware?.artifact_id === firmware.artifact_id) {
                     setSelectedFirmware(null); setPlan(null); setConfirmation(""); setFlashState("");
                   } else {
                     setSelectedFirmware(firmware); setPlan(null); setConfirmation(""); setFlashState("");
                   }
-                }}>{selectedFirmware?.artifact_id === firmware.artifact_id ? "⌃" : "⌄"}</button>
+                }} />
               </div>
               {selectedFirmware?.artifact_id === firmware.artifact_id ? (
                 <section className="firmware-flash" aria-label={tr("Controller firmware")}>
                   <div className="firmware-build-details">
-                    <span>{tr("Build ID")}: <code>{selectedFirmware.build_id ?? tr("unknown")}</code></span>
-                    <span>{tr("Artifact ID")}: <code>{selectedFirmware.artifact_id}</code></span>
-                    {selectedFirmware.git_identity ? <span>{tr("Git revision")}: <code>{selectedFirmware.git_identity}</code></span> : null}
-                    {selectedFirmware.description ? <span>{selectedFirmware.description}</span> : null}
-                    <span>{tr("Build features ({count})", { count: selectedFirmware.features.length })}</span>
+                    <p className="firmware-build-head">
+                      <span>{tr("Build ID")} <code title={selectedFirmware.build_id ?? ""}>{selectedFirmware.build_id ?? tr("unknown")}</code></span>
+                      <span>{tr("Artifact ID")} <code title={selectedFirmware.artifact_id}>{selectedFirmware.artifact_id}</code></span>
+                      {selectedFirmware.git_identity ? <span>{tr("Git revision")} <code title={selectedFirmware.git_identity}>{selectedFirmware.git_identity}</code></span> : null}
+                      <span>{tr("Build features ({count})", { count: selectedFirmware.features.length })}</span>
+                      {selectedFirmware.description ? <span className="firmware-build-desc" title={selectedFirmware.description}>{selectedFirmware.description}</span> : null}
+                    </p>
                     <div className="firmware-feature-list">{selectedFirmware.features.map((feature) => <code key={feature}>{feature}</code>)}</div>
                   </div>
-                  <details className="catalog-comment" open={Boolean(firmwareComments[selectedFirmware.artifact_id])}>
-                    <summary>{tr("Comment")}</summary>
-                    <label className="sr-only" htmlFor={`firmware-comment-${selectedFirmware.artifact_id}`}>{tr("Comment")}</label>
-                    <textarea id={`firmware-comment-${selectedFirmware.artifact_id}`} value={firmwareComments[selectedFirmware.artifact_id] ?? ""} onChange={(event) => setFirmwareComments((comments) => ({ ...comments, [selectedFirmware.artifact_id]: event.target.value }))} placeholder={tr("Add a comment")} maxLength={2000} />
-                    <button type="button" onClick={() => void saveComment({ artifact_id: selectedFirmware.artifact_id }, firmwareComments[selectedFirmware.artifact_id] ?? "")} disabled={commentBusy}>{commentBusy ? tr("Saving…") : tr("Save comment")}</button>
-                  </details>
+                  <button type="button" className={commentOpen === selectedFirmware.artifact_id ? "work-mini on" : "work-mini"} onClick={() => setCommentOpen((open) => open === selectedFirmware.artifact_id ? null : selectedFirmware.artifact_id)}>{tr("Comment")}</button>
+                  {commentOpen === selectedFirmware.artifact_id ? (
+                    <form className="work-note" onSubmit={(event) => { event.preventDefault(); void saveComment({ artifact_id: selectedFirmware.artifact_id }, firmwareComments[selectedFirmware.artifact_id] ?? ""); }}>
+                      <label className="sr-only" htmlFor={`firmware-comment-${selectedFirmware.artifact_id}`}>{tr("Comment")}</label>
+                      <textarea id={`firmware-comment-${selectedFirmware.artifact_id}`} value={firmwareComments[selectedFirmware.artifact_id] ?? ""} onChange={(event) => setFirmwareComments((comments) => ({ ...comments, [selectedFirmware.artifact_id]: event.target.value }))} placeholder={tr("Add a comment")} maxLength={2000} />
+                      <button type="submit" disabled={commentBusy}>{commentBusy ? tr("Saving…") : tr("Save comment")}</button>
+                      {commentState?.key === selectedFirmware.artifact_id ? <span className="work-note-state" role="status">{commentState.text}</span> : null}
+                    </form>
+                  ) : null}
                   <p>{tr("A separate UDP telemetry link is used. USB is reserved for the uploader only after vehicle checks and parameter backup.")}</p>
                   <div className="firmware-flash-controls">
                     <button type="button" onClick={() => void loadPorts()} disabled={flashBusy}>{tr("Refresh USB ports")}</button>
@@ -272,12 +316,11 @@ export function FirmwareLibrary({ onBack, onParams }: { onBack: () => void; onPa
                     </div>
                   ) : null}
                   {flashState ? <p className="firmware-flash-state">{flashState}</p> : null}
-                  {commentState?.key === selectedFirmware.artifact_id ? <p className="catalog-comment-state" role="status">{commentState?.text}</p> : null}
                 </section>
               ) : null}
             </article>
           ))}
         </div>
-      </section>
+      </>
   );
 }

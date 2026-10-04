@@ -3,7 +3,7 @@ import { cardMarks, hasKnobs } from "../lib/gains";
 import { edgeRoute, fitScale, preferredLayoutWidth } from "../lib/layout";
 import { t, useT } from "../i18n/i18n";
 import { axisTar, axisView, type Axis } from "../mav/axis";
-import { useViewSample } from "../mav/view";
+import { usePicked } from "../mav/view";
 import type { Sample } from "../mav/types";
 import {
   EDGES,
@@ -52,6 +52,12 @@ function cardLive(node: NodeDef, s: Sample): string | null {
   return null;
 }
 
+function CardReadout({ node, on }: { node: NodeDef; on: boolean }) {
+  const tr = useT();
+  const text = usePicked((s) => (on ? cardLive(node, s) : null));
+  return <span className={text ? "p live" : "p"}>{text ?? tr(node.unit)}</span>;
+}
+
 function rankFill(band: Band): string {
   if (band === "ends") return "#1a2428";
   if (band === "outer") return "#221c14";
@@ -76,14 +82,24 @@ export function PlaneMap({
   onShowAll: (on: boolean) => void;
 }) {
   const t = useT();
-  const s = useViewSample();
+  const link = usePicked(
+    (s) => {
+      const mode = showAll ? "ALL" : s.mode;
+      return {
+        ok: s.ok,
+        mode,
+        ids: s.ok ? [...nodesLiveIn(mode, s)].sort().join(",") : "",
+      };
+    },
+    (a, b) => a.ok === b.ok && a.mode === b.mode && a.ids === b.ids,
+  );
   const wrapRef = useRef<HTMLDivElement>(null);
   const prefW = useMemo(() => preferredLayoutWidth(LAYERS), []);
   const [box, setBox] = useState({ w: 0, h: 0 });
   const layout = useMemo(() => layoutPlane(prefW, 0), [prefW]);
   const scale = fitScale(box.w, box.h, layout.width, layout.height);
-  const modeKey = showAll ? "ALL" : s.mode;
-  const live = !s.ok ? new Set<string>() : nodesLiveIn(modeKey, s);
+  const modeKey = link.mode;
+  const live = link.ids ? new Set(link.ids.split(",")) : new Set<string>();
   const band = isBandId(sel) ? sel : null;
   const node = band ? null : NODES.find((n) => n.id === sel) ?? null;
   const boxById = useMemo(() => {
@@ -260,7 +276,6 @@ export function PlaneMap({
               ]
                 .filter(Boolean)
                 .join(" ");
-              const liveTxt = on ? cardLive(n, s) : null;
               return (
                 <button
                   key={n.id}
@@ -282,7 +297,7 @@ export function PlaneMap({
                     </span>
                   ) : null}
                   <span className="t">{t(n.title)}</span>
-                  <span className={liveTxt ? "p live" : "p"}>{liveTxt ?? t(n.unit)}</span>
+                  <CardReadout node={n} on={on} />
                 </button>
               );
             })}

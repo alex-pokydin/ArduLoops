@@ -10,7 +10,8 @@ import {
 import { defaultWatch, liveNodes, neighborIds, watchModeKey } from "../lib/watch";
 import type { Axis } from "../mav/axis";
 import { send } from "../mav/cmd";
-import { useVehicle, useViewSample } from "../mav/view";
+import { getLatest } from "../mav/store";
+import { usePicked, useVehicle } from "../mav/view";
 import { TracePanes } from "./TracePanes";
 
 const LINE_STORE = "arduloops.custom-lines.";
@@ -60,14 +61,13 @@ export function Scope({
   axis: Axis;
 }) {
   const vehicle = useVehicle();
-  const s = useViewSample();
   const frame = vehicle === "plane" ? "plane" : "copter";
-  const modeKey = watchModeKey(frame, s);
-  const blocks = useMemo(() => liveNodes(frame, s), [frame, modeKey]);
-  const near = useMemo(() => neighborIds(frame, sel, s), [frame, sel, modeKey]);
-  const paramN = Object.keys(s.params || {}).length;
-  const catalog = useMemo(() => customCatalog(s.params || {}), [paramN]);
-  const [watch, setWatch] = useState<string[]>(() => defaultWatch(frame, sel, s));
+  const modeKey = usePicked((s) => (s.ok ? watchModeKey(frame, s) : ""));
+  const paramN = usePicked((s) => Object.keys(s.params || {}).length);
+  const blocks = useMemo(() => liveNodes(frame, getLatest()), [frame, modeKey]);
+  const near = useMemo(() => neighborIds(frame, sel, getLatest()), [frame, sel, modeKey]);
+  const catalog = useMemo(() => customCatalog(getLatest().params || {}), [paramN]);
+  const [watch, setWatch] = useState<string[]>(() => defaultWatch(frame, sel, getLatest()));
   const [lines, setLines] = useState<string[]>(() => loadLines(frame));
   const customOn = watch.includes(CUSTOM_ID);
 
@@ -76,20 +76,21 @@ export function Scope({
   }, [frame]);
 
   useEffect(() => {
-    if (!customOn || !s.ok) return;
+    if (!customOn || !getLatest().ok) return;
     send({ op: "params_list" });
-  }, [customOn, s.ok]);
+  }, [customOn, modeKey]);
 
   useEffect(() => {
     setWatch((w) => {
       const keepCustom = w.includes(CUSTOM_ID);
-      const live = new Set(liveNodes(frame, s).map((n) => n.id));
+      const now = getLatest();
+      const live = new Set(liveNodes(frame, now).map((n) => n.id));
       let next: string[];
       if (sel && w.includes(sel)) {
         const kept = w.filter((id) => id !== CUSTOM_ID && live.has(id));
-        next = kept.length ? kept : defaultWatch(frame, sel, s);
+        next = kept.length ? kept : defaultWatch(frame, sel, now);
       } else {
-        next = defaultWatch(frame, sel, s);
+        next = defaultWatch(frame, sel, now);
       }
       return keepCustom && !next.includes(CUSTOM_ID) ? [...next, CUSTOM_ID] : next;
     });

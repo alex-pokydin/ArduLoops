@@ -1,5 +1,7 @@
 import { useMemo, useState } from "react";
 import { Aside, type LogRow } from "../components/Aside";
+import { AuditLibrary } from "../components/AuditLibrary";
+import { WorkspaceTabs } from "../components/WorkspaceTabs";
 import { Scope } from "../components/Scope";
 import { Studio } from "../components/Studio";
 import { useT } from "../i18n/i18n";
@@ -21,6 +23,7 @@ export function PlaneApp({
   const [sel, setSel] = useState<string | null>(null);
   const [axis, setAxis] = useState<Axis>("roll");
   const [showAll, setShowAll] = useState(false);
+  const [workspace, setWorkspace] = useState<"loops" | "audit">("loops");
   const col1Default = useMemo(() => preferredLayoutWidth(LAYERS), []);
   const loopAxis = axis === "d" ? "roll" : axis;
 
@@ -39,13 +42,35 @@ export function PlaneApp({
     else if (next === "rll_ang" || next === "rll_rate" || next === "aileron" || next === "ahrs") setAxis("roll");
   }
 
+  if (workspace === "audit") {
+    return (
+      <main>
+        <AuditLibrary current="audit" ids={["loops", "audit"]} onWorkspace={(id) => { if (id === "loops" || id === "audit") setWorkspace(id); }} />
+        <Aside
+          log={log}
+          sel={sel}
+          onSel={onPick}
+          axis={loopAxis}
+          modes={MODES}
+          nodes={NODES}
+          presets={false}
+          vehicle="plane"
+          inspect={<PlaneInspect sel={sel} onSel={onPick} showAll={showAll} />}
+        />
+      </main>
+    );
+  }
+
   return (
     <main>
       <section className="scope">
         <Studio
           frame="plane"
           col1Default={col1Default}
-          toolbar={<PlaneAxisSwitch axis={loopAxis} onAxis={onAxis} />}
+          toolbar={<>
+            <WorkspaceTabs current="loops" ids={["loops", "audit"]} onSelect={(id) => { if (id === "loops" || id === "audit") setWorkspace(id); }} />
+            <PlaneAxisSwitch axis={loopAxis} onAxis={onAxis} />
+          </>}
           scheme={<PlaneMap sel={sel} onSel={onPick} showAll={showAll} onShowAll={setShowAll} />}
           loop={(compact) => <PlaneLoopView sel={sel} axis={loopAxis} compact={compact} />}
           scope={<Scope sel={sel} onSel={onPick} axis={loopAxis} />}
@@ -56,7 +81,6 @@ export function PlaneApp({
         sel={sel}
         onSel={onPick}
         axis={loopAxis}
-        live3d={false}
         modes={MODES}
         nodes={NODES}
         presets={false}

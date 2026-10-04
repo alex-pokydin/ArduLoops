@@ -115,6 +115,6 @@ export function tDetail(detail: string | undefined): string {
       url: hb[1],
     });
   }
-  if (detail.includes("ATTITUDE")) return t("No ATTITUDE, reconnect");
+  if (detail.includes("ATTITUDE")) return t(detail.includes("reconnect") ? "No ATTITUDE, reconnect" : "No ATTITUDE");
   return detail;
 }

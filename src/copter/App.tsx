@@ -11,8 +11,9 @@ import { preferredLayoutWidth } from "../lib/layout";
 import { addLog } from "../log";
 import { axisLabel, type Axis } from "../mav/axis";
 import { CopterLoopView } from "./LoopView";
-import { FirmwareLibrary } from "../components/FirmwareLibrary";
-import { ParameterLibrary } from "../components/ParameterLibrary";
+import { AuditLibrary } from "../components/AuditLibrary";
+import { ControllerView } from "../components/ControllerView";
+import { WorkspaceTabs } from "../components/WorkspaceTabs";
 
 export function CopterApp({
   log,
@@ -22,9 +23,8 @@ export function CopterApp({
   const t = useT();
   const [sel, setSel] = useState<string | null>(null);
   const [axis, setAxis] = useState<Axis>("roll");
-  const [live3d, setLive3d] = useState(false);
   const [showAll, setShowAll] = useState(false);
-  const [workspace, setWorkspace] = useState<"loops" | "firmware" | "params">("loops");
+  const [workspace, setWorkspace] = useState<"loops" | "firmware" | "audit">("loops");
   const col1Default = useMemo(() => preferredLayoutWidth(LAYERS), []);
 
   function onAxis(next: Axis) {
@@ -40,11 +40,6 @@ export function CopterApp({
     addLog(t("Axis · {axis}", { axis: t(axisLabel(next)) }), "cmd");
   }
 
-  function onLive3d(on: boolean) {
-    setLive3d(on);
-    addLog(on ? t("Model · 3D") : t("Model · one axis"), "cmd");
-  }
-
   function onPick(next: string | null) {
     setSel(next);
     if (next?.startsWith("psc_d")) setAxis("d");
@@ -58,29 +53,27 @@ export function CopterApp({
   if (workspace === "firmware") {
     return (
       <main>
-        <FirmwareLibrary onBack={() => setWorkspace("loops")} onParams={() => setWorkspace("params")} />
+        <ControllerView onWorkspace={setWorkspace} />
         <Aside
           log={log}
           sel={sel}
           onSel={onPick}
           axis={axis}
-          live3d={live3d}
           inspect={<CopterInspect sel={sel} onSel={onPick} axis={axis} showAll={showAll} />}
         />
       </main>
     );
   }
 
-  if (workspace === "params") {
+  if (workspace === "audit") {
     return (
       <main>
-        <ParameterLibrary onLoops={() => setWorkspace("loops")} onFirmware={() => setWorkspace("firmware")} />
+        <AuditLibrary current="audit" ids={["loops", "firmware", "audit"]} onWorkspace={setWorkspace} />
         <Aside
           log={log}
           sel={sel}
           onSel={onPick}
           axis={axis}
-          live3d={live3d}
           inspect={<CopterInspect sel={sel} onSel={onPick} axis={axis} showAll={showAll} />}
         />
       </main>
@@ -94,12 +87,8 @@ export function CopterApp({
           frame="copter"
           col1Default={col1Default}
           toolbar={<>
-            <div className="studio-tabs" role="tablist" aria-label={t("Workspace")}>
-              <button type="button" role="tab" aria-selected onClick={() => setWorkspace("loops")}>{t("loops")}</button>
-              <button type="button" role="tab" aria-selected={false} onClick={() => setWorkspace("firmware")}>{t("controller")}</button>
-              <button type="button" role="tab" aria-selected={false} onClick={() => setWorkspace("params")}>{t("params")}</button>
-            </div>
-            <AxisSwitch axis={axis} onAxis={onAxis} live3d={live3d} onLive3d={onLive3d} />
+            <WorkspaceTabs current="loops" ids={["loops", "firmware", "audit"]} onSelect={setWorkspace} />
+            <AxisSwitch axis={axis} onAxis={onAxis} />
           </>}
           scheme={<Cascade sel={sel} onSel={onPick} axis={axis} showAll={showAll} onShowAll={setShowAll} />}
           loop={(compact) => <CopterLoopView sel={sel} axis={axis} compact={compact} />}
@@ -111,7 +100,6 @@ export function CopterApp({
         sel={sel}
         onSel={onPick}
         axis={axis}
-        live3d={live3d}
         inspect={<CopterInspect sel={sel} onSel={onPick} axis={axis} showAll={showAll} />}
       />
     </main>

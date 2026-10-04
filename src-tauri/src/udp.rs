@@ -129,10 +129,14 @@ impl UdpMav {
         let sock_addr = parse_addr(addr)?;
         let socket = prep(UdpSocket::bind(sock_addr)?)?;
         socket.set_broadcast(true)?;
-        // Until a vehicle answers, GCS heartbeats go to the whole subnet on this port.
-        let announce = SocketAddr::new(IpAddr::V4(Ipv4Addr::BROADCAST), sock_addr.port());
-        log::info!("UDP listen {sock_addr} announce {announce}");
-        Ok(Self::new(socket, true, vec![announce]))
+        // Until a vehicle answers, GCS heartbeats go out on every local subnet.
+        let announce = if sock_addr.is_ipv4() {
+            announce_addrs(sock_addr.port())
+        } else {
+            Vec::new()
+        };
+        log::info!("UDP listen {sock_addr} announce {announce:?}");
+        Ok(Self::new(socket, true, announce))
     }
 
     fn bind_out(addr: &str, broadcast: bool) -> io::Result<Self> {
@@ -169,10 +173,89 @@ impl UdpMav {
 }
 
 fn from_vehicle(msgs: &[(MavHeader, MavMessage)]) -> bool {
-    msgs.iter().any(|(_, msg)| match msg {
-        MavMessage::HEARTBEAT(hb) => hb.mavtype != MavType::MAV_TYPE_GCS,
-        _ => true,
+    msgs.iter().any(|(hdr, msg)| {
+        // 255 is this GCS. Windows delivers our own broadcast back to the
+        // listen socket; treating that as the vehicle points every later
+        // heartbeat at ourselves.
+        if hdr.system_id == 255 {
+            return false;
+        }
+        match msg {
+            MavMessage::HEARTBEAT(hb) => hb.mavtype != MavType::MAV_TYPE_GCS,
+            _ => true,
+        }
     })
+}
+
+/// Limited broadcast plus each NIC's subnet broadcast. On Windows,
+/// 255.255.255.255 often never leaves the interface that owns the default
+/// route, so a vehicle on Wi-Fi never hears a GCS that only announces there.
+/// A GCS listen on 14550 also announces on 14555: MAVESP8266 and SiK Wi-Fi
+/// bridges sit on that port and only then send back to 14550.
+fn announce_addrs(port: u16) -> Vec<SocketAddr> {
+    let mut ports = vec![port];
+    if port == 14550 {
+        ports.push(14555);
+    }
+    let mut addrs = Vec::new();
+    for announce_port in ports {
+        let limited = SocketAddr::new(IpAddr::V4(Ipv4Addr::BROADCAST), announce_port);
+        if !addrs.contains(&limited) {
+            addrs.push(limited);
+        }
+        for bcast in ipv4_broadcasts() {
+            let addr = SocketAddr::new(IpAddr::V4(bcast), announce_port);
+            if !addrs.contains(&addr) {
+                addrs.push(addr);
+            }
+        }
+    }
+    addrs
+}
+
+#[cfg(windows)]
+fn ipv4_broadcasts() -> Vec<Ipv4Addr> {
+    use windows_sys::Win32::NetworkManagement::IpHelper::{GetIpAddrTable, MIB_IPADDRTABLE};
+    const ERROR_INSUFFICIENT_BUFFER: u32 = 122;
+    let mut size = 1500u32;
+    let mut buf = vec![0u8; size as usize];
+    let mut err = unsafe { GetIpAddrTable(buf.as_mut_ptr() as *mut MIB_IPADDRTABLE, &mut size, 0) };
+    if err == ERROR_INSUFFICIENT_BUFFER {
+        buf.resize(size as usize, 0);
+        err = unsafe { GetIpAddrTable(buf.as_mut_ptr() as *mut MIB_IPADDRTABLE, &mut size, 0) };
+    }
+    if err != 0 || size < 4 {
+        return Vec::new();
+    }
+    let table = buf.as_ptr() as *const MIB_IPADDRTABLE;
+    let n = unsafe { (*table).dwNumEntries } as usize;
+    if n == 0 || n > 64 {
+        return Vec::new();
+    }
+    let rows = unsafe { std::slice::from_raw_parts((*table).table.as_ptr(), n) };
+    let mut out = Vec::new();
+    for row in rows {
+        let ip = u32::from_be(row.dwAddr);
+        let mask = u32::from_be(row.dwMask);
+        if ip == 0 || mask == 0 || mask == u32::MAX {
+            continue;
+        }
+        let addr = Ipv4Addr::from(ip);
+        if addr.is_loopback() || addr.is_link_local() {
+            continue;
+        }
+        let bcast = Ipv4Addr::from(ip | !mask);
+        if bcast.is_broadcast() || out.contains(&bcast) {
+            continue;
+        }
+        out.push(bcast);
+    }
+    out
+}
+
+#[cfg(not(windows))]
+fn ipv4_broadcasts() -> Vec<Ipv4Addr> {
+    Vec::new()
 }
 
 pub fn connect(url: &str) -> io::Result<Box<dyn MavConnection<MavMessage> + Send + Sync>> {
@@ -275,7 +358,9 @@ impl MavConnection<MavMessage> for UdpMav {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use mavlink::ardupilotmega::{MavAutopilot, MavModeFlag, MavState, MavType, HEARTBEAT_DATA};
+    use mavlink::ardupilotmega::{
+        MavAutopilot, MavModeFlag, MavState, MavType, HEARTBEAT_DATA, REQUEST_DATA_STREAM_DATA,
+    };
 
     fn hb() -> MavMessage {
         MavMessage::HEARTBEAT(HEARTBEAT_DATA {
@@ -350,6 +435,73 @@ mod tests {
         let mav = UdpMav::bind_in("127.0.0.1:0").unwrap();
         let n = mav.send(&MavHeader::default(), &hb()).unwrap_or(0);
         assert!(n > 0 || mav.socket.local_addr().is_ok());
+    }
+
+    #[test]
+    fn listen_14550_also_announces_the_bridge_port() {
+        let addrs = announce_addrs(14550);
+        assert!(addrs.iter().any(|addr| addr.port() == 14550));
+        assert!(addrs.iter().any(|addr| addr.port() == 14555));
+        assert!(announce_addrs(14551).iter().all(|addr| addr.port() == 14551));
+    }
+
+    #[test]
+    fn own_gcs_traffic_is_not_a_vehicle() {
+        let echo = [(
+            MavHeader {
+                system_id: 255,
+                component_id: 190,
+                sequence: 1,
+            },
+            MavMessage::REQUEST_DATA_STREAM(REQUEST_DATA_STREAM_DATA {
+                target_system: 1,
+                target_component: 1,
+                req_stream_id: 0,
+                req_message_rate: 25,
+                start_stop: 1,
+            }),
+        )];
+        assert!(!from_vehicle(&echo));
+        let vehicle = [(
+            MavHeader {
+                system_id: 1,
+                component_id: 1,
+                sequence: 0,
+            },
+            hb(),
+        )];
+        assert!(from_vehicle(&vehicle));
+    }
+
+    #[test]
+    fn udpin_echo_does_not_replace_the_announce() {
+        let server = UdpMav::bind_in("127.0.0.1:0").unwrap();
+        let client = UdpSocket::bind("127.0.0.1:0").unwrap();
+        let before = server.dest.lock().unwrap().clone();
+        let mut bytes = Vec::new();
+        write_versioned_msg(
+            &mut bytes,
+            MavlinkVersion::V2,
+            MavHeader {
+                system_id: 255,
+                component_id: 190,
+                sequence: 1,
+            },
+            &MavMessage::REQUEST_DATA_STREAM(REQUEST_DATA_STREAM_DATA {
+                target_system: 1,
+                target_component: 1,
+                req_stream_id: 0,
+                req_message_rate: 25,
+                start_stop: 1,
+            }),
+        )
+        .unwrap();
+        client
+            .send_to(&bytes, server.socket.local_addr().unwrap())
+            .unwrap();
+        server.recv().expect("echo");
+        assert_eq!(*server.dest.lock().unwrap(), before);
+        assert!(!before.contains(&client.local_addr().unwrap()));
     }
 
     #[test]

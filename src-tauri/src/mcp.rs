@@ -127,7 +127,10 @@ fn tools() -> Value {
     let mut list = json!([
         {
             "name": "ardupilot_connect",
-            "description": "Point ArduLoops at a MAVLink URL. Default tcpout:127.0.0.1:5763.",
+            "description": concat!(
+                "Point ArduLoops at a MAVLink URL. ",
+                "Default tcpout:127.0.0.1:5763.",
+            ),
             "inputSchema": {
                 "type": "object",
                 "properties": { "conn_str": { "type": "string" } }
@@ -178,7 +181,10 @@ fn tools() -> Value {
         },
         {
             "name": "ardupilot_arm",
-            "description": "ARM. Requires ArduLoops to be linked.",
+            "description": concat!(
+                "ARM. ",
+                "Requires ArduLoops to be linked.",
+            ),
             "inputSchema": { "type": "object", "properties": {} }
         },
         {
@@ -188,37 +194,61 @@ fn tools() -> Value {
         },
         {
             "name": "ardupilot_diagnostics",
-            "description": "Firmware, optical flow quality/rates, sensor health, timestamped STATUSTEXT and command ACKs, parameter download completeness. Read-only refresh optionally requests telemetry streams.",
+            "description": concat!(
+                "Firmware, optical flow quality/rates, sensor health, timestamped STATUSTEXT and command ACKs, parameter download completeness. ",
+                "Read-only refresh optionally requests telemetry streams.",
+            ),
             "inputSchema": {"type": "object", "properties": {"refresh": {"type": "boolean"}}}
         },
         {
             "name": "ardupilot_list_logs",
-            "description": "List on-board ArduPilot DataFlash logs with ID, UTC timestamp and size. This read-only transfer requires a fresh disarmed vehicle heartbeat.",
+            "description": concat!(
+                "List on-board ArduPilot DataFlash logs with ID, UTC timestamp and size. ",
+                "This read-only transfer requires a fresh disarmed vehicle heartbeat.",
+            ),
             "inputSchema": {"type": "object", "properties": {"refresh": {"type": "boolean"}}}
         },
         {
             "name": "ardupilot_download_log",
-            "description": "Download one on-board DataFlash log by log_id to ArduLoops local storage. Returns the saved .bin path and transfer metadata; it never embeds log bytes in MCP. Requires a fresh disarmed vehicle heartbeat.",
+            "description": concat!(
+                "Download one on-board DataFlash log by log_id to ArduLoops local storage. ",
+                "Returns the saved .bin path and transfer metadata; it never embeds log bytes in MCP. ",
+                "Requires a fresh disarmed vehicle heartbeat.",
+            ),
             "inputSchema": {"type": "object", "properties": {"log_id": {"type": "integer", "minimum": 1}, "timeout_s": {"type": "integer", "minimum": 5, "maximum": 180}}, "required": ["log_id"]}
         },
         {
             "name": "ardupilot_erase_logs",
-            "description": "Permanently erase every on-board DataFlash log. Requires a fresh disarmed vehicle heartbeat and explicit confirm: true. Download the needed logs first.",
+            "description": concat!(
+                "Permanently erase every on-board DataFlash log. ",
+                "Requires a fresh disarmed vehicle heartbeat and explicit confirm: true. ",
+                "Download the needed logs first.",
+            ),
             "inputSchema": {"type": "object", "properties": {"confirm": {"type": "boolean"}}, "required": ["confirm"]}
         },
         {
             "name": "ardupilot_firmware_library",
-            "description": "Read the local SQLite firmware library. Each artifact includes its stable artifact ID for flashing, build ID, version, git revision, selected feature IDs, image size, description, build timestamps, user comment and compatibility with the connected controller. The controller includes board name, persistent local identity and user comment when available.",
+            "description": concat!(
+                "Read the local SQLite firmware library. ",
+                "Each artifact includes its stable artifact ID for flashing, build ID, version, git revision, selected feature IDs, image size, description, build timestamps, user comment and compatibility with the connected controller. ",
+                "The controller includes board name, persistent local identity and user comment when available.",
+            ),
             "inputSchema": {"type": "object", "properties": {}}
         },
         {
             "name": "ardupilot_set_controller_comment",
-            "description": "Create, replace or clear the local user comment for a known controller. Read the controller key from ardupilot_firmware_library.",
+            "description": concat!(
+                "Create, replace or clear the local user comment for a known controller. ",
+                "Read the controller key from ardupilot_firmware_library.",
+            ),
             "inputSchema": {"type": "object", "properties": {"controller_key": {"type": "string"}, "comment": {"type": "string", "maxLength": 2000}}, "required": ["controller_key", "comment"]}
         },
         {
             "name": "ardupilot_set_firmware_comment",
-            "description": "Create, replace or clear the local user comment for a firmware artifact. Read the artifact ID from ardupilot_firmware_library.",
+            "description": concat!(
+                "Create, replace or clear the local user comment for a firmware artifact. ",
+                "Read the artifact ID from ardupilot_firmware_library.",
+            ),
             "inputSchema": {"type": "object", "properties": {"artifact_id": {"type": "string"}, "comment": {"type": "string", "maxLength": 2000}}, "required": ["artifact_id", "comment"]}
         },
         {
@@ -323,7 +353,7 @@ fn call_tool(name: &str, args: &Value) -> Result<Value, String> {
                 .get("timeout_s")
                 .and_then(Value::as_u64)
                 .unwrap_or(120)
-                .clamp(5, 180);
+                .clamp(5, 3_600);
             parse_body(cli::http_get(&format!(
                 "/logs/download?id={id}&timeout_s={timeout}"
             ))?)

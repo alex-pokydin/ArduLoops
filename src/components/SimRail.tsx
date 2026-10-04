@@ -15,18 +15,28 @@ import {
   writeSimKeys,
 } from "../mav/sim";
 import type { Sample } from "../mav/types";
+import { useStorePicked } from "../mav/view";
 
 const MOTOR_BITS = [0, 1, 2, 3];
 
 export function SimRail({
-  sample,
   open,
   onSitlLink,
 }: {
-  sample: Sample;
   open: boolean;
   onSitlLink: (url: string) => void;
 }) {
+  const sample = useStorePicked(
+    (s) => s,
+    (a, b) =>
+      open
+        ? a === b
+        : a.ok === b.ok &&
+          a.frame === b.frame &&
+          a.detail === b.detail &&
+          a.sitl_running === b.sitl_running &&
+          a.sitl_phase === b.sitl_phase,
+  );
   const t = useT();
   const params = sample.params || {};
   const sitl = isSitl(params);

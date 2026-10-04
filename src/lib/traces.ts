@@ -7,6 +7,8 @@ export type Trace = {
   key?: keyof Sample;
   /** Board PARAM_VALUE name — plotted from sample.params. */
   param?: string;
+  /** MAVLink field `MESSAGE.field`, plotted from sample.live_nums. */
+  live?: string;
   role: TraceRole;
   /** MAVLink / field name — shown as-is. */
   label: string;
@@ -90,6 +92,11 @@ const LIVE_FIELDS: Array<{ key: keyof Sample; label: string; unit: string; role:
   { key: "gspd", label: "VFR_HUD.groundspeed", unit: "m/s", role: "actual" },
   { key: "hdg", label: "VFR_HUD.heading", unit: "°", role: "target" },
   { key: "thr_out", label: "VFR_HUD.throttle", unit: "%", role: "actual" },
+  { key: "rng_m", label: "DISTANCE_SENSOR.current_distance", unit: "m", role: "actual" },
+  { key: "rng_v", label: "RANGEFINDER.voltage", unit: "V", role: "actual" },
+  { key: "flow_x", label: "OPTICAL_FLOW.flow_comp_m_x", unit: "m/s", role: "actual" },
+  { key: "flow_y", label: "OPTICAL_FLOW.flow_comp_m_y", unit: "m/s", role: "actual" },
+  { key: "flow_q", label: "OPTICAL_FLOW.quality", unit: "", role: "actual" },
   { key: "att_hz", label: "ATT Hz", unit: "Hz", role: "actual" },
   { key: "gain_p", label: "ATC_RAT_RLL_P", unit: "", role: "actual" },
   { key: "gain_i", label: "ATC_RAT_RLL_I", unit: "", role: "actual" },
@@ -100,12 +107,18 @@ const LIVE_FIELDS: Array<{ key: keyof Sample; label: string; unit: string; role:
 ];
 
 export function traceId(tr: Trace): string {
-  return tr.param ? "p:" + tr.param : String(tr.key ?? "");
+  if (tr.param) return "p:" + tr.param;
+  if (tr.live) return tr.live;
+  return String(tr.key ?? "");
 }
 
 export function traceValue(s: Sample, tr: Trace): number | null {
   if (tr.param) {
     const v = s.params?.[tr.param];
+    return typeof v === "number" && Number.isFinite(v) ? v : null;
+  }
+  if (tr.live) {
+    const v = s.live_nums?.[tr.live];
     return typeof v === "number" && Number.isFinite(v) ? v : null;
   }
   if (tr.key) {
@@ -143,8 +156,18 @@ export function customCatalog(params: Record<string, number>): CatalogTrace[] {
   return [...liveTraces(), ...paramTraces(params)];
 }
 
+function mavField(id: string): boolean {
+  const parts = id.split(".");
+  return (parts.length === 2 || parts.length === 3)
+    && parts.every((part) => /^[A-Za-z0-9_]+$/.test(part))
+    && /^[A-Z]/.test(parts[0]);
+}
+
 export function resolveLine(id: string, catalog: CatalogTrace[]): CatalogTrace | undefined {
-  const hit = catalog.find((tr) => tr.id === id);
+  if (mavField(id)) {
+    return { id, live: id, label: id, unit: "", role: "actual", group: "live" };
+  }
+  const hit = catalog.find((tr) => tr.id === id || tr.label === id);
   if (hit) return hit;
   if (id.startsWith("p:")) {
     const name = id.slice(2);
@@ -355,7 +378,7 @@ export function customPane(picked: CatalogTrace[]): Pane {
     title: "Custom",
     hint: "Any live field or parameter. Mixed units share one scale.",
     unit: units.length === 1 ? units[0] : "",
-    traces: picked.map(({ key, param, role, label }) => ({ key, param, role, label })),
+    traces: picked.map(({ key, param, live, role, label }) => ({ key, param, live, role, label })),
     spanMin: 1,
     unwrap: picked.some((tr) => UNWRAP_KEYS.has(String(tr.key))),
     custom: true,

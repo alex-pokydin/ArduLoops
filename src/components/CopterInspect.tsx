@@ -13,10 +13,12 @@ import {
   nodesLiveIn,
   type NodeDef,
 } from "../cascade";
+import type { Gain } from "../lib/gains";
 import { fmtGain, liveGain, paramUi } from "./GainRow";
 import { t, useT } from "../i18n/i18n";
 import { axisTar, axisView, type Axis } from "../mav/axis";
-import { useViewSample } from "../mav/view";
+import { getLatest } from "../mav/store";
+import { usePicked } from "../mav/view";
 import type { Sample } from "../mav/types";
 
 function liveBits(node: NodeDef, s: Sample, axis: Axis): string {
@@ -41,20 +43,36 @@ function titleOf(id: string): string {
   return t(title);
 }
 
-function ParamList({ node, sample, axis }: { node: NodeDef; sample: Sample; axis: Axis }) {
+function LiveBits({ node, axis }: { node: NodeDef; axis: Axis }) {
+  const text = usePicked((s) => liveBits(node, s, axis));
+  if (!text) return null;
+  return <div className="live">{text}</div>;
+}
+
+function ParamRead({ gain, axis }: { gain: Gain; axis: Axis }) {
+  const row = usePicked(
+    (s) => {
+      const live = liveGain(gain, s, axis);
+      const v = paramUi(s, gain, axis);
+      return { name: live.name, text: v == null ? "—" : fmtGain(gain, v, live.name) };
+    },
+    (a, b) => a.name === b.name && a.text === b.text,
+  );
+  return (
+    <div className="prow">
+      <code>{row.name}</code>
+      <b>{row.text}</b>
+    </div>
+  );
+}
+
+function ParamList({ node, axis }: { node: NodeDef; axis: Axis }) {
   if (!node.gains.length) return null;
   return (
     <div className="plist">
-      {node.gains.map((g) => {
-        const live = liveGain(g, sample, axis);
-        const v = paramUi(sample, g, axis);
-        return (
-          <div className="prow" key={g.key}>
-            <code>{live.name}</code>
-            <b>{v == null ? "—" : fmtGain(g, v, live.name)}</b>
-          </div>
-        );
-      })}
+      {node.gains.map((g) => (
+        <ParamRead key={g.key} gain={g} axis={axis} />
+      ))}
     </div>
   );
 }
@@ -71,10 +89,13 @@ export function CopterInspect({
   showAll: boolean;
 }) {
   const t = useT();
-  const s = useViewSample();
-  const modeKey = showAll ? "ALL" : s.mode;
+  const link = usePicked(
+    (s) => ({ ok: s.ok, mode: s.mode }),
+    (a, b) => a.ok === b.ok && a.mode === b.mode,
+  );
+  const modeKey = showAll ? "ALL" : link.mode;
   const closed = nodesLiveIn(modeKey);
-  const live = !s.ok ? new Set<string>() : closed;
+  const live = !link.ok ? new Set<string>() : closed;
   const band = isBandId(sel) ? sel : null;
   const node = band ? null : NODES.find((n) => n.id === sel) ?? null;
   const incoming = EDGES.filter((e) => e.to === sel && edgeShownIn(e, modeKey, closed));
@@ -97,12 +118,12 @@ export function CopterInspect({
                 : hasKnobs(node)
                   ? ""
                   : ` · ${t("no knobs")}`}
-            {node.inner && axis !== "d" ? ` · ${t(axisView(s, axis).name)}` : ""}
+            {node.inner && axis !== "d" ? ` · ${t(axisView(getLatest(), axis).name)}` : ""}
           </div>
-          {dimmed && s.ok ? (
+          {dimmed && link.ok ? (
             <p className="warn">
               {t("In {mode} this loop is not running: the autopilot is not turning it. You can inspect gains, but they will not change behaviour until the mode closes the loop.", {
-                mode: s.mode || t("this mode"),
+                mode: link.mode || t("this mode"),
               })}
             </p>
           ) : null}
@@ -112,8 +133,8 @@ export function CopterInspect({
               <b>{t("typical")}</b> {t(node.trap)}
             </p>
           ) : null}
-          {liveBits(node, s, axis) ? <div className="live">{liveBits(node, s, axis)}</div> : null}
-          <ParamList node={node} sample={s} axis={axis} />
+          <LiveBits node={node} axis={axis} />
+          <ParamList node={node} axis={axis} />
           {incoming.length ? (
             <div className="io">
               {t("In")}
@@ -180,8 +201,8 @@ export function CopterInspect({
             {t("WP, Loiter and Circle write targets for PosControl. Horizontal output is lean; vertical accel goes to throttle. Not shown: Plane, CC2_, FHLD, FOLL, heli.")}{" "}
             {showAll
               ? t("All stock layers are visible now.")
-              : s.ok
-                ? t("In {mode}, inactive blocks are not closed now.", { mode: s.mode || t("this mode") })
+              : link.ok
+                ? t("In {mode}, inactive blocks are not closed now.", { mode: link.mode || t("this mode") })
                 : null}
           </p>
         </>

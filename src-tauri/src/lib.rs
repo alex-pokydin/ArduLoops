@@ -1,15 +1,26 @@
+#![recursion_limit = "256"]
+
+mod agent;
 mod cli;
 mod db;
+mod dflog;
 mod firmware;
 mod firmware_native;
 mod http;
 mod link;
 mod mcp;
+mod migrate;
 mod ports;
+mod research;
 #[cfg(not(target_os = "android"))]
 mod serial_link;
 mod sitl;
+mod tlog;
 mod udp;
+
+pub fn migrate_force(on: bool) {
+    migrate::force_latest(on);
+}
 
 pub fn wants_mcp(args: &[String]) -> bool {
     matches!(args.first().map(String::as_str), Some("mcp" | "--mcp"))
@@ -49,6 +60,7 @@ fn spawn_backend(rx: std::sync::mpsc::Receiver<Cmd>, tx_http: Sender<Cmd>, on_sa
 }
 
 pub fn run_bridge() {
+    agent::note_stopped_turns();
     let (tx, rx) = mpsc::channel::<Cmd>();
     println!("ArduLoops  http://{HTTP_ADDR}  (headless MAVLink for the browser UI)");
     println!("UI         http://127.0.0.1:5173");
@@ -71,6 +83,7 @@ mod desktop {
                 if let Ok(path) = app.path().app_local_data_dir() {
                     crate::db::set_app_data_dir(path);
                 }
+                crate::agent::note_stopped_turns();
                 spawn_backend(rx, tx, Arc::new(|_: &Sample| {}));
                 Ok(())
             })

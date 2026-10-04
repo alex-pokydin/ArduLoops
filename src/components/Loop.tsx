@@ -5,8 +5,8 @@ import { axisTar, axisView, remapGainKey, type Axis } from "../mav/axis";
 import { LoopLiveBox, LoopPidBlock, LoopSumBlock, LoopFrame, loopBoxHit, type LoopMark } from "./LoopPids";
 import { SchemeKey, SchemeKnobs, loopCls, schemeHit } from "./SchemeKnobs";
 import { fmtGain, liveGain, paramOf, paramUi } from "./GainRow";
-import { isPaused } from "../mav/store";
-import { useVehicle, useViewSample } from "../mav/view";
+import { getLatest, isPaused } from "../mav/store";
+import { usePicked, useVehicle } from "../mav/view";
 import { NODES as PLANE_NODES, nodesLiveIn as planeLive } from "../plane/cascade";
 import type { Sample } from "../mav/types";
 import { PaneHead } from "./Studio";
@@ -26,6 +26,13 @@ const COL = {
 function fmt(v: number | null, d: number): string {
   if (v == null || Number.isNaN(v)) return "—";
   return v.toFixed(d);
+}
+
+const EMPTY_PARAMS: Record<string, number> = {};
+
+function closedKey(vehicle: "copter" | "plane", s: Sample): string {
+  const set = vehicle === "plane" ? planeLive(s.mode, s) : copterLive(s.mode);
+  return [...set].sort().join(",");
 }
 
 function gainOf(node: NodeDef, letter: "P" | "I" | "D", s: Sample, axis: Axis): { text: string; key: string; v: number | null } | null {
@@ -396,8 +403,25 @@ export function Loop({
   const t = useT();
   const [extend, setExtend] = useState(false);
   const [pick, setPick] = useState<string | null>(null);
-  const s = useViewSample();
   const vehicle = useVehicle();
+  const link = usePicked(
+    (s) => ({
+      ok: s.ok,
+      mode: s.mode,
+      closed: closedKey(vehicle, s),
+    }),
+    (a, b) => a.ok === b.ok && a.mode === b.mode && a.closed === b.closed,
+  );
+  const params = usePicked(
+    (s) => s.params || EMPTY_PARAMS,
+    (a, b) => {
+      const ak = Object.keys(a);
+      if (ak.length !== Object.keys(b).length) return false;
+      for (const k of ak) if (a[k] !== b[k]) return false;
+      return true;
+    },
+  );
+  const s = { ...getLatest(), params };
   const plane = vehicle === "plane";
   const nodes = plane ? PLANE_NODES : COPTER_NODES;
   const node =
@@ -418,7 +442,7 @@ export function Loop({
   const ffLead = node.gains.some((g) => g.label === "FF");
   const showFf = !!ff && (extend || ffLead);
   const notch = notchOf(s);
-  const idle = s.ok && !(plane ? planeLive(s.mode, s).has(node.id) : copterLive(s.mode).has(node.id));
+  const idle = link.ok && !link.closed.split(",").includes(node.id);
   const scale = paramOf(s, "SCALING_SPEED");
   const cap = plane
     ? extend
@@ -546,6 +570,7 @@ export function Loop({
             title={t("want")}
             sub={extend && fltt ? `FLTT ${fltt.text}` : "setpoint"}
             value={`${fmt(w.ref, w.digits)} ${w.unit}`}
+            liveText={(n) => `${fmt(n, w.digits)} ${w.unit}`}
             pick={(p) => wiresOf(node, p, axis).ref}
             subColor={extend && fltt ? COL.hot : undefined}
             mark={fltt ? "later" : "struct"}
@@ -574,6 +599,7 @@ export function Loop({
             title={t("error")}
             sub={extend && flte ? `FLTE ${flte.text}` : "e = r − y"}
             value={`${fmt(err, w.digits)} ${w.unit}`}
+            liveText={(n) => `${fmt(n, w.digits)} ${w.unit}`}
             pick={(p) => {
               const ww = wiresOf(node, p, axis);
               if (ww.ref == null || ww.act == null || Number.isNaN(ww.ref) || Number.isNaN(ww.act)) return null;
@@ -698,6 +724,7 @@ export function Loop({
             title={t("actual")}
             sub="process variable"
             value={`${fmt(w.act, w.digits)} ${w.unit}`}
+            liveText={(n) => `${fmt(n, w.digits)} ${w.unit}`}
             pick={(p) => wiresOf(node, p, axis).act}
             mark="struct"
             {...hit("act")}

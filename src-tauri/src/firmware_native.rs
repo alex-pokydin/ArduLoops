@@ -33,6 +33,10 @@ fn need(ok: bool, msg: impl Into<String>) -> Result<(), String> {
 fn sha(bytes: &[u8]) -> String {
     format!("{:x}", Sha256::digest(bytes))
 }
+pub fn flash_in_progress() -> bool {
+    root().join("flash.lock").exists()
+}
+
 fn root() -> PathBuf {
     if let Some(p) = std::env::var_os("ARDULOOPS_FIRMWARE_DIR") {
         PathBuf::from(p)
@@ -169,7 +173,7 @@ fn list(a: Option<&Value>, name: &str) -> Result<Vec<String>, String> {
         })
         .collect()
 }
-fn resolve(items: &[Value], enable: Vec<String>, disable: Vec<String>) -> Result<Value, String> {
+fn resolve(items: &[Value], enable: Vec<String>, disable: Vec<String>, base: Option<Vec<String>>) -> Result<Value, String> {
     let defs: HashMap<_, _> = items
         .iter()
         .filter_map(|x| x["id"].as_str().map(|id| (id.to_owned(), x)))
@@ -189,10 +193,14 @@ fn resolve(items: &[Value], enable: Vec<String>, disable: Vec<String>) -> Result
         .filter(|(_, x)| x["default"]["enabled"].as_bool() == Some(true))
         .map(|(x, _)| x.clone())
         .collect();
-    let mut chosen: BTreeSet<_> = defaults
-        .union(&en.iter().cloned().collect())
-        .cloned()
-        .collect();
+    let mut chosen: BTreeSet<_> = match base {
+        Some(ids) => {
+            need(ids.iter().all(|id| defs.contains_key(id)), "Unknown feature ID")?;
+            ids.into_iter().collect()
+        }
+        None => defaults.clone(),
+    };
+    chosen.extend(en.iter().cloned());
     chosen.retain(|x| !dis.contains(x));
     let mut todo: Vec<_> = chosen.iter().cloned().collect();
     while let Some(x) = todo.pop() {
@@ -223,10 +231,15 @@ fn build(a: &Value) -> Result<Value, String> {
                 .as_array()
                 .cloned()
                 .ok_or("Invalid feature catalog")?;
+            let base = match a.get("features") {
+                Some(value) if !value.is_null() => Some(list(Some(value), "features")?),
+                _ => None,
+            };
             let r = resolve(
                 &features,
                 list(a.get("enable"), "enable")?,
                 list(a.get("disable"), "disable")?,
+                base,
             )?;
             let id = Uuid::new_v4().simple().to_string();
             let mut request = Map::new();
@@ -353,6 +366,7 @@ struct Image {
     bytes: Vec<u8>,
     git: Option<String>,
     description: Option<String>,
+    summary: Option<String>,
 }
 fn apj(bytes: &[u8]) -> Result<Image, String> {
     need(bytes.len() <= IMAGE, "APJ is too large")?;
@@ -405,7 +419,63 @@ fn apj(bytes: &[u8]) -> Result<Image, String> {
         bytes: out,
         git: a["git_identity"].as_str().map(str::to_owned),
         description: a["description"].as_str().map(str::to_owned),
+        summary: a["summary"].as_str().map(str::to_owned),
     })
+}
+
+fn board_label(summary: Option<&str>) -> Option<String> {
+    let name = summary?.trim();
+    let ok = (1..=64).contains(&name.len())
+        && name.starts_with(|c: char| c.is_ascii_alphabetic())
+        && name
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-');
+    ok.then(|| name.to_string())
+}
+
+/// Validate a local APJ and store it where the existing flash plan can read it.
+fn stage_local(bytes: &[u8], vehicle: &str, root: &Path) -> Result<Value, String> {
+    need(
+        vehicle == "copter" || vehicle == "plane",
+        "Vehicle must be copter or plane",
+    )?;
+    let img = apj(bytes)?;
+    let aid = sha(bytes);
+    let dir = root.join("artifacts").join(&aid);
+    fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+    let path = dir.join("firmware.apj");
+    fs::write(&path, bytes).map_err(|e| e.to_string())?;
+    let board_name = board_label(img.summary.as_deref());
+    let description = match (board_name.as_deref(), img.git.as_deref()) {
+        (Some(board), Some(git)) => format!("{board} · {git}"),
+        (Some(board), None) => board.to_string(),
+        (None, Some(git)) => git.to_string(),
+        (None, None) => img.description.clone().unwrap_or_default(),
+    };
+    let manifest = json!({
+        "artifact_id": aid,
+        "sha256": aid,
+        "board_id": img.board,
+        "image_size": img.size,
+        "git_identity": img.git,
+        "description": description,
+        "build_id": "local",
+        "path": path.display().to_string(),
+        "built_at": now(),
+        "request": {
+            "vehicle_id": vehicle,
+            "board_id": board_name,
+            "selected_features": [],
+        }
+    });
+    save(&dir.join("manifest.json"), &manifest)?;
+    Ok(manifest)
+}
+
+pub fn import_local(bytes: &[u8], vehicle: &str) -> Result<Value, String> {
+    let manifest = stage_local(bytes, vehicle, &root())?;
+    crate::db::record_firmware(&manifest)?;
+    Ok(manifest)
 }
 fn artifact(id: &str) -> Result<(Value, Image, PathBuf), String> {
     let d = local("artifacts", id)?;
@@ -702,7 +772,7 @@ struct Boot {
 impl Boot {
     fn open(name: &str) -> Result<Self, String> {
         let port = serialport::new(name, 115200)
-            .timeout(Duration::from_millis(400))
+            .timeout(Duration::from_secs(2))
             .open()
             .map_err(|e| e.to_string())?;
         port.clear(serialport::ClearBuffer::All)
@@ -719,7 +789,14 @@ impl Boot {
             (2..=5).contains(&b.rev),
             format!("Unsupported bootloader protocol {}", b.rev),
         )?;
-        let _ = b.info(6);
+        // External-flash size is optional. A timeout leaves a late reply in the
+        // buffer, so resync before the next command, as the reference uploader does.
+        if b.info(6).is_err() {
+            b.port
+                .clear(serialport::ClearBuffer::Input)
+                .map_err(|e| e.to_string())?;
+            b.sync()?;
+        }
         b.board = b.info(2)?;
         let _ = b.info(3)?;
         b.flash = b.info(4)?;
@@ -882,6 +959,12 @@ pub fn run_worker(id: &str) -> Result<(), String> {
             &dir.join("status.json"),
             &json!({"state":"written_verified","plan_id":id,"sha256":m["sha256"],"next_step":"Reconnect and verify firmware, parameters, sensors, modes and pre-arm checks. Flight readiness is not established."}),
         )?;
+        if let (Some(artifact_id), Some(vehicle)) = (
+            m["artifact_id"].as_str(),
+            m.pointer("/request/vehicle_id").and_then(Value::as_str),
+        ) {
+            let _ = crate::db::note_flashed(&plan["identity"], artifact_id, vehicle);
+        }
         Ok(())
     })();
     if let Err(e) = result {
@@ -896,9 +979,20 @@ pub fn run_worker(id: &str) -> Result<(), String> {
 #[allow(dead_code)] // The stable MCP schemas are exposed from firmware.rs.
 pub fn tools() -> Vec<Value> {
     vec![
-        json!({"name":"ardupilot_firmware_catalog","description":"Read the official custom.ardupilot.org catalog. No device changes.","inputSchema":{"type":"object","required":["resource"],"properties":{"resource":{"type":"string","enum":["vehicles","versions","boards","features","standard_artifacts"]},"vehicle_id":{"type":"string"},"version_id":{"type":"string"},"board_id":{"type":"string"}}}}),
-        json!({"name":"ardupilot_firmware_build","description":"Plan, submit, inspect and download a custom firmware build through the official service. The native client validates APJ images and records SHA-256. Does not flash.","inputSchema":{"type":"object","required":["action"],"properties":{"action":{"type":"string","enum":["plan","submit","status","logs","download"]},"vehicle_id":{"type":"string"},"version_id":{"type":"string"},"board_id":{"type":"string"},"enable":{"type":"array","items":{"type":"string"}},"disable":{"type":"array","items":{"type":"string"}},"plan_id":{"type":"string"},"build_id":{"type":"string"},"tail":{"type":"integer"}}}}),
-        json!({"name":"ardupilot_firmware_flash","description":"Native Rust ArduPilot serial-bootloader flashing. No Python, pyserial or ArduPilot checkout is required. DFU and UDP flashing are not supported.","inputSchema":{"type":"object","required":["action"],"properties":{"action":{"type":"string","enum":["ports","prepare","start_bootloader","status"]},"artifact_id":{"type":"string"},"port":{"type":"string"},"plan_id":{"type":"string"},"confirmation":{"type":"string"}}}}),
+        json!({"name":"ardupilot_firmware_catalog","description":concat!(
+            "Read the official custom.ardupilot.org catalog. ",
+            "No device changes.",
+        ),"inputSchema":{"type":"object","required":["resource"],"properties":{"resource":{"type":"string","enum":["vehicles","versions","boards","features","standard_artifacts"]},"vehicle_id":{"type":"string"},"version_id":{"type":"string"},"board_id":{"type":"string"}}}}),
+        json!({"name":"ardupilot_firmware_build","description":concat!(
+            "Plan, submit, inspect and download a custom firmware build through the official service. ",
+            "The native client validates APJ images and records SHA-256. ",
+            "Does not flash.",
+        ),"inputSchema":{"type":"object","required":["action"],"properties":{"action":{"type":"string","enum":["plan","submit","status","logs","download"]},"vehicle_id":{"type":"string"},"version_id":{"type":"string"},"board_id":{"type":"string"},"enable":{"type":"array","items":{"type":"string"}},"disable":{"type":"array","items":{"type":"string"}},"plan_id":{"type":"string"},"build_id":{"type":"string"},"tail":{"type":"integer"}}}}),
+        json!({"name":"ardupilot_firmware_flash","description":concat!(
+            "Native Rust ArduPilot serial-bootloader flashing. ",
+            "No Python, pyserial or ArduPilot checkout is required. ",
+            "DFU and UDP flashing are not supported.",
+        ),"inputSchema":{"type":"object","required":["action"],"properties":{"action":{"type":"string","enum":["ports","prepare","start_bootloader","status"]},"artifact_id":{"type":"string"},"port":{"type":"string"},"plan_id":{"type":"string"},"confirmation":{"type":"string"}}}}),
     ]
 }
 
@@ -913,13 +1007,79 @@ mod tests {
             json!({"id":"FLOWHOLD","default":{"enabled":false},"dependencies":["FLOW"]}),
         ];
         assert_eq!(
-            resolve(&features, vec!["FLOWHOLD".into()], vec![]).unwrap()["selected_features"],
+            resolve(&features, vec!["FLOWHOLD".into()], vec![], None).unwrap()["selected_features"],
             json!(["FLOW", "FLOWHOLD"])
         );
     }
 
     #[test]
+    fn plan_keeps_an_existing_feature_set() {
+        let features = vec![
+            json!({"id":"A","default":{"enabled":true},"dependencies":[]}),
+            json!({"id":"B","default":{"enabled":false},"dependencies":[]}),
+            json!({"id":"C","default":{"enabled":false},"dependencies":[]}),
+        ];
+        let selected = resolve(&features, vec!["C".into()], vec![], Some(vec!["A".into(), "B".into()])).unwrap();
+        assert_eq!(selected["selected_features"], json!(["A", "B", "C"]));
+    }
+
+    #[test]
     fn bootloader_crc_matches_reference() {
         assert_eq!(crc(&[1, 2, 3, 4], 4), 0x9778_24d1);
+    }
+
+    fn tiny_apj() -> Vec<u8> {
+        use flate2::write::ZlibEncoder;
+        use flate2::Compression;
+        let mut enc = ZlibEncoder::new(Vec::new(), Compression::default());
+        enc.write_all(&[0x11, 0x22, 0x33, 0x44]).unwrap();
+        let image = base64::engine::general_purpose::STANDARD.encode(enc.finish().unwrap());
+        serde_json::to_vec(&json!({
+            "board_id": 1081,
+            "magic": "APJFWv1",
+            "description": "Firmware for a STM32F405xx board",
+            "image": image,
+            "image_size": 4,
+            "summary": "JHEM_JHEF405",
+            "git_identity": "37ea692e",
+            "extf_image_size": 0
+        }))
+        .unwrap()
+    }
+
+    #[test]
+    fn local_apj_is_staged_with_board_and_hash() {
+        let dir = std::env::temp_dir().join(format!("arduloops-apj-{}", Uuid::new_v4()));
+        let bytes = tiny_apj();
+        let manifest = stage_local(&bytes, "copter", &dir).unwrap();
+        assert_eq!(manifest["board_id"], 1081);
+        assert_eq!(manifest["request"]["vehicle_id"], "copter");
+        assert_eq!(manifest["request"]["board_id"], "JHEM_JHEF405");
+        assert_eq!(manifest["git_identity"], "37ea692e");
+        assert_eq!(manifest["sha256"], sha(&bytes));
+        assert_eq!(manifest["request"]["selected_features"], json!([]));
+        let stored = fs::read(
+            dir.join("artifacts")
+                .join(manifest["artifact_id"].as_str().unwrap())
+                .join("firmware.apj"),
+        )
+        .unwrap();
+        assert_eq!(stored, bytes);
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn local_apj_rejects_a_plain_file() {
+        let dir = std::env::temp_dir().join(format!("arduloops-apj-{}", Uuid::new_v4()));
+        assert!(stage_local(b"not firmware", "copter", &dir).is_err());
+        assert_eq!(
+            stage_local(b"{}", "copter", &dir).unwrap_err(),
+            "Not an ArduPilot APJ firmware"
+        );
+        assert_eq!(
+            stage_local(&tiny_apj(), "rover", &dir).unwrap_err(),
+            "Vehicle must be copter or plane"
+        );
+        let _ = fs::remove_dir_all(dir);
     }
 }

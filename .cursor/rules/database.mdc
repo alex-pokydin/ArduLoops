@@ -1,0 +1,14 @@
+---
+description: Catalog migrations are numbered SQL files embedded at compile time.
+globs: src-tauri/migrations/**/*.sql,src-tauri/src/migrate.rs,src-tauri/build.rs
+alwaysApply: false
+---
+
+# Catalog migrations
+
+- Keep SQLite in the Rust bridge (`rusqlite`). Do not add Prisma or another migration tool.
+- While a change is in progress, edit the latest migration file. Do not add another file for the same change. That file must be safe to run again (`IF NOT EXISTS`, or add a column only when it is missing).
+- The dev bridge starts with `--migrate-force`. That re-runs the latest migration when its file no longer matches the stored checksum, then stores the new checksum. Without the flag, a mismatch stops and the database is not changed.
+- When that migration is finished, the next change is the next number. `build.rs` compiles each file. Startup runs a version that is missing. Do not edit an earlier file, skip a number, or add a down migration.
+- Startup applies pending versions before serving. A newer database version stops without changing the file. An existing database is backed up with `VACUUM INTO` before a migration runs.
+- Do not put DDL on ordinary connection or read paths.

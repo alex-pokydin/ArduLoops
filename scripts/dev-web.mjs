@@ -26,6 +26,8 @@ function bridgeArgs() {
     "--bin",
     bridgeBin(),
     "--no-default-features",
+    "--",
+    "--migrate-force",
   ];
 }
 
@@ -132,7 +134,11 @@ function shouldReload(filename) {
   if (!filename) return false;
   const n = filename.replaceAll("\\", "/");
   if (n.includes("/target/") || n.startsWith("target/") || n.includes("/gen/")) return false;
-  return /\.(rs|toml)$/.test(n);
+  if (n.includes("/migrations/") && n.endsWith(".sql")) return true;
+  if (!/\.(rs|toml)$/.test(n)) return false;
+  // tests.rs is included under cfg(test). The running bridge does not contain it.
+  if (/(^|\/)tests\.rs$/.test(n) || /_tests\.rs$/.test(n) || /(^|\/)(tests|benches)\//.test(n)) return false;
+  return true;
 }
 
 function onStop() {
@@ -161,3 +167,10 @@ watch(tauriDir, { recursive: true }, (_event, filename) => {
   if (stopping || !shouldReload(filename ?? "")) return;
   scheduleBridgeRestart(filename);
 });
+const skillFile = join(root, "skills", "ROOT.md");
+if (existsSync(skillFile)) {
+  watch(skillFile, () => {
+    if (stopping) return;
+    scheduleBridgeRestart("skills/ROOT.md");
+  });
+}

@@ -1,7 +1,15 @@
 import { useEffect, useState, type ReactNode } from "react";
 import { type Lang, useT, useLang, setLang } from "../i18n/i18n";
+import { ai } from "../assistant/api";
 import { APP_HTTP } from "../mav/link";
 import { PLOT_SPANS, getPlotSpan, setPlotSpan, type PlotSpan } from "../mav/store";
+
+const KEY_PAGES: Record<string, string> = {
+  gemini: "https://aistudio.google.com/apikey",
+  openai: "https://platform.openai.com/api-keys",
+  anthropic: "https://console.anthropic.com/settings/keys",
+  xai: "https://console.x.ai/team/default/api-keys",
+};
 
 export function LabDialog({
   open,
@@ -28,7 +36,37 @@ export function LabDialog({
   const initing = initTotal > 0;
   const pct = initing ? Math.min(100, Math.round((100 * initDone) / initTotal)) : 0;
   const [mcpCopied, setMcpCopied] = useState(false);
+  const [aiProvider, setAiProvider] = useState("disabled");
+  const [aiKey, setAiKey] = useState("");
+  const [aiState, setAiState] = useState("");
+  const [aiConfigured, setAiConfigured] = useState(false);
+  const [savedProvider, setSavedProvider] = useState("");
   const [span, setSpan] = useState<PlotSpan>(getPlotSpan);
+  const [tlogOn, setTlogOn] = useState(false);
+  const [tlogPath, setTlogPath] = useState("");
+  const [tlogDir, setTlogDir] = useState("");
+  const [tlogNote, setTlogNote] = useState("");
+
+  async function saveTlog(enabled: boolean, path: string) {
+    try {
+      const r = await fetch(`${APP_HTTP}/tlog`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ enabled, path }),
+      });
+      const body = await r.json() as { enabled?: boolean; path?: string; dir?: string; error?: string };
+      if (!r.ok) {
+        setTlogNote(body.error || "Could not save the telemetry log settings.");
+        return;
+      }
+      setTlogOn(!!body.enabled);
+      setTlogPath(body.path || "");
+      setTlogDir(body.dir || "");
+      setTlogNote("");
+    } catch {
+      setTlogNote("Could not save the telemetry log settings.");
+    }
+  }
 
   async function copyMcp() {
     let text = JSON.stringify(
@@ -56,7 +94,25 @@ export function LabDialog({
   }
 
   useEffect(() => {
-    if (open) setSpan(getPlotSpan());
+    if (!open) return;
+    setSpan(getPlotSpan());
+    void fetch(`${APP_HTTP}/tlog`, { cache: "no-store" })
+      .then((r) => r.json())
+      .then((body: { enabled?: boolean; path?: string; dir?: string }) => {
+        setTlogOn(!!body.enabled);
+        setTlogPath(body.path || "");
+        setTlogDir(body.dir || "");
+        setTlogNote("");
+      })
+      .catch(() => {});
+    void ai.status().then((s) => {
+      setAiConfigured(s.configured);
+      const provider = s.active?.provider || "disabled";
+      setSavedProvider(provider);
+      setAiProvider(provider);
+      setAiState(s.active?.status || "");
+      setAiKey("");
+    }).catch(() => {});
   }, [open]);
 
   useEffect(() => {
@@ -120,21 +176,6 @@ export function LabDialog({
               ))}
             </select>
           </li>
-          <li className="opt">
-            <div className="opt-body">
-              <b>{t("MCP")}</b>
-              <span>
-                {t("Cursor uses the same MAVLink as this window. Start ArduLoops, then paste the config.")}
-              </span>
-            </div>
-            <button
-              type="button"
-              onClick={() => void copyMcp()}
-              title={t("Copy Cursor MCP config")}
-            >
-              {mcpCopied ? t("Copied") : t("Copy")}
-            </button>
-          </li>
           {linked ? (
             <>
               <li className="opt">
@@ -177,6 +218,108 @@ export function LabDialog({
               </li>
             </>
           ) : null}
+          <li className="opt ai-row">
+            <div className="opt-body">
+              <b>{t("AI assistant")}</b>
+              <span>
+                {aiConfigured ? t("Local storage (reduced protection). The key is not shown again.") : t("Choose a provider, then check the key. A check can use a little API quota.")}
+                {aiConfigured && savedProvider && aiProvider !== savedProvider && aiProvider !== "disabled" ? (
+                  <> {t("Chats stay on this computer. The next message sends their selected context to this provider.")}</>
+                ) : null}
+                {KEY_PAGES[aiProvider] ? (
+                  <>
+                    {" "}
+                    <a href={KEY_PAGES[aiProvider]} target="_blank" rel="noreferrer">{t("Create a key")}</a>
+                  </>
+                ) : null}
+              </span>
+              {aiState ? <span>{t(aiState)}</span> : null}
+            </div>
+            <div className="ai-opt">
+              <select aria-label={t("AI assistant")} value={aiProvider} onChange={(ev) => { setAiProvider(ev.target.value); setAiState(""); }}>
+                <option value="disabled">{t("Disabled")}</option>
+                <option value="gemini">Gemini</option>
+                <option value="openai">OpenAI</option>
+                <option value="anthropic">Anthropic</option>
+                <option value="xai">xAI</option>
+              </select>
+              {aiProvider !== "disabled" ? (
+                <input
+                  type="password"
+                  autoComplete="off"
+                  aria-label={t("API key")}
+                  placeholder={aiConfigured ? t("Replace key") : t("API key")}
+                  value={aiKey}
+                  onChange={(ev) => setAiKey(ev.target.value)}
+                />
+              ) : null}
+              <button
+                type="button"
+                onClick={() => {
+                  setAiState(t("checking"));
+                  const op = aiProvider === "disabled" ? "disable" : "check";
+                  void ai.saveProvider(aiProvider, aiKey, op).then((res) => {
+                    const failed = res.ok === false;
+                    setAiState(failed ? (res.status || "network unavailable") : "ready");
+                    setAiConfigured(!failed && aiProvider !== "disabled");
+                    setAiKey("");
+                  }).catch((err: Error) => setAiState(err.message));
+                }}
+              >
+                {aiProvider === "disabled" ? t("Save") : t("Check")}
+              </button>
+              {aiConfigured && aiProvider !== "disabled" ? (
+                <button type="button" onClick={() => void ai.saveProvider(aiProvider, "", "remove").then(() => { setAiConfigured(false); setAiState(""); })}>
+                  {t("Remove")}
+                </button>
+              ) : null}
+            </div>
+          </li>
+          <li className="opt ai-row">
+            <div className="opt-body">
+              <b>{t("Telemetry log")}</b>
+              <span>{t("Record the MAVLink stream as a Mission Planner .tlog while the link is up.")}</span>
+              {tlogNote ? <span>{t(tlogNote)}</span> : null}
+            </div>
+            <div className="ai-opt">
+              <input
+                type="checkbox"
+                aria-label={t("Telemetry log")}
+                checked={tlogOn}
+                onChange={(ev) => {
+                  const on = ev.target.checked;
+                  setTlogOn(on);
+                  void saveTlog(on, tlogPath);
+                }}
+              />
+              <input
+                className="tlog-path"
+                aria-label={t("Folder")}
+                placeholder={tlogDir}
+                value={tlogPath}
+                onChange={(ev) => setTlogPath(ev.target.value)}
+                onBlur={() => void saveTlog(tlogOn, tlogPath)}
+                onKeyDown={(ev) => {
+                  if (ev.key === "Enter") (ev.target as HTMLInputElement).blur();
+                }}
+              />
+            </div>
+          </li>
+          <li className="opt">
+            <div className="opt-body">
+              <b>{t("MCP")}</b>
+              <span>
+                {t("Cursor uses the same MAVLink as this window. Start ArduLoops, then paste the config.")}
+              </span>
+            </div>
+            <button
+              type="button"
+              onClick={() => void copyMcp()}
+              title={t("Copy Cursor MCP config")}
+            >
+              {mcpCopied ? t("Copied") : t("Copy")}
+            </button>
+          </li>
         </ul>
       </div>
     </div>

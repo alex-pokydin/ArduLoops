@@ -1,6 +1,10 @@
 # ArduLoops
 
-A live stand for **seeing ArduPilot loops** — copter and plane. Until a vehicle is linked, the app shows a **disconnected landing** (not a fake copter). HEARTBEAT then mounts the matching shell. **SITL** in the header starts official firmware SITL from the left rail.
+Ground station for an ArduPilot copter or plane. It shows the loops the current mode closes, sets up the vehicle, and reads a DataFlash log. Until a vehicle is linked, the app shows a **disconnected landing** (not a fake copter). HEARTBEAT then mounts the matching shell. **SITL** in the header starts official firmware SITL from the left rail.
+
+**Assistant** is the pane on the right. It reads this link, the parameters on the vehicle, and a log you have downloaded. A number in its reply comes from a tool result. It does not invent a measurement, and it does not send you to another ground station.
+
+The **controller** workspace is Setup, Logs, parameters, and firmware. Setup walks the frame, motors, radio, level, compass, flight modes, failsafe, and battery. Logs lists onboard DataFlash files, with firmware, frame, and duration, and downloads one for the assistant. **Audit** lists what was written.
 
 The wiki is the protocol. This stand shows which loops the current mode actually closes.
 
@@ -89,10 +93,10 @@ GitHub Actions (`.github/workflows/release.yml`) builds Windows NSIS/MSI, Linux 
 
 Release assets:
 
-- `ArduLoops_1.4.0_x64-setup.exe` / `ArduLoops_1.4.0_x64_en-US.msi` — Windows
+- `ArduLoops_2.0.0_x64-setup.exe` / `ArduLoops_2.0.0_x64_en-US.msi` — Windows
 - `.deb` / `.rpm` / `.AppImage` — Linux x86_64
-- `ArduLoops_1.4.0_aarch64.dmg` / `ArduLoops_1.4.0_x64.dmg` — macOS (unsigned), with bundled SITL
-- `ArduLoops_1.4.0_aarch64.apk` — Android arm64, link client only (sideload)
+- `ArduLoops_2.0.0_aarch64.dmg` / `ArduLoops_2.0.0_x64.dmg` — macOS (unsigned), with bundled SITL
+- `ArduLoops_2.0.0_aarch64.apk` — Android arm64, link client only (sideload)
 
 ## Options
 
@@ -132,6 +136,7 @@ npm run cli -- mode STABILIZE
 ## Notes
 
 - Copter: `ATC_*` / `PSC_*`. Plane: `RLL_*` / `PTCH_*` / `YAW2SRV_*` / `NAVL1_*` / `TECS_*` / `STEER2SRV_*`.
-- Out of scope: QuadPlane, autoland flare, full harmonic-notch wizard, Mission Planner’s full tree, log FFT.
+- A downloaded DataFlash log can be measured in the assistant: tracking error, a hold, a spectrum. That measurement is the file, not a tuning recipe.
+- Out of scope: QuadPlane, autoland flare, a full harmonic-notch wizard, Autotune as a procedure.
 - Copter presets **Wool / Stock / Sharp** are feel on the stand, not a tuning protocol.
 - Do not bump `mavlink` in `src-tauri/Cargo.toml` (stay on **0.13.1**).

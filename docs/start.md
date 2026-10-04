@@ -93,10 +93,14 @@ Tune inner loops in **FBWA**, not MANUAL. Pitch numbers are independent of roll.
 
 Wiki: [First Time Setup](https://ardupilot.org/plane/docs/first-time-setup.html) · [Tuning Quickstart](https://ardupilot.org/plane/docs/tuning-quickstart.html) · [Roll/Pitch/Yaw](https://ardupilot.org/plane/docs/new-roll-and-pitch-tuning.html) · [TECS](https://ardupilot.org/plane/docs/tecs-total-energy-control-system-for-speed-height-tuning-guide.html) · [L1 navigation](https://ardupilot.org/plane/docs/navigation-tuning.html) · [Ground steering](https://ardupilot.org/plane/docs/tuning-ground-steering-for-a-plane.html)
 
+## Assistant and the controller
+
+**Assistant**, on the right, reads this link, the parameters, and a DataFlash log after you download it. A figure in the reply is a measurement the log returned. Setup, Logs, parameters, and firmware are the **controller** workspace. **Audit** lists writes.
+
 ## Limits
 
-This stand shows the loops you fly on first setup / first flights, live over MAVLink (`ATTITUDE`, `PID_TUNING`, `VFR_HUD`, watched parameters).
+This stand shows the loops you fly on first setup / first flights, live over MAVLink (`ATTITUDE`, `PID_TUNING`, `VFR_HUD`, watched parameters). A downloaded log adds tracking error, holds, and a spectrum of that file.
 
 **In scope.** Copter `ATC_*` / `PSC_*`. Plane `RLL_*` / `PTCH_*` / `YAW2SRV_*` / `NAVL1_*` / `TECS_*` / `STEER2SRV_*`.
 
-**Out of scope.** QuadPlane, autoland flare, full harmonic-notch wizard, Mission Planner’s parameter tree, log-based FFT / Autotune as a protocol. If the wiki and this stand disagree, the wiki wins.
+**Out of scope.** QuadPlane, autoland flare, a full harmonic-notch wizard, Autotune as a procedure. If the wiki and this stand disagree, the wiki wins.

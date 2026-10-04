@@ -1,0 +1,12 @@
+---
+description: Start the ArduLoops web app and MAVLink bridge together from the repo root.
+alwaysApply: true
+---
+
+# Dev server
+
+- Start the project from the repository root with `npm run dev`. That starts the Vite app and the Rust MAVLink bridge and watches for changes.
+- Keep exactly one `npm run dev` instance running. Reuse a healthy instance instead of starting another.
+- Do not start Vite, `npm run web`, `cargo run`, or the bridge executable separately to run the development application.
+- Before restarting, stop only this project's previous dev process tree and orphaned web or bridge processes. Do not terminate unrelated services to free a port.
+- After startup, verify `http://127.0.0.1:5173/` and `http://127.0.0.1:8767/state`. A vehicle connection error is separate from the app being up.

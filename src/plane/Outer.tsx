@@ -5,7 +5,8 @@ import { namedGains, SchemeDoc, SchemeKey, SchemeKnobs, loopCls, schemeHit } fro
 import { PaneHead } from "../components/Studio";
 import { useT } from "../i18n/i18n";
 import { isPaused } from "../mav/store";
-import { useViewSample } from "../mav/view";
+import { usePicked } from "../mav/view";
+import type { Sample } from "../mav/types";
 import { NODES, nodesLiveIn } from "./cascade";
 import type { Gain } from "../lib/gains";
 
@@ -220,6 +221,36 @@ function LoopChip({
   );
 }
 
+function LiveChip({
+  read,
+  ...rest
+}: {
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+  title: string;
+  stroke: string;
+  mark?: LoopMark;
+  step?: string;
+  picked: boolean;
+  onPick: () => void;
+  read: (s: Sample) => string;
+}) {
+  const value = usePicked(read);
+  return <LoopChip {...rest} value={value} />;
+}
+
+function LiveB({ read }: { read: (s: Sample) => string }) {
+  const text = usePicked(read);
+  return <b>{text}</b>;
+}
+
+function SkeFill({ x, y, h, maxW }: { x: number; y: number; h: number; maxW: number }) {
+  const width = usePicked((s) => Math.max(4, maxW * energyFrac(skeOf(s.aspd), 350) - 2));
+  return <rect x={x + 2} y={y + 2} width={width} height={h - 4} rx="2" fill={COL.cyan} opacity="0.55" stroke="none" />;
+}
+
 function L1Plane() {
   return (
     <g fill="#1a1e24" stroke="currentColor" strokeWidth="1.6" strokeLinejoin="round">
@@ -243,13 +274,20 @@ function TecsPlane() {
 
 export function L1Scheme({ embed, compact }: { embed?: boolean; compact?: boolean }) {
   const t = useT();
-  const s = useViewSample();
+  const face = usePicked(
+    (s) => ({
+      ok: s.ok,
+      mode: s.mode,
+      live: nodesLiveIn(s.mode, s).has("navl1"),
+      per: paramOf(s, "NAVL1_PERIOD"),
+      damp: paramOf(s, "NAVL1_DAMPING"),
+    }),
+    (a, b) => a.ok === b.ok && a.mode === b.mode && a.live === b.live && a.per === b.per && a.damp === b.damp,
+  );
   const paused = isPaused();
-  const live = nodesLiveIn(s.mode, s).has("navl1");
-  const per = paramOf(s, "NAVL1_PERIOD");
-  const damp = paramOf(s, "NAVL1_DAMPING");
+  const per = face.per;
+  const damp = face.damp;
   const k = kL1Of(damp);
-  const l1 = l1DistOf(damp, per, s.gspd);
   const [pick, setPick] = useState<string | null>(null);
   const hit = (id: string) => schemeHit(id, pick, setPick);
   const knobs = namedGains(
@@ -290,10 +328,10 @@ export function L1Scheme({ embed, compact }: { embed?: boolean; compact?: boolea
 
   return (
     <div className={loopCls(compact, embed)}>
-      {live || !s.ok || compact ? null : (
+      {face.live || !face.ok || compact ? null : (
         <p className="warn">
           {t("In {mode} this loop is not running: the autopilot is not turning it. You can inspect gains, but they will not change behaviour until the mode closes the loop.", {
-            mode: s.mode || t("this mode"),
+            mode: face.mode || t("this mode"),
           })}
         </p>
       )}
@@ -303,7 +341,7 @@ export function L1Scheme({ embed, compact }: { embed?: boolean; compact?: boolea
       {compact ? null : (
         <p className="loop-lead">{t("1 look ahead → 2 Nu → 3 accel → 4 bank. Solid left edge is a knob.")}</p>
       )}
-      <div className={!s.ok ? "loop-board idle" : paused ? "loop-board paused" : "loop-board"} onClick={() => setPick(null)}>
+      <div className={!face.ok ? "loop-board idle" : paused ? "loop-board paused" : "loop-board"} onClick={() => setPick(null)}>
         <svg viewBox="0 0 900 330" preserveAspectRatio="xMidYMid meet" role="img" aria-label={t("L1 track")}>
           <defs>
             <marker id="l1Arr" markerWidth="7" markerHeight="7" refX="6" refY="3.5" orient="auto">
@@ -378,13 +416,13 @@ export function L1Scheme({ embed, compact }: { embed?: boolean; compact?: boolea
             mark="struct"
             {...hit("xtrack")}
           />
-          <LoopChip
+          <LiveChip
             x={12}
             y={220}
             w={128}
             h={32}
             title="V"
-            value={s.gspd == null ? "—" : `${fmt(s.gspd, 1)} m/s`}
+            read={(p) => (p.gspd == null ? "—" : `${fmt(p.gspd, 1)} m/s`)}
             stroke={COL.cyan}
             mark="struct"
             {...hit("gspd")}
@@ -400,14 +438,17 @@ export function L1Scheme({ embed, compact }: { embed?: boolean; compact?: boolea
             mark="struct"
             {...hit("nu")}
           />
-          <LoopChip
+          <LiveChip
             x={376}
             y={8}
             w={168}
             h={34}
             step="1"
             title="L1"
-            value={l1 == null ? "—" : `${fmt(l1, 0)} m`}
+            read={(p) => {
+              const dist = l1DistOf(damp, per, p.gspd);
+              return dist == null ? "—" : `${fmt(dist, 0)} m`;
+            }}
             stroke={COL.amber}
             mark="struct"
             {...hit("l1")}
@@ -452,7 +493,8 @@ export function L1Scheme({ embed, compact }: { embed?: boolean; compact?: boolea
             stroke={COL.amber}
             title={`4 · ${t("desired roll")}`}
             sub="nav_roll · atan(a/g)"
-            value={`${fmt(s.tar, 1)}°`}
+            value="—"
+            liveText={(n) => `${fmt(n, 1)}°`}
             pick={(p) => p.tar}
             mark="struct"
             {...hit("bank")}
@@ -466,7 +508,8 @@ export function L1Scheme({ embed, compact }: { embed?: boolean; compact?: boolea
             stroke={COL.cyan}
             title={t("roll loop")}
             sub="ATTITUDE.roll"
-            value={`${fmt(s.roll, 1)}°`}
+            value="—"
+            liveText={(n) => `${fmt(n, 1)}°`}
             pick={(p) => p.roll}
             mark="struct"
             {...hit("roll")}
@@ -490,7 +533,10 @@ export function L1Scheme({ embed, compact }: { embed?: boolean; compact?: boolea
           <div className="frow">
             <span>L1</span>
             <code>(1/pi) · ξ · T · V</code>
-            <b>{l1 == null ? "—" : `${fmt(l1, 1)} m`}</b>
+            <LiveB read={(p) => {
+              const dist = l1DistOf(damp, per, p.gspd);
+              return dist == null ? "—" : `${fmt(dist, 1)} m`;
+            }} />
           </div>
           <div className="frow">
             <span>K</span>
@@ -505,7 +551,7 @@ export function L1Scheme({ embed, compact }: { embed?: boolean; compact?: boolea
           <div className="frow">
             <span>φ*</span>
             <code>atan(a / g) → nav_roll</code>
-            <b>{`${fmt(s.tar, 1)}°`}</b>
+            <LiveB read={(p) => `${fmt(p.tar, 1)}°`} />
           </div>
         </div>
       <SchemeKnobs node={knobNode} gains={knobs} picked={pick} quiet />
@@ -563,15 +609,19 @@ function sebOf(alt: number | null | undefined, v: number | null | undefined, w: 
 
 export function TecsScheme({ embed, compact }: { embed?: boolean; compact?: boolean }) {
   const t = useT();
-  const s = useViewSample();
+  const face = usePicked(
+    (s) => ({
+      ok: s.ok,
+      mode: s.mode,
+      live: nodesLiveIn(s.mode, s).has("tecs"),
+      w: paramOf(s, "TECS_SPDWEIGHT"),
+      tc: paramOf(s, "TECS_TIME_CONST"),
+    }),
+    (a, b) => a.ok === b.ok && a.mode === b.mode && a.live === b.live && a.w === b.w && a.tc === b.tc,
+  );
   const paused = isPaused();
-  const live = nodesLiveIn(s.mode, s).has("tecs");
-  const w = paramOf(s, "TECS_SPDWEIGHT");
-  const tc = paramOf(s, "TECS_TIME_CONST");
-  const spe = speOf(s.alt);
-  const ske = skeOf(s.aspd);
-  const ste = steOf(s.alt, s.aspd);
-  const seb = sebOf(s.alt, s.aspd, w);
+  const w = face.w;
+  const tc = face.tc;
   const [pick, setPick] = useState<string | null>(null);
   const hit = (id: string) => schemeHit(id, pick, setPick);
   const knobs = namedGains([TECS_POOL], tecsKnobKeys(pick));
@@ -597,7 +647,6 @@ export function TecsScheme({ embed, compact }: { embed?: boolean; compact?: bool
   const skeY = PY - 38;
   const skeH = 18;
   const skeMaxW = 72;
-  const skeFillW = skeMaxW * energyFrac(ske, 350);
   const tcW = 124;
   const tcH = 28;
   const tcY = 36;
@@ -610,10 +659,10 @@ export function TecsScheme({ embed, compact }: { embed?: boolean; compact?: bool
 
   return (
     <div className={loopCls(compact, embed)}>
-      {live || !s.ok || compact ? null : (
+      {face.live || !face.ok || compact ? null : (
         <p className="warn">
           {t("In {mode} this loop is not running: the autopilot is not turning it. You can inspect gains, but they will not change behaviour until the mode closes the loop.", {
-            mode: s.mode || t("this mode"),
+            mode: face.mode || t("this mode"),
           })}
         </p>
       )}
@@ -623,7 +672,7 @@ export function TecsScheme({ embed, compact }: { embed?: boolean; compact?: bool
       {compact ? null : (
         <p className="loop-lead">{t("1 height · 2 speed → W mix → 3 throttle adds, 4 pitch trades. Solid left edge is a knob.")}</p>
       )}
-      <div className={!s.ok ? "loop-board idle" : paused ? "loop-board paused" : "loop-board"} onClick={() => setPick(null)}>
+      <div className={!face.ok ? "loop-board idle" : paused ? "loop-board paused" : "loop-board"} onClick={() => setPick(null)}>
         <svg viewBox="0 0 900 300" preserveAspectRatio="xMidYMid meet" role="img" aria-label={t("TECS energy")}>
           <defs>
             <marker id="tecsArrA" markerWidth="7" markerHeight="7" refX="6" refY="3.5" orient="auto">
@@ -684,16 +733,7 @@ export function TecsScheme({ embed, compact }: { embed?: boolean; compact?: bool
               strokeWidth={vOn ? 2 : 1.3}
               strokeDasharray={vOn ? undefined : "4 3"}
             />
-            <rect
-              x={skeX + 2}
-              y={skeY + 2}
-              width={Math.max(4, skeFillW - 2)}
-              height={skeH - 4}
-              rx="2"
-              fill={COL.cyan}
-              opacity="0.55"
-              stroke="none"
-            />
+            <SkeFill x={skeX} y={skeY} h={skeH} maxW={skeMaxW} />
             <text x={skeX} y={skeY - 5} fill={vOn ? COL.cyan : COL.dim} fontSize="11" fontWeight="700">
               SKE
             </text>
@@ -722,7 +762,8 @@ export function TecsScheme({ embed, compact }: { embed?: boolean; compact?: bool
             h={56}
             stroke={COL.amber}
             title={`1 · ${t("height")}`}
-            value={s.alt == null ? "—" : `${fmt(s.alt, 0)} m`}
+            value="—"
+            label={(p) => (p.alt == null ? "—" : `${fmt(p.alt, 0)} m`)}
             pick={(p) => (p.alt != null && p.alt_tar != null ? p.alt - p.alt_tar : p.alt)}
             fit="abs"
             spanMin={8}
@@ -736,7 +777,8 @@ export function TecsScheme({ embed, compact }: { embed?: boolean; compact?: bool
             h={52}
             stroke={COL.cyan}
             title="2 · V"
-            value={s.aspd == null ? "—" : `${fmt(s.aspd, 1)} m/s`}
+            value="—"
+            label={(p) => (p.aspd == null ? "—" : `${fmt(p.aspd, 1)} m/s`)}
             pick={(p) => {
               const v = p.aspd;
               const c = p.params.AIRSPEED_CRUISE;
@@ -838,8 +880,9 @@ export function TecsScheme({ embed, compact }: { embed?: boolean; compact?: bool
             h={68}
             stroke={COL.amber}
             title={`3 · ${t("throttle")}`}
-            sub={`STE ${fmt(ste, 0)} · ${t("total → throttle")}`}
-            value={`${fmt(s.thr_out, 0)}%`}
+            note={(p) => `STE ${fmt(steOf(p.alt, p.aspd), 0)} · ${t("total → throttle")}`}
+            value="—"
+            label={(p) => `${fmt(p.thr_out, 0)}%`}
             pick={(p) => p.thr_out}
             mark="later"
             {...hit("thr")}
@@ -851,8 +894,9 @@ export function TecsScheme({ embed, compact }: { embed?: boolean; compact?: bool
             h={68}
             stroke={COL.amber}
             title={`4 · ${t("desired pitch")}`}
-            sub={`SEB ${fmt(seb, 0)} · nav_pitch`}
-            value={`${fmt(s.pitch_tar, 1)}°`}
+            note={(p) => `SEB ${fmt(sebOf(p.alt, p.aspd, w), 0)} · nav_pitch`}
+            value="—"
+            label={(p) => `${fmt(p.pitch_tar, 1)}°`}
             pick={(p) => p.pitch_tar}
             mark="later"
             {...hit("pitch")}
@@ -865,7 +909,8 @@ export function TecsScheme({ embed, compact }: { embed?: boolean; compact?: bool
             stroke={COL.cyan}
             title={t("plant")}
             sub={t("engine / air")}
-            value={s.aspd == null ? "—" : `${fmt(s.aspd, 1)} m/s`}
+            value="—"
+            label={(p) => (p.aspd == null ? "—" : `${fmt(p.aspd, 1)} m/s`)}
             pick={(p) => p.aspd}
             mark="struct"
             {...hit("plant")}
@@ -878,7 +923,8 @@ export function TecsScheme({ embed, compact }: { embed?: boolean; compact?: bool
             stroke={COL.cyan}
             title={t("pitch loop")}
             sub="ATTITUDE.pitch"
-            value={`${fmt(s.pitch, 1)}°`}
+            value="—"
+            label={(p) => `${fmt(p.pitch, 1)}°`}
             pick={(p) => p.pitch}
             mark="struct"
             {...hit("ploop")}
@@ -892,22 +938,28 @@ export function TecsScheme({ embed, compact }: { embed?: boolean; compact?: bool
           <div className="frow">
             <span>SPE</span>
             <code>g · h</code>
-            <b>{spe == null || s.alt == null ? "—" : `9.81 × ${fmt(s.alt, 1)} = ${fmt(spe, 1)}`}</b>
+            <LiveB read={(p) => {
+              const spe = speOf(p.alt);
+              return spe == null || p.alt == null ? "—" : `9.81 × ${fmt(p.alt, 1)} = ${fmt(spe, 1)}`;
+            }} />
           </div>
           <div className="frow">
             <span>SKE</span>
             <code>0.5 · V²</code>
-            <b>{ske == null || s.aspd == null ? "—" : `0.5 × ${fmt(s.aspd, 1)}² = ${fmt(ske, 1)}`}</b>
+            <LiveB read={(p) => {
+              const ske = skeOf(p.aspd);
+              return ske == null || p.aspd == null ? "—" : `0.5 × ${fmt(p.aspd, 1)}² = ${fmt(ske, 1)}`;
+            }} />
           </div>
           <div className="frow">
             <span>STE</span>
             <code>SPE + SKE → throttle</code>
-            <b>{fmt(ste, 1)}</b>
+            <LiveB read={(p) => fmt(steOf(p.alt, p.aspd), 1)} />
           </div>
           <div className="frow">
             <span>SEB</span>
             <code>(2−W)·SPE − W·SKE → pitch</code>
-            <b>{fmt(seb, 1)}</b>
+            <LiveB read={(p) => fmt(sebOf(p.alt, p.aspd, w), 1)} />
           </div>
           <div className="frow">
             <span>W</span>

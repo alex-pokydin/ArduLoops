@@ -3,9 +3,10 @@ import { NODES as COPTER_NODES } from "../cascade";
 import { tDetail, useT } from "../i18n/i18n";
 import { addLog } from "../log";
 import { axisView, type Axis } from "../mav/axis";
-import { send } from "../mav/cmd";
+import { noteUi, send } from "../mav/cmd";
+import { paramOf } from "./GainRow";
 import { getLatest } from "../mav/store";
-import { frameLive, useViewSample, viewBuffer } from "../mav/view";
+import { frameLive, usePicked, viewBuffer } from "../mav/view";
 import type { Sample } from "../mav/types";
 import type { NodeDef } from "../lib/gains";
 import { GainRow } from "./GainRow";
@@ -72,12 +73,430 @@ function pwmFromNorm(n: number): number {
   return Math.round(1500 + Math.max(-1, Math.min(1, n)) * 500);
 }
 
+type LinkSnap = {
+  ok: boolean;
+  detail: string;
+  mode: string;
+  armed: boolean;
+  att: boolean;
+  attHz: number;
+  frame: string;
+  grounded: boolean;
+  texts: string[];
+  gainP: number | null;
+};
+
+function linkSnap(s: Sample): LinkSnap {
+  return {
+    ok: s.ok,
+    detail: s.detail || "",
+    mode: s.mode,
+    armed: !!s.armed,
+    att: s.att_hz > 0,
+    attHz: s.att_hz,
+    frame: s.frame,
+    grounded: s.alt != null && !Number.isNaN(s.alt) && s.alt < 2,
+    texts: s.texts || [],
+    gainP: s.gain_p,
+  };
+}
+
+function sameLink(a: LinkSnap, b: LinkSnap): boolean {
+  if (
+    a.ok !== b.ok ||
+    a.detail !== b.detail ||
+    a.mode !== b.mode ||
+    a.armed !== b.armed ||
+    a.att !== b.att ||
+    a.frame !== b.frame ||
+    a.grounded !== b.grounded ||
+    a.gainP !== b.gainP ||
+    a.texts.length !== b.texts.length
+  ) {
+    return false;
+  }
+  for (let i = 0; i < a.texts.length; i++) if (a.texts[i] !== b.texts[i]) return false;
+  return true;
+}
+
+function sameFeel(a: Feel, b: Feel): boolean {
+  return a.kind === b.kind && a.title === b.title && a.hint === b.hint && a.axis === b.axis;
+}
+
+function nextFeel(s: Sample, ax: Axis, vehicle: "copter" | "plane"): Feel {
+  if (!s.ok) {
+    return {
+      kind: "idle",
+      title: "Idle",
+      hint:
+        vehicle === "plane"
+          ? "No plane on this link. Grey until HEARTBEAT says plane."
+          : "No copter on this link. Grey until HEARTBEAT says copter.",
+    };
+  }
+  const plane = vehicle === "plane" || s.frame === "plane";
+  if (plane) {
+    if (s.alt != null && !Number.isNaN(s.alt) && s.alt < 2) {
+      return {
+        kind: "gnd",
+        title: "On the ground",
+        hint: "On the runway. MANUAL is the stick on the surface.",
+      };
+    }
+    return {
+      kind: "ok",
+      title: "Tune in FBWA",
+      axis: ax,
+      hint: "FBWA. Stick is an angle — FF, scaled by airspeed, moves the servo.",
+    };
+  }
+  if (s.alt != null && !Number.isNaN(s.alt) && s.alt < 2) {
+    return {
+      kind: "gnd",
+      title: "On the ground",
+      hint: "The craft is sitting. Raise throttle — otherwise the stick will not move it.",
+    };
+  }
+  const last = viewBuffer(vehicle).slice(-80);
+  const angs = last.map((p) => axisView(p, ax).ang || 0);
+  const rates = last.map((p) => axisView(p, ax).rate || 0);
+  const cmds = last.map((p) => axisView(p, ax).cmd || 0);
+  const meanAbs = angs.length ? angs.reduce((a, b) => a + Math.abs(b), 0) / angs.length : 0;
+  let zc = 0;
+  for (let n = 1; n < rates.length; n++) if (rates[n - 1] * rates[n] < 0) zc++;
+  const zcHz = zc / ((last.length > 1 ? last[last.length - 1].t - last[0].t : 1) || 1);
+  const rstd = rates.length ? stdev(rates) : 0;
+  const yawP = Number(s.params?.ATC_RAT_YAW_P ?? NaN);
+  const g = ax === "yaw" ? yawP : ax === "d" ? Number(s.params?.PSC_D_POS_P ?? NaN) : Number(s.gain_p ?? NaN);
+  if (ax === "d") {
+    const climb = Math.abs(s.climb || 0);
+    const thr = Math.abs(s.thr_cmd || 0);
+    if (climb > 0.2 || thr > 12) {
+      return {
+        kind: "ok",
+        title: "Climb",
+        axis: ax,
+        hint: "Throttle stick is climb. Amber on the lower plot should meet cyan.",
+      };
+    }
+    return {
+      kind: "ok",
+      title: "Holding",
+      axis: ax,
+      hint: "D+ is down. Height is AGL (−D). Left stick up/down is throttle.",
+    };
+  }
+  const moving =
+    ax === "yaw"
+      ? Math.max(...rates.map(Math.abs), ...cmds.map(Math.abs), 0) > 8
+      : meanAbs > 4 || Math.max(...cmds.map(Math.abs), 0) > 2;
+  const ringing = rstd > 8 || (zcHz > 4 && rstd > 1.5);
+  if (!Number.isNaN(g) && g < 0.1) {
+    return {
+      kind: "wool",
+      title: "Wool",
+      axis: ax,
+      hint: moving
+        ? "Act lags Tar. P and I are small: there is error, little rate."
+        : ax === "yaw"
+          ? "Yaw P is small. Left stick — a slow turn."
+          : "P×0.2 and I are cut. Quiet in hover; {stick} stick — slow return (wool).",
+    };
+  }
+  if (!Number.isNaN(g) && g >= 0.4) {
+    return {
+      kind: "hot",
+      title: ringing ? "Harsh / ringing" : "Sharp",
+      axis: ax,
+      hint: ringing || moving
+        ? "Act chases Tar. P is large — expect overshoot or ringing."
+        : "P is high. {Stick} stick will show overshoot or ringing.",
+    };
+  }
+  if (moving) {
+    return {
+      kind: "ok",
+      title: "Maneuver",
+      hint:
+        ax === "yaw"
+          ? "Yaw stick is rate. Watch whether amber and cyan match on the lower plot."
+          : "Watch whether cyan meets yellow after you release the stick.",
+    };
+  }
+  return {
+    kind: "ok",
+    title: Number.isNaN(g) ? "—" : "Stock",
+    axis: ax,
+    hint:
+      ax === "yaw"
+        ? "Yaw is separate: I is smaller, D is often 0. Left stick is the reference — does rate catch the command."
+        : "Typical P. {Stick} stick is the horizon-return reference.",
+  };
+}
+
+function SignalLog({
+  vehicle,
+  holdUntil,
+  shownGain,
+}: {
+  vehicle: "copter" | "plane";
+  holdUntil: { current: number };
+  shownGain: { current: string };
+}) {
+  const t = useT();
+  const snap = usePicked(linkSnap, sameLink);
+  const prev = useRef({
+    mode: null as string | null,
+    armed: null as boolean | null,
+    ok: null as boolean | null,
+    att: null as boolean | null,
+    grounded: null as boolean | null,
+    texts: [] as string[],
+  });
+
+  useEffect(() => {
+    const texts = snap.texts;
+    if (!snap.ok) {
+      prev.current.texts = texts.slice();
+      if (prev.current.ok) {
+        addLog(t("No link · {detail}", { detail: tDetail(snap.detail) }), "bad");
+        prev.current.ok = false;
+      }
+      return;
+    }
+    if (snap.gainP != null && Date.now() >= holdUntil.current) {
+      const g = snap.gainP.toFixed(3);
+      if (g !== shownGain.current) {
+        if (shownGain.current) addLog("P " + shownGain.current + " → " + g);
+        shownGain.current = g;
+      }
+    }
+    if (prev.current.ok !== snap.ok) {
+      addLog(
+        snap.ok ? t("Link {url}", { url: snap.detail }) : t("No link · {detail}", { detail: tDetail(snap.detail) }),
+        snap.ok ? "ok" : "bad",
+      );
+      prev.current.ok = snap.ok;
+    }
+    if (snap.mode && snap.mode !== prev.current.mode) {
+      addLog(t("Mode {mode}", { mode: (prev.current.mode ? prev.current.mode + " → " : "") + snap.mode }));
+      prev.current.mode = snap.mode;
+    }
+    if (prev.current.armed !== null && prev.current.armed !== snap.armed) {
+      addLog(snap.armed ? "armed" : "disarm", snap.armed ? "ok" : "dim");
+    }
+    prev.current.armed = snap.armed;
+    if (prev.current.att !== null && prev.current.att !== snap.att) {
+      addLog(snap.att ? "ATT " + snap.attHz + " Hz" : "ATT 0 Hz", snap.att ? "ok" : "bad");
+    }
+    prev.current.att = snap.att;
+    if (prev.current.grounded !== null && prev.current.grounded !== snap.grounded) {
+      addLog(
+        snap.grounded
+          ? vehicle === "plane" || snap.frame === "plane"
+            ? t("On the runway. MANUAL is the stick on the surface.")
+            : t("On the ground · AGL < 2 m, sticks barely rotate the craft")
+          : t("Airborne"),
+        snap.grounded ? "bad" : "ok",
+      );
+    }
+    prev.current.grounded = snap.grounded;
+    for (const raw of freshStatus(texts, prev.current.texts)) logStatus(raw);
+    prev.current.texts = texts.slice();
+  }, [snap, vehicle, t, holdUntil, shownGain]);
+
+  return null;
+}
+
+function batteryOf(s: Sample): { volts: number | null; pct: number | null } {
+  const mv = s.live_nums?.["SYS_STATUS.voltage_battery"];
+  const pctRaw = s.live_nums?.["SYS_STATUS.battery_remaining"];
+  const volts = typeof mv === "number" && mv >= 1000 && mv < 65535 ? Math.round(mv / 10) / 100 : null;
+  const pct = typeof pctRaw === "number" && pctRaw >= 0 && pctRaw <= 100 ? Math.round(pctRaw) : null;
+  return { volts, pct };
+}
+
+function CraftLive({
+  axis,
+  vehicle,
+  onCam,
+}: {
+  axis: Axis;
+  vehicle: "copter" | "plane";
+  onCam?: (cam: "rear" | "side" | "top") => void;
+}) {
+  const t = useT();
+  const pose = usePicked(
+    (s) => ({
+      roll: s.roll || 0,
+      pitch: s.pitch || 0,
+      yaw: s.yaw || 0,
+      tarRoll: s.tar == null ? s.cmd || 0 : s.tar,
+      tarPitch: s.pitch_tar == null ? s.pitch_cmd || 0 : s.pitch_tar,
+      tarYaw: s.yaw_tar == null ? s.yaw || 0 : s.yaw_tar,
+      grounded: s.alt != null && !Number.isNaN(s.alt) && s.alt < 2,
+      alt: s.alt ?? null,
+      climb: s.climb || 0,
+      status: s.texts?.[0] ?? "",
+      alive: s.ok,
+      battery: batteryOf(s),
+    }),
+    (a, b) =>
+      a.roll === b.roll &&
+      a.pitch === b.pitch &&
+      a.yaw === b.yaw &&
+      a.tarRoll === b.tarRoll &&
+      a.tarPitch === b.tarPitch &&
+      a.tarYaw === b.tarYaw &&
+      a.grounded === b.grounded &&
+      a.alt === b.alt &&
+      a.climb === b.climb &&
+      a.status === b.status &&
+      a.alive === b.alive &&
+      a.battery.volts === b.battery.volts &&
+      a.battery.pct === b.battery.pct,
+  );
+  let altLabel: ReactNode = t("AGL height");
+  let altClass = "";
+  if (pose.grounded) {
+    altLabel = pose.climb > 0.15 ? t("takeoff ↑ {v} m/s", { v: pose.climb.toFixed(1) }) : t("Sitting");
+    altClass = "gnd";
+  } else if (pose.alt != null && !Number.isNaN(pose.alt)) {
+    if (pose.climb > 0.15) {
+      altLabel = t("↑ {v} m/s", { v: pose.climb.toFixed(1) });
+      altClass = "up";
+    } else if (pose.climb < -0.15) {
+      altLabel = t("↓ {v} m/s", { v: Math.abs(pose.climb).toFixed(1) });
+      altClass = "dn";
+    } else altLabel = t("Holding");
+  }
+  return (
+    <Craft
+      roll={pose.roll}
+      pitch={pose.pitch}
+      yaw={pose.yaw}
+      tarRoll={pose.tarRoll}
+      tarPitch={pose.tarPitch}
+      tarYaw={pose.tarYaw}
+      grounded={pose.grounded}
+      alt={pose.alt}
+      altLabel={altLabel}
+      altClass={altClass}
+      axis={axis}
+      status={pose.status}
+      battery={pose.battery}
+      vehicle={vehicle}
+      alive={pose.alive}
+      onCam={onCam}
+    />
+  );
+}
+
+function FlightBar({
+  modes,
+  vehicle,
+  onDisarm,
+}: {
+  modes: string[];
+  vehicle: "copter" | "plane";
+  onDisarm: () => void;
+}) {
+  const t = useT();
+  const face = usePicked(
+    (s) => ({ ok: s.ok, mode: s.mode, armed: !!s.armed }),
+    (a, b) => a.ok === b.ok && a.mode === b.mode && a.armed === b.armed,
+  );
+  const modeOptions = modes.includes(face.mode) || face.mode === "?" ? modes : [...modes, face.mode];
+  return (
+    <div className="flight">
+      <select
+        title={t("Flight mode")}
+        aria-label={t("Mode")}
+        disabled={!face.ok}
+        value={modeOptions.includes(face.mode) ? face.mode : modes[0] ?? face.mode}
+        onChange={(ev) => {
+          const before = getLatest();
+          if (!frameLive(vehicle, before)) return;
+          send({ op: "mode", mode: ev.target.value });
+          noteUi([{ kind: "mode", from: before.mode, mode: ev.target.value }]);
+          addLog(t("Mode {mode}", { mode: ev.target.value }), "cmd");
+        }}
+      >
+        {modeOptions.map((m) => (
+          <option key={m} value={m}>{m}</option>
+        ))}
+      </select>
+      <button
+        type="button"
+        className={face.armed ? "arm-sw on" : "arm-sw"}
+        aria-pressed={face.armed}
+        disabled={!face.ok}
+        title={t("Arm / force disarm")}
+        onClick={() => {
+          if (!frameLive(vehicle, getLatest())) return;
+          if (face.armed) {
+            send({ op: "arm", on: false });
+            send({ op: "release" });
+            noteUi([{ kind: "arm", on: false }]);
+            onDisarm();
+            addLog("disarm", "cmd");
+            return;
+          }
+          send({ op: "arm", on: true });
+          noteUi([{ kind: "arm", on: true }]);
+          addLog(t("arm · {mode}", { mode: face.mode }), "cmd");
+        }}
+      >
+        {face.armed ? "armed" : "disarm"}
+      </button>
+    </div>
+  );
+}
+
+function FeelLive({
+  axis,
+  vehicle,
+  stickName,
+}: {
+  axis: Axis;
+  vehicle: "copter" | "plane";
+  stickName: string;
+}) {
+  const t = useT();
+  const feel = usePicked((s) => nextFeel(s, axis, vehicle), sameFeel);
+  const StickName = stickName.charAt(0).toUpperCase() + stickName.slice(1);
+  return (
+    <>
+      <div className={`feel ${feel.kind}`}>{feel.title === "—" ? "—" : t(feel.title)}</div>
+      <div className="hint">{t(feel.hint, { stick: stickName, Stick: StickName })}</div>
+    </>
+  );
+}
+
+function PresetBar({ alive, onPick }: { alive: boolean; onPick: (name: "wool" | "stock" | "hot") => void }) {
+  const t = useT();
+  const gainP = usePicked((s) => s.gain_p);
+  const [held, setHeld] = useState<number | null>(null);
+  const p = held ?? gainP ?? 0.135;
+  function click(name: "wool" | "stock" | "hot") {
+    setHeld(PRESET[name].p);
+    window.setTimeout(() => setHeld(null), 1500);
+    onPick(name);
+  }
+  return (
+    <div className="btns">
+      <button disabled={!alive} className={p < 0.1 ? "cyan on" : "cyan"} onClick={() => click("wool")}>{t("Wool")}</button>
+      <button disabled={!alive} className={p >= 0.1 && p < 0.4 ? "on" : ""} onClick={() => click("stock")}>{t("Stock")}</button>
+      <button disabled={!alive} className={p >= 0.4 ? "hot on" : "hot"} onClick={() => click("hot")}>{t("Sharp")}</button>
+    </div>
+  );
+}
+
 export function Aside({
   log,
   sel,
   onSel,
   axis,
-  live3d,
   modes = COPTER_MODES,
   nodes = COPTER_NODES,
   presets = true,
@@ -89,7 +508,6 @@ export function Aside({
   sel: string | null;
   onSel: (id: string) => void;
   axis: Axis;
-  live3d: boolean;
   modes?: string[];
   nodes?: NodeDef[];
   presets?: boolean;
@@ -98,21 +516,8 @@ export function Aside({
   inspect?: ReactNode;
 }) {
   const t = useT();
-  const s = useViewSample();
-  const alive = s.ok;
-  const [p, setP] = useState(0.135);
-  const [, setI] = useState(0.135);
-  const [, setD] = useState(0.0036);
-  const [, setTc] = useState(0.1);
-  const [, setAcc] = useState(1100);
-  const [, setRmax] = useState(0);
+  const alive = usePicked((s) => s.ok);
   const [planeCam, setPlaneCam] = useState<"rear" | "side" | "top">("rear");
-  const [feel, setFeel] = useState<Feel>({
-    kind: "ok",
-    title: "—",
-    hint: "Preset sets P I D. Throttle is left stick, roll is right.",
-  });
-  const dragging = useRef(false);
   const holdUntil = useRef(0);
   const stickTimer = useRef(0);
   const rc = useRef({ roll: 1500, pitch: 1500, yaw: 1500, thr: 0 });
@@ -124,199 +529,12 @@ export function Aside({
   const knobR = useRef<HTMLDivElement>(null);
   const logEl = useRef<HTMLDivElement>(null);
   const shownGain = useRef("");
-  const prev = useRef({
-    mode: null as string | null,
-    armed: null as boolean | null,
-    ok: null as boolean | null,
-    att: null as boolean | null,
-    grounded: null as boolean | null,
-    texts: [] as string[],
-  });
-
-  useEffect(() => {
-    const texts = s.texts || [];
-    if (!alive) {
-      prev.current.texts = texts.slice();
-      if (prev.current.ok) {
-        addLog(t("No link · {detail}", { detail: tDetail(s.detail) }), "bad");
-        prev.current.ok = false;
-      }
-      setFeel({
-        kind: "idle",
-        title: "Idle",
-        hint:
-          vehicle === "plane"
-            ? "No plane on this link. Grey until HEARTBEAT says plane."
-            : "No copter on this link. Grey until HEARTBEAT says copter.",
-      });
-      return;
-    }
-    if (Date.now() >= holdUntil.current && !dragging.current) {
-      if (s.gain_p != null) setP(s.gain_p);
-      if (s.gain_i != null) setI(s.gain_i);
-      if (s.gain_d != null) setD(s.gain_d);
-      if (s.input_tc != null) setTc(s.input_tc);
-      if (s.acc_max != null) setAcc(s.acc_max);
-      if (s.rate_max != null) setRmax(s.rate_max);
-    }
-    if (s.gain_p != null && Date.now() >= holdUntil.current) {
-      const g = s.gain_p.toFixed(3);
-      if (g !== shownGain.current) {
-        if (shownGain.current && !dragging.current) addLog("P " + shownGain.current + " → " + g);
-        shownGain.current = g;
-      }
-    }
-    if (prev.current.ok !== s.ok) {
-      addLog(
-        s.ok ? t("Link {url}", { url: s.detail || "" }) : t("No link · {detail}", { detail: tDetail(s.detail) }),
-        s.ok ? "ok" : "bad",
-      );
-      prev.current.ok = s.ok;
-    }
-    if (s.mode && s.mode !== prev.current.mode) {
-      addLog(t("Mode {mode}", { mode: (prev.current.mode ? prev.current.mode + " → " : "") + s.mode }));
-      prev.current.mode = s.mode;
-    }
-    if (prev.current.armed !== null && prev.current.armed !== !!s.armed) {
-      addLog(s.armed ? "armed" : "disarm", s.armed ? "ok" : "dim");
-    }
-    prev.current.armed = !!s.armed;
-    const attOk = s.att_hz > 0;
-    if (prev.current.att !== null && prev.current.att !== attOk) {
-      addLog(attOk ? "ATT " + s.att_hz + " Hz" : "ATT 0 Hz", attOk ? "ok" : "bad");
-    }
-    prev.current.att = attOk;
-    const grounded = s.alt != null && !Number.isNaN(s.alt) && s.alt < 2;
-    if (prev.current.grounded !== null && prev.current.grounded !== grounded) {
-      addLog(
-        grounded
-          ? vehicle === "plane" || s.frame === "plane"
-            ? t("On the runway. MANUAL is the stick on the surface.")
-            : t("On the ground · AGL < 2 m, sticks barely rotate the craft")
-          : t("Airborne"),
-        grounded ? "bad" : "ok",
-      );
-    }
-    prev.current.grounded = grounded;
-    const nextTexts = s.texts || [];
-    for (const raw of freshStatus(nextTexts, prev.current.texts)) logStatus(raw);
-    prev.current.texts = nextTexts.slice();
-    classify(s, axis);
-  }, [s, axis, vehicle, alive]);
 
   useEffect(() => {
     const el = logEl.current;
     if (el) el.scrollTop = el.scrollHeight;
   }, [log]);
 
-  function classify(_s: Sample, ax: Axis) {
-    const plane = vehicle === "plane" || _s.frame === "plane";
-    if (plane) {
-      if (_s.alt != null && !Number.isNaN(_s.alt) && _s.alt < 2) {
-        setFeel({
-          kind: "gnd",
-          title: "On the ground",
-          hint: "On the runway. MANUAL is the stick on the surface.",
-        });
-        return;
-      }
-      setFeel({
-        kind: "ok",
-        title: "Tune in FBWA",
-        axis: ax,
-        hint: "FBWA. Stick is an angle — FF, scaled by airspeed, moves the servo.",
-      });
-      return;
-    }
-    if (_s.alt != null && !Number.isNaN(_s.alt) && _s.alt < 2) {
-      setFeel({
-        kind: "gnd",
-        title: "On the ground",
-        hint: "The craft is sitting. Raise throttle — otherwise the stick will not move it.",
-      });
-      return;
-    }
-    const last = viewBuffer(vehicle).slice(-80);
-    const angs = last.map((p) => axisView(p, ax).ang || 0);
-    const rates = last.map((p) => axisView(p, ax).rate || 0);
-    const cmds = last.map((p) => axisView(p, ax).cmd || 0);
-    const meanAbs = angs.length ? angs.reduce((a, b) => a + Math.abs(b), 0) / angs.length : 0;
-    let zc = 0;
-    for (let n = 1; n < rates.length; n++) if (rates[n - 1] * rates[n] < 0) zc++;
-    const zcHz = zc / ((last.length > 1 ? last[last.length - 1].t - last[0].t : 1) || 1);
-    const rstd = rates.length ? stdev(rates) : 0;
-    const yawP = Number(_s.params?.ATC_RAT_YAW_P ?? NaN);
-    const g = ax === "yaw" ? yawP : ax === "d" ? Number(_s.params?.PSC_D_POS_P ?? NaN) : Number(shownGain.current || (_s.gain_p ?? NaN));
-    if (ax === "d") {
-      const climb = Math.abs(_s.climb || 0);
-      const thr = Math.abs(_s.thr_cmd || 0);
-      if (climb > 0.2 || thr > 12) {
-        setFeel({
-          kind: "ok",
-          title: "Climb",
-          axis: ax,
-          hint: "Throttle stick is climb. Amber on the lower plot should meet cyan.",
-        });
-        return;
-      }
-      setFeel({
-        kind: "ok",
-        title: "Holding",
-        axis: ax,
-        hint: "D+ is down. Height is AGL (−D). Left stick up/down is throttle.",
-      });
-      return;
-    }
-    const moving =
-      ax === "yaw"
-        ? Math.max(...rates.map(Math.abs), ...cmds.map(Math.abs), 0) > 8
-        : meanAbs > 4 || Math.max(...cmds.map(Math.abs), 0) > 2;
-    const ringing = rstd > 8 || (zcHz > 4 && rstd > 1.5);
-    if (!Number.isNaN(g) && g < 0.1) {
-      setFeel({
-        kind: "wool",
-        title: "Wool",
-        axis: ax,
-        hint: moving
-          ? "Act lags Tar. P and I are small: there is error, little rate."
-          : ax === "yaw"
-            ? "Yaw P is small. Left stick — a slow turn."
-            : "P×0.2 and I are cut. Quiet in hover; {stick} stick — slow return (wool).",
-      });
-      return;
-    }
-    if (!Number.isNaN(g) && g >= 0.4) {
-      setFeel({
-        kind: "hot",
-        title: ringing ? "Harsh / ringing" : "Sharp",
-        axis: ax,
-        hint: ringing || moving
-          ? "Act chases Tar. P is large — expect overshoot or ringing."
-          : "P is high. {Stick} stick will show overshoot or ringing.",
-      });
-      return;
-    }
-    if (moving) {
-      setFeel({
-        kind: "ok",
-        title: "Maneuver",
-        hint:
-          ax === "yaw"
-            ? "Yaw stick is rate. Watch whether amber and cyan match on the lower plot."
-            : "Watch whether cyan meets yellow after you release the stick.",
-      });
-      return;
-    }
-    setFeel({
-      kind: "ok",
-      title: Number.isNaN(g) ? "—" : "Stock",
-      axis: ax,
-      hint:
-        ax === "yaw"
-          ? "Yaw is separate: I is smaller, D is often 0. Left stick is the reference — does rate catch the command."
-          : "Typical P. {Stick} stick is the horizon-return reference.",
-    });
-  }
 
   function setKnob(el: HTMLDivElement | null, nx: number, ny: number) {
     if (!el) return;
@@ -429,18 +647,29 @@ export function Aside({
   }, [vehicle]);
 
   function applyPreset(name: "wool" | "stock" | "hot") {
-    if (!frameLive(vehicle, getLatest())) return;
+    const before = getLatest();
+    if (!frameLive(vehicle, before)) return;
     const pset = PRESET[name];
+    const ang = name === "wool" ? 2 : 4.5;
+    const written: { name: string; value: number }[] = [];
+    for (const axis of ["RLL", "PIT"]) {
+      written.push({ name: `ATC_RAT_${axis}_P`, value: pset.p });
+      written.push({ name: `ATC_RAT_${axis}_I`, value: pset.i });
+      written.push({ name: `ATC_RAT_${axis}_D`, value: pset.d });
+      written.push({ name: `ATC_ANG_${axis}_P`, value: ang });
+    }
+    if ("tc" in pset && pset.tc != null) {
+      written.push({ name: "ATC_INPUT_TC", value: pset.tc });
+      written.push({ name: "ATC_ACC_R_MAX", value: pset.acc });
+      written.push({ name: "ATC_ACC_P_MAX", value: pset.acc });
+      written.push({ name: "ATC_RATE_R_MAX", value: pset.rmax });
+      written.push({ name: "ATC_RATE_P_MAX", value: pset.rmax });
+    }
     holdUntil.current = Date.now() + 1500;
     send({ op: "preset", name });
-    setP(pset.p);
-    setI(pset.i);
-    setD(pset.d);
+    noteUi(written.map((row) => ({ kind: "param", name: row.name, value: row.value, from: paramOf(before, row.name) })));
     shownGain.current = pset.p.toFixed(3);
     if ("tc" in pset && pset.tc != null) {
-      setTc(pset.tc);
-      setAcc(pset.acc);
-      setRmax(pset.rmax);
       addLog(
         t("Stock · P {p} I {i} D {d} · TC {tc} ACC {acc} Rmax {rmax}", {
           p: pset.p,
@@ -460,94 +689,16 @@ export function Aside({
     onSel("atc_rat");
   }
 
-  const modeOptions = modes.includes(s.mode) || s.mode === "?" ? modes : [...modes, s.mode];
-  const alt = s.alt;
-  const grounded = alt != null && !Number.isNaN(alt) && alt < 2;
-  let altLabel: ReactNode = t("AGL height");
-  let altClass = "";
-  if (grounded) {
-    const c = s.climb || 0;
-    altLabel = c > 0.15 ? t("takeoff ↑ {v} m/s", { v: c.toFixed(1) }) : t("Sitting");
-    altClass = "gnd";
-  } else if (alt != null && !Number.isNaN(alt)) {
-    const c = s.climb || 0;
-    if (c > 0.15) {
-      altLabel = t("↑ {v} m/s", { v: c.toFixed(1) });
-      altClass = "up";
-    } else if (c < -0.15) {
-      altLabel = t("↓ {v} m/s", { v: Math.abs(c).toFixed(1) });
-      altClass = "dn";
-    } else altLabel = t("Holding");
-  }
-
   const tuneNode = nodes.find((n) => n.id === sel) ?? nodes.find((n) => n.guide) ?? nodes[0] ?? null;
-  const tarRoll = s.tar == null ? s.cmd || 0 : s.tar;
-  const tarPitch = s.pitch_tar == null ? s.pitch_cmd || 0 : s.pitch_tar;
-  const tarYaw = s.yaw_tar == null ? s.yaw || 0 : s.yaw_tar;
   const stickAxis = vehicle === "plane" ? camStickAxis(planeCam) : axis;
-  const stickName = t(feel.axis ?? stickAxis);
-  const StickName = stickName.charAt(0).toUpperCase() + stickName.slice(1);
 
   return (
     <aside className={alive ? undefined : "idle"}>
-      <Craft
-        roll={s.roll || 0}
-        pitch={s.pitch || 0}
-        yaw={s.yaw || 0}
-        tarRoll={tarRoll}
-        tarPitch={tarPitch}
-        tarYaw={tarYaw}
-        grounded={grounded}
-        alt={alt}
-        altLabel={altLabel}
-        altClass={altClass}
-        axis={axis}
-        live3d={live3d}
-        status={s.texts?.[0] ?? ""}
-        vehicle={vehicle}
-        alive={alive}
-        onCam={vehicle === "plane" ? setPlaneCam : undefined}
-      />
-      <div className="flight">
-        <select
-          title={t("Flight mode")}
-          aria-label={t("Mode")}
-          disabled={!alive}
-          value={modeOptions.includes(s.mode) ? s.mode : modes[0] ?? s.mode}
-          onChange={(ev) => {
-            if (!frameLive(vehicle, getLatest())) return;
-            send({ op: "mode", mode: ev.target.value });
-            addLog(t("Mode {mode}", { mode: ev.target.value }), "cmd");
-          }}
-        >
-          {modeOptions.map((m) => (
-            <option key={m} value={m}>{m}</option>
-          ))}
-        </select>
-        <button
-          type="button"
-          className={s.armed ? "arm-sw on" : "arm-sw"}
-          aria-pressed={s.armed}
-          disabled={!alive}
-          title={t("Arm / force disarm")}
-          onClick={() => {
-            if (!frameLive(vehicle, getLatest())) return;
-            if (s.armed) {
-              send({ op: "arm", on: false });
-              send({ op: "release" });
-              resetSticks();
-              addLog("disarm", "cmd");
-              return;
-            }
-            send({ op: "arm", on: true });
-            addLog(t("arm · {mode}", { mode: s.mode }), "cmd");
-          }}
-        >
-          {s.armed ? "armed" : "disarm"}
-        </button>
-      </div>
-      <div className={`sticks ${live3d ? "axis-3d" : `axis-${stickAxis}`}`} aria-label={t("Virtual Mode 2 sticks")}>
-        <div className="stick thr" ref={stickL} role="button" tabIndex={0} title={stickAxis === "d" && !live3d ? t("Left stick: throttle (up-down)") : stickAxis === "yaw" && !live3d ? t("Left stick: yaw (left-right)") : t("Left stick: throttle and yaw")}>
+      <SignalLog vehicle={vehicle} holdUntil={holdUntil} shownGain={shownGain} />
+      <CraftLive axis={axis} vehicle={vehicle} onCam={vehicle === "plane" ? setPlaneCam : undefined} />
+      <FlightBar modes={modes} vehicle={vehicle} onDisarm={resetSticks} />
+      <div className={`sticks axis-${stickAxis}`} aria-label={t("Virtual Mode 2 sticks")}>
+        <div className="stick thr" ref={stickL} role="button" tabIndex={0} title={stickAxis === "d" ? t("Left stick: throttle (up-down)") : stickAxis === "yaw" ? t("Left stick: yaw (left-right)") : t("Left stick: throttle and yaw")}>
           <div className="cross" />
           <span className="tag n">{t("Thr")}</span>
           <span className="tag s">{t("Thr−")}</span>
@@ -555,7 +706,7 @@ export function Aside({
           <span className="tag e">{t("Yaw+")}</span>
           <div className="knob" ref={knobL} />
         </div>
-        <div className="stick" ref={stickR} role="button" tabIndex={0} title={live3d ? t("Right stick: roll and pitch") : stickAxis === "pitch" ? t("Right stick: pitch (up-down)") : t("Right stick: roll (left-right)")}>
+        <div className="stick" ref={stickR} role="button" tabIndex={0} title={stickAxis === "pitch" ? t("Right stick: pitch (up-down)") : t("Right stick: roll (left-right)")}>
           <div className="cross" />
           <span className="tag n">{t("pitch")}</span>
           <span className="tag s">{t("pitch")}</span>
@@ -564,15 +715,8 @@ export function Aside({
           <div className="knob" ref={knobR} />
         </div>
       </div>
-      <div className={`feel ${feel.kind}`}>{feel.title === "—" ? "—" : t(feel.title)}</div>
-      <div className="hint">{t(feel.hint, { stick: stickName, Stick: StickName })}</div>
-      {presets ? (
-      <div className="btns">
-        <button disabled={!alive} className={p < 0.1 ? "cyan on" : "cyan"} onClick={() => applyPreset("wool")}>{t("Wool")}</button>
-        <button disabled={!alive} className={p >= 0.1 && p < 0.4 ? "on" : ""} onClick={() => applyPreset("stock")}>{t("Stock")}</button>
-        <button disabled={!alive} className={p >= 0.4 ? "hot on" : "hot"} onClick={() => applyPreset("hot")}>{t("Sharp")}</button>
-      </div>
-      ) : null}
+      <FeelLive axis={axis} vehicle={vehicle} stickName={t(stickAxis)} />
+      {presets ? <PresetBar alive={alive} onPick={applyPreset} /> : null}
       {knobs && tuneNode ? (
           <>
             <div className="tune-cap">
@@ -582,7 +726,7 @@ export function Aside({
             {tuneNode.gains.length ? (
               <div className="sliders">
                 {tuneNode.gains.map((g) => (
-                  <GainRow key={g.key} gain={g} sample={s} node={tuneNode} axis={axis} />
+                  <GainRow key={g.key} gain={g} node={tuneNode} axis={axis} />
                 ))}
               </div>
             ) : (

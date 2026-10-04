@@ -1,10 +1,10 @@
-import { useEffect, useRef, useState, useSyncExternalStore, type FormEvent } from "react";
+import { useEffect, useRef, useState, type FormEvent } from "react";
 import { type LogRow } from "./components/Aside";
-import { Disconnected } from "./components/Disconnected";
+import { Assistant } from "./components/Assistant";
 import { LabDialog } from "./components/LabDialog";
 import { SimRail } from "./components/SimRail";
 import { CopterApp } from "./copter/App";
-import { useT } from "./i18n/i18n";
+import { tDetail, useT } from "./i18n/i18n";
 import { addLog, setLogHandler } from "./log";
 import { send } from "./mav/cmd";
 import { APP_HTTP, formatLink, linkLabel, loadLink, loadLinkHistory, parseLink, rememberLink, saveLink, type LinkKind } from "./mav/link";
@@ -17,8 +17,9 @@ import {
   saveLabSnapshot,
 } from "./mav/labInit";
 import { isSitl } from "./mav/sim";
-import { getSnapshot, isPaused, setPaused, startStream, subscribe } from "./mav/store";
-import { VehicleView } from "./mav/view";
+import { getLatest, isPaused, setPaused, startStream } from "./mav/store";
+import { useStorePicked, VehicleView } from "./mav/view";
+import type { Sample } from "./mav/types";
 import { PlaneApp } from "./plane/App";
 
 function stamp(): string {
@@ -33,6 +34,55 @@ function stamp(): string {
 }
 
 type Shell = "home" | "copter" | "plane";
+
+type ShellFace = {
+  ok: boolean;
+  frame: string;
+  detail: string;
+  armed: boolean;
+  sitl: boolean;
+  known: boolean;
+  initDone: number;
+  initTotal: number;
+};
+
+function shellFace(s: Sample): ShellFace {
+  const sitl = isSitl(s.params) || !!s.sitl_running;
+  return {
+    ok: s.ok,
+    frame: s.frame,
+    detail: s.detail || "",
+    armed: !!s.armed,
+    sitl,
+    known: sitl || Object.keys(s.params || {}).length > 0,
+    initDone: s.init_done || 0,
+    initTotal: s.init_total || 0,
+  };
+}
+
+function sameFace(a: ShellFace, b: ShellFace): boolean {
+  return (
+    a.ok === b.ok &&
+    a.frame === b.frame &&
+    a.detail === b.detail &&
+    a.armed === b.armed &&
+    a.sitl === b.sitl &&
+    a.known === b.known &&
+    a.initDone === b.initDone &&
+    a.initTotal === b.initTotal
+  );
+}
+
+function AttRate() {
+  const text = useStorePicked((s) => {
+    if (!s.ok || !s.att_hz) return "";
+    const live = s.frame === "plane" || s.frame === "copter";
+    const sitl = isSitl(s.params) || !!s.sitl_running;
+    const known = sitl || Object.keys(s.params || {}).length > 0;
+    return `${live || known ? " · " : ""}ATT ${s.att_hz} Hz`;
+  });
+  return text ? <>{text}</> : null;
+}
 const SHELLS: Shell[] = ["home", "copter", "plane"];
 
 function frameFromUrl(): Shell | null {
@@ -49,8 +99,31 @@ function writeFrameUrl(shell: Shell) {
   window.history.replaceState({}, "", u);
 }
 
+function homeHref(): string {
+  const u = new URL(window.location.href);
+  u.searchParams.delete("frame");
+  return `${u.pathname}${u.search}${u.hash}`;
+}
+
 function isAndroid(): boolean {
   return typeof navigator !== "undefined" && /Android/i.test(navigator.userAgent);
+}
+
+type SerialPort = { name: string; label: string };
+
+function serialPortRows(rows: unknown): SerialPort[] {
+  if (!Array.isArray(rows)) return [];
+  return rows.flatMap((row) => {
+    if (typeof row === "string" && row) return [{ name: row, label: row }];
+    if (!row || typeof row !== "object") return [];
+    const name = "name" in row && typeof row.name === "string" ? row.name : "";
+    const label = "label" in row && typeof row.label === "string" && row.label ? row.label : name;
+    return name ? [{ name, label }] : [];
+  });
+}
+
+function samePorts(a: SerialPort[], b: SerialPort[]): boolean {
+  return a.length === b.length && a.every((port, i) => port.name === b[i]?.name && port.label === b[i]?.label);
 }
 
 function isIdleDetail(detail: string | undefined): boolean {
@@ -123,7 +196,7 @@ function ShellPicker({
 
 export function App() {
   const t = useT();
-  const s = useSyncExternalStore(subscribe, getSnapshot, getSnapshot);
+  const face = useStorePicked(shellFace, sameFace);
   const [log, setLog] = useState<LogRow[]>([]);
   const [linkKind, setLinkKind] = useState<LinkKind>(() => parseLink(loadLink()).kind);
   const [linkValue, setLinkValue] = useState(() => parseLink(loadLink()).value);
@@ -134,8 +207,9 @@ export function App() {
   const [sitlOpen, setSitlOpen] = useState(false);
   const [pick, setPick] = useState<Shell | null>(() => frameFromUrl());
   const linkCombo = useRef<HTMLDivElement | null>(null);
+  const refreshSerialPorts = useRef<() => void>(() => {});
   const paused = isPaused();
-  const live: Shell | null = s.ok && (s.frame === "plane" || s.frame === "copter") ? s.frame : null;
+  const live: Shell | null = face.ok && (face.frame === "plane" || face.frame === "copter") ? face.frame : null;
   const shell: Shell = pick ?? live ?? "home";
   const plane = shell === "plane";
   const shellAlive = shell !== "home" && live === shell;
@@ -170,38 +244,63 @@ export function App() {
 
   useEffect(() => {
     if (linkKind !== "serial" || isAndroid()) return;
-    const ac = new AbortController();
-    void fetch(`${APP_HTTP}/ports`, { cache: "no-store", signal: ac.signal })
-      .then((r) => r.json())
-      .then((rows: unknown) => {
-        if (!Array.isArray(rows)) return;
-        const ports = rows.flatMap((row) => {
-          if (typeof row === "string" && row) return [{ name: row, label: row }];
-          if (!row || typeof row !== "object") return [];
-          const name = "name" in row && typeof row.name === "string" ? row.name : "";
-          const label = "label" in row && typeof row.label === "string" && row.label ? row.label : name;
-          return name ? [{ name, label }] : [];
+    let stopped = false;
+    let flight = false;
+    let again = false;
+    const load = () => {
+      if (stopped) return;
+      if (flight) {
+        again = true;
+        return;
+      }
+      flight = true;
+      void fetch(`${APP_HTTP}/ports`, { cache: "no-store" })
+        .then((r) => (r.ok ? r.json() : Promise.reject(new Error(String(r.status)))))
+        .then((rows: unknown) => {
+          if (stopped) return;
+          const ports = serialPortRows(rows);
+          setSerialPorts((prev) => (samePorts(prev, ports) ? prev : ports));
+          setLinkValue((cur) => {
+            const [name, baud = "115200"] = cur.split("@");
+            if (name && ports.some((p) => p.name === name)) return cur;
+            return ports[0] ? `${ports[0].name}@${baud || "115200"}` : cur;
+          });
+        })
+        .catch(() => {})
+        .finally(() => {
+          flight = false;
+          if (again && !stopped) {
+            again = false;
+            load();
+          }
         });
-        setSerialPorts(ports);
-        setLinkValue((cur) => {
-          const port = cur.split("@")[0];
-          if (port && ports.some((p) => p.name === port)) return cur;
-          return ports[0] ? `${ports[0].name}@115200` : cur;
-        });
-      })
-      .catch(() => {});
-    return () => ac.abort();
+    };
+    refreshSerialPorts.current = load;
+    load();
+    const timer = window.setInterval(() => {
+      if (document.visibilityState === "visible") load();
+    }, 2000);
+    const onVisible = () => {
+      if (document.visibilityState === "visible") load();
+    };
+    document.addEventListener("visibilitychange", onVisible);
+    return () => {
+      stopped = true;
+      refreshSerialPorts.current = () => {};
+      window.clearInterval(timer);
+      document.removeEventListener("visibilitychange", onVisible);
+    };
   }, [linkKind]);
 
   useEffect(() => {
-    if (!s.ok) return;
-    const url = (s.detail || "").trim();
+    if (!face.ok) return;
+    const url = face.detail.trim();
     if (!/^(tcpout|tcp:|udp)/i.test(url)) return;
     setLinkHist(rememberLink(url));
     const parsed = parseLink(url);
     setLinkKind(parsed.kind);
     setLinkValue(parsed.value);
-  }, [s.ok, s.detail]);
+  }, [face.ok, face.detail]);
 
   useEffect(() => {
     if (!linkMenu) return;
@@ -246,13 +345,14 @@ export function App() {
   }
 
   function onLabInit() {
-    if (!linked) return;
-    if ((s.init_total || 0) > 0) return;
-    if (s.armed) {
+    const now = getLatest();
+    if (!now.ok) return;
+    if ((now.init_total || 0) > 0) return;
+    if (now.armed) {
       addLog(t("Init · disarm first"), "bad");
       return;
     }
-    const vehicle = s.frame === "plane" ? "plane" : "copter";
+    const vehicle = now.frame === "plane" ? "plane" : "copter";
     const params = runtimeLabParams(vehicle);
     send({ op: "init", params });
     addLog(
@@ -265,8 +365,9 @@ export function App() {
   }
 
   function onLabSave() {
-    if (!linked) return;
-    const live = pickLiveLab(s.params);
+    const now = getLatest();
+    if (!now.ok) return;
+    const live = pickLiveLab(now.params);
     const n = Object.keys(live).length;
     if (n < 8) {
       addLog(t("Export · parameters have not arrived yet, wait"), "bad");
@@ -278,14 +379,13 @@ export function App() {
     addLog(t("Stand · wrote {n} of {total}", { n, total: LAB_KEYS.length }), "ok");
   }
 
-  const hz = s.att_hz || 0;
-  const linked = s.ok;
-  const sitl = isSitl(s.params) || !!s.sitl_running;
-  const sourceKnown = sitl || Object.keys(s.params || {}).length > 0;
-  const initDone = s.init_done || 0;
-  const initTotal = s.init_total || 0;
+  const linked = face.ok;
+  const sitl = face.sitl;
+  const sourceKnown = face.known;
+  const initDone = face.initDone;
+  const initTotal = face.initTotal;
   const initPct = initTotal > 0 ? Math.min(100, Math.round((100 * initDone) / initTotal)) : 0;
-  const linkBad = !linked && !isIdleDetail(s.detail) && !isWaitDetail(s.detail);
+  const linkBad = !linked && !isIdleDetail(face.detail) && !isWaitDetail(face.detail);
   const android = isAndroid();
 
   function onShell(next: Shell) {
@@ -312,7 +412,6 @@ export function App() {
       )}
       {android ? null : (
       <SimRail
-        sample={s}
         open={sitlOpen}
         onSitlLink={(url) => {
           const parsed = parseLink(url);
@@ -325,7 +424,19 @@ export function App() {
       <header>
         <div className="hdr-title">
           <h1>
-            ArduLoops
+            <a
+              className="hdr-brand"
+              href={homeHref()}
+              aria-current={shell === "home" ? "page" : undefined}
+              title={t("Home")}
+              onClick={(ev) => {
+                if (ev.metaKey || ev.ctrlKey || ev.shiftKey || ev.altKey || ev.button !== 0) return;
+                ev.preventDefault();
+                if (shell !== "home") onShell("home");
+              }}
+            >
+              ArduLoops
+            </a>
             <span className="hdr-dot" aria-hidden="true">·</span>
             <ShellPicker
               value={shell}
@@ -368,7 +479,7 @@ export function App() {
                 className="status"
                 title={
                   [
-                    s.detail,
+                    face.detail,
                     live ? `HEARTBEAT ${live}` : null,
                     sourceKnown ? (sitl ? t("SITL") : t("board")) : null,
                   ]
@@ -395,7 +506,7 @@ export function App() {
                     <span className={sitl ? "src sitl" : "src board"}>{sitl ? t("SITL") : t("board")}</span>
                   </>
                 ) : null}
-                {hz ? `${live || sourceKnown ? " · " : ""}ATT ${hz} Hz` : ""}
+                <AttRate />
               </span>
               <button type="button" onClick={onDisconnect} title={t("Disconnect")}>
                 {t("Stop")}
@@ -427,6 +538,7 @@ export function App() {
                     <select
                       aria-label="Serial port"
                       value={linkValue.split("@")[0]}
+                      onPointerDown={() => refreshSerialPorts.current()}
                       onChange={(ev) => setLinkValue(`${ev.target.value}@${linkValue.split("@")[1] || "115200"}`)}
                     >
                       {serialPorts.length ? null : <option value="">—</option>}
@@ -485,7 +597,9 @@ export function App() {
                   </ul>
                 ) : null}
               </div>
-              <button type="submit">{t("Link")}</button>
+              <button type="submit" title={isWaitDetail(face.detail) ? tDetail(face.detail) : undefined}>
+                {isWaitDetail(face.detail) ? t("Waiting…") : t("Link")}
+              </button>
             </form>
           )}
           <button
@@ -512,16 +626,14 @@ export function App() {
       <LabDialog
         open={labOpen}
         linked={linked}
-        frame={s.frame}
+        frame={face.frame === "plane" || face.frame === "copter" ? face.frame : ""}
         initDone={initDone}
         initTotal={initTotal}
         onClose={() => setLabOpen(false)}
         onInit={onLabInit}
         onSave={onLabSave}
       />
-          {shell === "home" ? (
-        <Disconnected />
-      ) : plane ? (
+          {shell === "home" ? null : plane ? (
         <VehicleView vehicle="plane">
           <PlaneApp log={log} />
         </VehicleView>
@@ -530,6 +642,7 @@ export function App() {
           <CopterApp log={log} />
         </VehicleView>
       )}
+      <Assistant home={shell === "home"} onOpenOptions={() => setLabOpen(true)} onOpenHome={() => onShell("home")} />
     </div>
   );
 }

@@ -1,7 +1,6 @@
 import type { Gain, NodeDef } from "../lib/gains";
 import { useT } from "../i18n/i18n";
 import type { Axis } from "../mav/axis";
-import { useViewSample } from "../mav/view";
 import { GainRow } from "./GainRow";
 
 export function loopCls(compact?: boolean, embed?: boolean): string {
@@ -45,7 +44,6 @@ export function SchemeKnobs({
   quiet?: boolean;
 }) {
   const t = useT();
-  const s = useViewSample();
   const main = new Set(node.gains.map((g) => g.key));
   const extra = gains.filter((g) => !main.has(g.key));
   if (!picked) {
@@ -57,7 +55,7 @@ export function SchemeKnobs({
   return (
     <div className="loop-xgain">
       {extra.map((g) => (
-        <GainRow key={g.key} gain={g} sample={s} node={node} axis={axis} />
+        <GainRow key={g.key} gain={g} node={node} axis={axis} />
       ))}
     </div>
   );

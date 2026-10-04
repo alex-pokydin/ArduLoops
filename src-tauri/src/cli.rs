@@ -19,17 +19,27 @@ pub fn run(args: &[String]) -> i32 {
 }
 
 pub(crate) fn http_get(path: &str) -> Result<String, String> {
-    request("GET", path, None)
+    request("GET", path, None, 10)
 }
 
 pub(crate) fn http_post(path: &str, body: &str) -> Result<String, String> {
-    request("POST", path, Some(body))
+    request("POST", path, Some(body), 10)
 }
 
-fn request(method: &str, path: &str, body: Option<&str>) -> Result<String, String> {
+pub(crate) fn http_get_timeout(path: &str, timeout_s: u64) -> Result<String, String> {
+    request("GET", path, None, timeout_s.max(1))
+}
+
+pub(crate) fn http_post_timeout(path: &str, body: &str, timeout_s: u64) -> Result<String, String> {
+    request("POST", path, Some(body), timeout_s.max(1))
+}
+
+fn request(method: &str, path: &str, body: Option<&str>, timeout_s: u64) -> Result<String, String> {
     let mut stream = TcpStream::connect(HTTP_ADDR)
         .map_err(|_| format!("no ArduLoops at http://{HTTP_ADDR} — start the app first"))?;
-    stream.set_read_timeout(Some(Duration::from_secs(10))).ok();
+    let wait = Duration::from_secs(timeout_s);
+    stream.set_read_timeout(Some(wait)).ok();
+    stream.set_write_timeout(Some(wait)).ok();
     let extra = if let Some(b) = body {
         format!(
             "Content-Type: application/json\r\nContent-Length: {}\r\n\r\n{b}",

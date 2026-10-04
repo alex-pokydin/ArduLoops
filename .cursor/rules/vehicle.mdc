@@ -1,0 +1,11 @@
+---
+description: Limit real-vehicle changes and say which checks were not run.
+alwaysApply: true
+---
+
+# Vehicle and verification
+
+- Do not flash firmware, arm, disarm, erase on-board logs, reboot, or write parameters unless the user explicitly asks for that action.
+- Do not turn safe mode on while checking the UI. Opening the checklist and closing it is allowed.
+- A compile, unit test, or open page is not a live vehicle check. Say which of the UI, the bridge, and the vehicle link were not exercised.
+- Use mock or SITL when a change itself must be sent. Testing does not replace the user's confirmation.

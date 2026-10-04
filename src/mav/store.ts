@@ -114,6 +114,66 @@ export function getSnapshot(): Sample {
   return snapshot;
 }
 
+function sameRecord(a: Record<string, number>, b: Record<string, number>): boolean {
+  if (a === b) return true;
+  const keys = Object.keys(a);
+  if (keys.length !== Object.keys(b).length) return false;
+  for (let i = 0; i < keys.length; i++) {
+    if (a[keys[i]] !== b[keys[i]]) return false;
+  }
+  return true;
+}
+
+let paramsSnap: Record<string, number> = EMPTY.params;
+
+/** Same reference while parameter values are unchanged, so a 12 Hz attitude tick does not rebuild the table. */
+export function getParamsSnapshot(): Record<string, number> {
+  const next = snapshot.params ?? EMPTY.params;
+  if (sameRecord(paramsSnap, next)) return paramsSnap;
+  paramsSnap = next;
+  return paramsSnap;
+}
+
+type LinkBits = { ok: boolean; frame: Sample["frame"] };
+let linkBits: LinkBits = { ok: false, frame: "" };
+
+export function getLinkBits(): LinkBits {
+  if (linkBits.ok === snapshot.ok && linkBits.frame === snapshot.frame) return linkBits;
+  linkBits = { ok: snapshot.ok, frame: snapshot.frame };
+  return linkBits;
+}
+
+export type SetupSnap = {
+  ok: boolean;
+  frame: Sample["frame"];
+  params: Record<string, number>;
+  rc: number[];
+};
+
+let setupSnap: SetupSnap = { ok: false, frame: "", params: EMPTY.params, rc: [] };
+
+function sameList(a: number[], b: number[]): boolean {
+  if (a.length !== b.length) return false;
+  for (let i = 0; i < a.length; i++) if (a[i] !== b[i]) return false;
+  return true;
+}
+
+/** Attitude and PID fields stay out. Radio bars still move when PWM changes. */
+export function getSetupSnapshot(): SetupSnap {
+  const params = getParamsSnapshot();
+  const rc = snapshot.rc ?? [];
+  if (
+    setupSnap.ok === snapshot.ok
+    && setupSnap.frame === snapshot.frame
+    && setupSnap.params === params
+    && sameList(setupSnap.rc, rc)
+  ) {
+    return setupSnap;
+  }
+  setupSnap = { ok: snapshot.ok, frame: snapshot.frame, params, rc: rc.slice() };
+  return setupSnap;
+}
+
 function ingest(s: Sample): void {
   const next = { ...s };
   next.t = Date.now() / 1000;
@@ -139,21 +199,67 @@ function ingest(s: Sample): void {
 export function startStream(): () => void {
   const ac = new AbortController();
   let es: EventSource | undefined;
-  void (async () => {
-    if (!(await waitHttp(ac.signal))) return;
+  let lastMsg = 0;
+  let generation = 0;
+  let timer = 0;
+
+  const open = (mode: "start" | "again") => {
     if (ac.signal.aborted) return;
-    send({ op: "connect", url: canonicalLink(loadLink()) });
-    es = new EventSource(`${APP_HTTP}/stream`);
-    es.onmessage = (ev) => {
+    const mine = ++generation;
+    es?.close();
+    const next = new EventSource(`${APP_HTTP}/stream`);
+    es = next;
+    lastMsg = performance.now();
+    let first = true;
+    next.onmessage = (ev) => {
+      if (mine !== generation) return;
+      lastMsg = performance.now();
       try {
-        ingest(JSON.parse(ev.data) as Sample);
+        const sample = JSON.parse(ev.data) as Sample;
+        if (first) {
+          first = false;
+          if (!sample.ok) {
+            const url = canonicalLink(loadLink());
+            const serial = /^serial:/i.test(url);
+            // A COM port stays down until the link form is submitted again.
+            // Retrying it occupies the bootloader.
+            if (!(mode === "again" && serial)) {
+              const detail = sample.detail || "";
+              const already = detail.includes(`(${url})`) || detail === url;
+              if (!already) send({ op: "connect", url });
+            }
+          }
+        }
+        ingest(sample);
       } catch {
         /* ignore malformed */
       }
     };
+    next.onerror = () => {
+      if (mine !== generation) return;
+      next.close();
+      if (es === next) es = undefined;
+      window.setTimeout(() => {
+        if (mine === generation) open("again");
+      }, 500);
+    };
+  };
+
+  const watch = () => {
+    if (ac.signal.aborted) return;
+    if (es && performance.now() - lastMsg > 2000) open("again");
+    timer = window.setTimeout(watch, 1000);
+  };
+
+  void (async () => {
+    if (!(await waitHttp(ac.signal))) return;
+    if (ac.signal.aborted) return;
+    open("start");
+    watch();
   })();
   return () => {
     ac.abort();
+    window.clearTimeout(timer);
     es?.close();
   };
 }

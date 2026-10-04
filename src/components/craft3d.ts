@@ -22,7 +22,7 @@ import {
 import { OrbitControls } from "three/addons/controls/OrbitControls.js";
 
 export type CraftVehicle = "plane" | "copter";
-export type CraftViewCam = "rear" | "side" | "top" | "iso";
+export type CraftViewCam = "rear" | "side" | "top";
 
 export type CraftPose = {
   roll: number;
@@ -131,10 +131,9 @@ function snapCam(camera: PerspectiveCamera, controls: OrbitControls, cam: CraftV
   const d = 2.55;
   camera.up.set(0, 1, 0);
   controls.target.set(0, 0, 0);
-  if (cam === "rear") camera.position.set(0, 0.32, d);
-  else if (cam === "side") camera.position.set(d, 0.08, 0);
+  if (cam === "side") camera.position.set(d, 0.08, 0);
   else if (cam === "top") camera.position.set(0, d, 0.0001);
-  else camera.position.set(d * 0.7, d * 0.46, d * 0.84);
+  else camera.position.set(0, 0.32, d);
   controls.update();
 }
 

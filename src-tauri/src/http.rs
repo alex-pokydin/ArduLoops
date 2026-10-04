@@ -6,7 +6,7 @@ use std::sync::mpsc::Sender;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
-use crate::link::{mode_custom, Cmd, Sample};
+use crate::link::{mode_custom, remember_brief, Cmd, LogBrief, Sample};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 pub const HTTP_ADDR: &str = "127.0.0.1:8767";
@@ -69,14 +69,62 @@ fn handle(stream: TcpStream, latest: Arc<Mutex<Sample>>, tx: Sender<Cmd>) -> std
 
     let (path, query) = split_query(&raw_path);
 
+    if path == "/tlog" && (method == "GET" || method == "POST") {
+        return tlog_reply(reader, &method, &headers);
+    }
+
+    if path.starts_with("/ai") {
+        let len = headers.get("content-length").and_then(|v| v.parse::<usize>().ok()).unwrap_or(0).min(65_536);
+        let mut raw = vec![0u8; len];
+        if len > 0 {
+            reader.read_exact(&mut raw)?;
+        }
+        let body: serde_json::Value = if raw.is_empty() {
+            serde_json::json!({})
+        } else {
+            serde_json::from_slice(&raw).unwrap_or(serde_json::json!({}))
+        };
+        let sample = latest.lock().map(|g| g.clone()).unwrap_or_else(|_| Sample::empty());
+        let mut socket = reader.into_inner();
+        return match crate::agent::route(&method, &path, &query, &body, &sample, &tx) {
+            Ok(value) => {
+                let bytes = serde_json::to_vec(&value).unwrap_or_else(|_| b"{}".to_vec());
+                reply(&mut socket, 200, "application/json", &bytes)
+            }
+            Err((code, message)) => {
+                let bytes = serde_json::to_vec(&serde_json::json!({"ok": false, "message": message})).unwrap_or_default();
+                reply(&mut socket, code, "application/json", &bytes)
+            }
+        };
+    }
+
     if method == "GET" && (path == "/stream" || path.starts_with("/stream")) {
         return sse(reader.into_inner(), latest);
+    }
+
+    if method == "POST" && path == "/motor-test" {
+        let seq = query.get("seq").and_then(|s| s.parse::<u8>().ok()).unwrap_or(0);
+        let percent = query.get("percent").and_then(|s| s.parse::<f32>().ok()).unwrap_or(0.0);
+        let seconds = query.get("seconds").and_then(|s| s.parse::<f32>().ok()).unwrap_or(2.0);
+        let mut socket = reader.into_inner();
+        if !(1..=12).contains(&seq) || !(1.0..=25.0).contains(&percent) || !(1.0..=3.0).contains(&seconds) {
+            return reply(&mut socket, 400, "application/json", br#"{"message":"Motor test rejected. Check the vehicle message."}"#);
+        }
+        let (result_tx, result_rx) = std::sync::mpsc::channel();
+        if tx.send(Cmd::MotorTest { seq, percent, seconds, reply: result_tx }).is_err() {
+            return reply(&mut socket, 503, "application/json", br#"{"message":"Could not send calibration command"}"#);
+        }
+        let message = result_rx.recv_timeout(Duration::from_secs(10))
+            .unwrap_or_else(|_| "Motor test timed out".into());
+        let ok = message == "Motor test started";
+        return reply(&mut socket, if ok { 200 } else { 409 }, "application/json",
+            &serde_json::to_vec(&serde_json::json!({"ok":ok,"message":message}))?);
     }
 
     if method == "POST" && path == "/calibrate" {
         let kind = query.get("kind").cloned().unwrap_or_default();
         let mut socket = reader.into_inner();
-        if kind != "level" && kind != "gyro" {
+        if kind != "level" && kind != "gyro" && kind != "baro" && kind != "accel" {
             return reply(&mut socket, 400, "application/json", br#"{"message":"Unsupported calibration"}"#);
         }
         let (result_tx, result_rx) = std::sync::mpsc::channel();
@@ -87,6 +135,60 @@ fn handle(stream: TcpStream, latest: Arc<Mutex<Sample>>, tx: Sender<Cmd>) -> std
             .unwrap_or_else(|_| "Calibration timed out; check vehicle messages before retrying".into());
         let ok = message == "Calibration completed";
         return reply(&mut socket, if ok {200} else {409}, "application/json",
+            &serde_json::to_vec(&serde_json::json!({"ok":ok,"message":message}))?);
+    }
+
+    if method == "POST" && path == "/accel-cal" {
+        let action = query.get("action").cloned().unwrap_or_default();
+        let mut socket = reader.into_inner();
+        if action != "start" && action != "pose" {
+            return reply(&mut socket, 400, "application/json", br#"{"message":"Unsupported calibration"}"#);
+        }
+        let (result_tx, result_rx) = std::sync::mpsc::channel();
+        if tx.send(Cmd::AccelCalCmd { action: action.clone(), reply: result_tx }).is_err() {
+            return reply(&mut socket, 503, "application/json", br#"{"message":"Could not send calibration command"}"#);
+        }
+        let wait = if action == "start" { 50 } else { 8 };
+        let message = result_rx.recv_timeout(Duration::from_secs(wait))
+            .unwrap_or_else(|_| "Calibration timed out; check vehicle messages before retrying".into());
+        let ok = message == "Accelerometer calibration started" || message == "Face accepted";
+        return reply(&mut socket, if ok { 200 } else { 409 }, "application/json",
+            &serde_json::to_vec(&serde_json::json!({"ok":ok,"message":message}))?);
+    }
+
+    if method == "POST" && path == "/compass-mot" {
+        let action = query.get("action").cloned().unwrap_or_default();
+        let mut socket = reader.into_inner();
+        if action != "start" && action != "finish" {
+            return reply(&mut socket, 400, "application/json", br#"{"message":"Unsupported calibration"}"#);
+        }
+        let (result_tx, result_rx) = std::sync::mpsc::channel();
+        if tx.send(Cmd::CompassMot { action, reply: result_tx }).is_err() {
+            return reply(&mut socket, 503, "application/json", br#"{"message":"Could not send calibration command"}"#);
+        }
+        let message = result_rx.recv_timeout(Duration::from_secs(12))
+            .unwrap_or_else(|_| "Calibration timed out; check vehicle messages before retrying".into());
+        let ok = message == "CompassMot started" || message == "CompassMot finish sent";
+        return reply(&mut socket, if ok { 200 } else { 409 }, "application/json",
+            &serde_json::to_vec(&serde_json::json!({"ok":ok,"message":message}))?);
+    }
+
+    if method == "POST" && path == "/compass-cal" {
+        let action = query.get("action").cloned().unwrap_or_default();
+        let mut socket = reader.into_inner();
+        if action != "start" && action != "cancel" && action != "accept" {
+            return reply(&mut socket, 400, "application/json", br#"{"message":"Unsupported calibration"}"#);
+        }
+        let (result_tx, result_rx) = std::sync::mpsc::channel();
+        if tx.send(Cmd::MagCal { action, reply: result_tx }).is_err() {
+            return reply(&mut socket, 503, "application/json", br#"{"message":"Could not send compass calibration"}"#);
+        }
+        let message = result_rx.recv_timeout(Duration::from_secs(12))
+            .unwrap_or_else(|_| "Compass calibration timed out".into());
+        let ok = message == "Compass calibration started"
+            || message == "Compass calibration cancelled"
+            || message == "Compass calibration accepted";
+        return reply(&mut socket, if ok { 200 } else { 409 }, "application/json",
             &serde_json::to_vec(&serde_json::json!({"ok":ok,"message":message}))?);
     }
 
@@ -103,6 +205,17 @@ fn handle(stream: TcpStream, latest: Arc<Mutex<Sample>>, tx: Sender<Cmd>) -> std
         if let Ok(Cmd::Mode { mode }) = serde_json::from_slice::<Cmd>(&body) {
             return set_mode_reply(reader.into_inner(), &latest, &tx, &mode);
         }
+        if let Ok(Cmd::Param { ref name, value }) = serde_json::from_slice::<Cmd>(&body) {
+            if let Some(reason) = crate::link::storage_wipe_reason(name, value) {
+                let mut socket = reader.into_inner();
+                return reply(
+                    &mut socket,
+                    409,
+                    "application/json",
+                    &serde_json::to_vec(&serde_json::json!({ "error": reason }))?,
+                );
+            }
+        }
         let status = match serde_json::from_slice::<Cmd>(&body) {
             Ok(cmd) => {
                 let _ = tx.send(cmd);
@@ -115,6 +228,94 @@ fn handle(stream: TcpStream, latest: Arc<Mutex<Sample>>, tx: Sender<Cmd>) -> std
         return Ok(());
     }
 
+    if method == "POST" && path == "/logs/cancel" {
+        tx.send(Cmd::LogCancel)
+            .map_err(|_| std::io::Error::other("link stopped"))?;
+        let mut socket = reader.into_inner();
+        return reply(&mut socket, 204, "text/plain", b"");
+    }
+    if method == "POST" && path == "/logs/import" {
+        let len = headers
+            .get("content-length")
+            .and_then(|v| v.parse::<usize>().ok())
+            .unwrap_or(0);
+        if len == 0 || len > 512 * 1024 * 1024 {
+            let mut socket = reader.into_inner();
+            return reply(
+                &mut socket,
+                400,
+                "application/json",
+                &serde_json::to_vec(&serde_json::json!({ "error": if len == 0 { "The file is empty." } else { "This log is larger than 512 MB." } }))?,
+            );
+        }
+        let mut body = vec![0u8; len];
+        reader.read_exact(&mut body)?;
+        let mut socket = reader.into_inner();
+        return match crate::dflog::import_log(&body) {
+            Ok(value) => reply(&mut socket, 200, "application/json", &serde_json::to_vec(&value)?),
+            Err(error) => reply(
+                &mut socket,
+                400,
+                "application/json",
+                &serde_json::to_vec(&serde_json::json!({ "error": error }))?,
+            ),
+        };
+    }
+    if method == "POST" && path == "/firmware-library/import" {
+        let vehicle = query.get("vehicle").map(String::as_str).unwrap_or("");
+        let len = headers
+            .get("content-length")
+            .and_then(|v| v.parse::<usize>().ok())
+            .unwrap_or(0);
+        if len == 0 || len > 16 * 1024 * 1024 {
+            let mut socket = reader.into_inner();
+            return reply(
+                &mut socket,
+                400,
+                "application/json",
+                &serde_json::to_vec(&serde_json::json!({
+                    "error": if len == 0 { "The file is empty." } else { "This firmware file is larger than 16 MB." }
+                }))?,
+            );
+        }
+        let mut body = vec![0u8; len];
+        reader.read_exact(&mut body)?;
+        let mut socket = reader.into_inner();
+        return match crate::firmware::import_local(&body, vehicle) {
+            Ok(value) => reply(&mut socket, 200, "application/json", &serde_json::to_vec(&value)?),
+            Err(error) => reply(
+                &mut socket,
+                400,
+                "application/json",
+                &serde_json::to_vec(&serde_json::json!({ "error": error }))?,
+            ),
+        };
+    }
+    if method == "POST" && path == "/logs/reveal" {
+        let len = headers
+            .get("content-length")
+            .and_then(|v| v.parse::<usize>().ok())
+            .unwrap_or(0)
+            .min(4_096);
+        let mut body = vec![0u8; len];
+        if len > 0 {
+            reader.read_exact(&mut body)?;
+        }
+        let id = serde_json::from_slice::<serde_json::Value>(&body)
+            .ok()
+            .and_then(|value| value.get("id").and_then(serde_json::Value::as_str).map(str::to_string))
+            .unwrap_or_default();
+        let mut socket = reader.into_inner();
+        return match crate::dflog::reveal(&id) {
+            Ok(()) => reply(&mut socket, 204, "text/plain", b""),
+            Err(error) => reply(
+                &mut socket,
+                404,
+                "application/json",
+                &serde_json::to_vec(&serde_json::json!({ "error": error }))?,
+            ),
+        };
+    }
     if method == "POST" && path == "/logs/erase" {
         let len = headers
             .get("content-length")
@@ -212,6 +413,90 @@ fn handle(stream: TcpStream, latest: Arc<Mutex<Sample>>, tx: Sender<Cmd>) -> std
         };
     }
 
+    if method == "POST" && path == "/params/restore" {
+        let len = headers
+            .get("content-length")
+            .and_then(|v| v.parse::<usize>().ok())
+            .unwrap_or(0);
+        if len == 0 || len > 1024 * 1024 {
+            let mut socket = reader.into_inner();
+            return reply(
+                &mut socket,
+                400,
+                "application/json",
+                &serde_json::to_vec(&serde_json::json!({
+                    "error": if len == 0 { "The file is empty." } else { "This parameter file is larger than 1 MB." }
+                }))?,
+            );
+        }
+        let mut body = vec![0u8; len];
+        reader.read_exact(&mut body)?;
+        let mut socket = reader.into_inner();
+        let text = match String::from_utf8(body) {
+            Ok(text) => text,
+            Err(_) => {
+                return reply(
+                    &mut socket,
+                    400,
+                    "application/json",
+                    &serde_json::to_vec(&serde_json::json!({"error": "This file is not a parameter backup"}))?,
+                );
+            }
+        };
+        let values = match crate::link::parse_param_file(&text) {
+            Ok(values) => values,
+            Err(error) => {
+                return reply(
+                    &mut socket,
+                    400,
+                    "application/json",
+                    &serde_json::to_vec(&serde_json::json!({"error": error}))?,
+                );
+            }
+        };
+        let (result_tx, result_rx) = std::sync::mpsc::channel();
+        if tx
+            .send(crate::link::Cmd::ParamsRestore {
+                values,
+                reply: result_tx,
+            })
+            .is_err()
+        {
+            return reply(
+                &mut socket,
+                503,
+                "application/json",
+                &serde_json::to_vec(&serde_json::json!({"error": "Could not restore parameters"}))?,
+            );
+        }
+        return match result_rx.recv_timeout(Duration::from_secs(20 * 60)) {
+            Ok(Ok(report)) => reply(
+                &mut socket,
+                200,
+                "application/json",
+                &serde_json::to_vec(&report)?,
+            ),
+            Ok(Err(error)) => reply(
+                &mut socket,
+                409,
+                "application/json",
+                &serde_json::to_vec(&serde_json::json!({"error": error}))?,
+            ),
+            Err(std::sync::mpsc::RecvTimeoutError::Timeout) => reply(
+                &mut socket,
+                503,
+                "application/json",
+                &serde_json::to_vec(&serde_json::json!({"error": "Restore timed out"}))?,
+            ),
+            Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => reply(
+                &mut socket,
+                503,
+                "application/json",
+                &serde_json::to_vec(&serde_json::json!({"error": "Could not restore parameters"}))?,
+            ),
+        };
+    }
+
     let mut socket = reader.into_inner();
     if method == "GET" && (path == "/" || path == "/health") {
         reply(&mut socket, 200, "text/plain", b"ArduLoops\n")?;
@@ -243,6 +528,17 @@ fn handle(stream: TcpStream, latest: Arc<Mutex<Sample>>, tx: Sender<Cmd>) -> std
             .unwrap_or(true);
         return logs_reply(&mut socket, &latest, &tx, refresh);
     }
+    if method == "GET" && path == "/logs/brief" {
+        let Some(id) = query.get("id").and_then(|value| value.parse::<u16>().ok()) else {
+            return reply(
+                &mut socket,
+                400,
+                "application/json",
+                br#"{"error":"id is required"}"#,
+            );
+        };
+        return log_brief_reply(&mut socket, &latest, &tx, id);
+    }
     if method == "GET" && path == "/logs/download" {
         let Some(id) = query.get("id").and_then(|value| value.parse::<u16>().ok()) else {
             return reply(
@@ -256,18 +552,13 @@ fn handle(stream: TcpStream, latest: Arc<Mutex<Sample>>, tx: Sender<Cmd>) -> std
             .get("timeout_s")
             .and_then(|value| value.parse::<u64>().ok())
             .unwrap_or(120)
-            .clamp(5, 180);
+            .clamp(5, 3_600);
         return download_log_reply(&mut socket, &latest, &tx, id, timeout_s);
     }
     if method == "GET" && path == "/diagnostics" {
         let g = latest.lock().map_err(|_| std::io::Error::other("lock"))?;
-        let missing: Vec<u16> = (0..g.param_count)
-            .filter(|i| !g.param_indices.contains(i))
-            .collect();
         let body = serde_json::json!({"state": state_view(&g), "telemetry": g.telemetry,
-            "events": g.events, "params": {"cached": g.params.len(), "expected": g.param_count,
-            "received_indices": g.param_indices.len(), "complete": g.param_count > 0 && missing.is_empty(),
-            "missing_indices": missing}});
+            "events": g.events, "params": param_download(&g)});
         reply(
             &mut socket,
             200,
@@ -292,6 +583,12 @@ fn handle(stream: TcpStream, latest: Arc<Mutex<Sample>>, tx: Sender<Cmd>) -> std
                 &serde_json::to_vec(&serde_json::json!({"error": error}))?,
             )?,
         }
+        return Ok(());
+    }
+    if method == "GET" && path == "/param-meta" {
+        let kind = query.get("vehicle").map(String::as_str).unwrap_or("copter");
+        let body = crate::research::param_index(kind);
+        reply(&mut socket, 200, "application/json", &body)?;
         return Ok(());
     }
     if method == "GET" && path == "/param" {
@@ -508,6 +805,97 @@ fn logs_reply(
     )
 }
 
+fn log_brief_reply(
+    socket: &mut TcpStream,
+    latest: &Mutex<Sample>,
+    tx: &Sender<Cmd>,
+    id: u16,
+) -> std::io::Result<()> {
+    let started = now();
+    let (boot_uid, size, time_utc) = {
+        let sample = latest.lock().map_err(|_| std::io::Error::other("lock"))?;
+        if !logs_allowed(&sample, started) {
+            return reply(
+                socket,
+                409,
+                "application/json",
+                &serde_json::to_vec(&serde_json::json!({
+                    "error": "A fresh disarmed vehicle heartbeat is required before accessing DataFlash logs"
+                }))?,
+            );
+        }
+        if sample.log_download.as_ref().is_some_and(|item| !item.complete) {
+            return reply(
+                socket,
+                409,
+                "application/json",
+                &serde_json::to_vec(&serde_json::json!({
+                    "error": "A log download is already running"
+                }))?,
+            );
+        }
+        let Some(entry) = sample.logs.iter().find(|log| log.id == id).cloned() else {
+            return reply(
+                socket,
+                404,
+                "application/json",
+                &serde_json::to_vec(&serde_json::json!({
+                    "error": "Unknown log ID; refresh the log list first", "id": id
+                }))?,
+            );
+        };
+        if let Some(brief) = sample
+            .log_briefs
+            .iter()
+            .find(|brief| brief.id == id && brief.size == entry.size && brief.error.is_empty())
+        {
+            let body = serde_json::to_vec(brief)?;
+            return reply(socket, 200, "application/json", &body);
+        }
+        (sample.boot_uid.clone(), entry.size, entry.time_utc)
+    };
+    if let Some(summary) = crate::dflog::local_onboard_summary(&boot_uid, id, size) {
+        let brief = LogBrief {
+            id,
+            size,
+            firmware: summary.firmware,
+            frame: summary.frame,
+            start_utc: if summary.start_utc.is_empty() && time_utc > 0 {
+                crate::dflog::unix_rfc3339(u64::from(time_utc))
+            } else {
+                summary.start_utc
+            },
+            duration_us: summary.duration_us,
+            error: String::new(),
+            updated_at: started,
+        };
+        if let Ok(mut sample) = latest.lock() {
+            remember_brief(&mut sample, brief.clone());
+        }
+        return reply(socket, 200, "application/json", &serde_json::to_vec(&brief)?);
+    }
+    tx.send(Cmd::LogPeek { id, size })
+        .map_err(|_| std::io::Error::other("link stopped"))?;
+    for _ in 0..800 {
+        std::thread::sleep(Duration::from_millis(50));
+        let sample = latest.lock().map_err(|_| std::io::Error::other("lock"))?;
+        if let Some(brief) = sample.log_briefs.iter().find(|brief| {
+            brief.id == id && brief.size == size && brief.updated_at >= started
+        }) {
+            let body = serde_json::to_vec(brief)?;
+            return reply(socket, 200, "application/json", &body);
+        }
+    }
+    reply(
+        socket,
+        409,
+        "application/json",
+        &serde_json::to_vec(&serde_json::json!({
+            "error": "Could not read the log header", "id": id
+        }))?,
+    )
+}
+
 fn download_log_reply(
     socket: &mut TcpStream,
     latest: &Mutex<Sample>,
@@ -554,14 +942,12 @@ fn download_log_reply(
         let code = if report.error.is_empty() { 200 } else { 409 };
         return reply(socket, code, "application/json", &body);
     }
-    reply(
-        socket,
-        409,
-        "application/json",
-        &serde_json::to_vec(&serde_json::json!({
-            "error": "DataFlash log download is still in progress; try the same log ID again", "id": id
-        }))?,
-    )
+    let report = latest.lock().ok().and_then(|sample| sample.log_download.clone());
+    let body = match report.filter(|report| report.id == id) {
+        Some(report) => serde_json::to_vec(&report)?,
+        None => serde_json::to_vec(&serde_json::json!({ "id": id, "complete": false }))?,
+    };
+    reply(socket, 200, "application/json", &body)
 }
 
 fn erase_logs_reply(
@@ -666,6 +1052,18 @@ fn flash_reply(
     reply(socket, 200, "application/json", &serde_json::to_vec(&body)?)
 }
 
+fn param_download(sample: &Sample) -> serde_json::Value {
+    let missing = (0..sample.param_count).filter(|index| !sample.param_indices.contains(index)).count();
+    serde_json::json!({
+        "cached": sample.params.len(),
+        "expected": sample.param_count,
+        "received_indices": sample.param_indices.len(),
+        "complete": sample.param_count > 0 && missing == 0,
+        "missing": missing,
+        "note": "`missing` is how many parameter slots have not arrived. A slot number is not a parameter name. `complete` is whether every slot is in.",
+    })
+}
+
 fn request_missing_params(latest: &Mutex<Sample>, tx: &Sender<Cmd>) -> std::io::Result<()> {
     // A full PARAM_REQUEST_LIST can take several seconds and can lose a few
     // packets. Wait for the initial download, then request only its gaps.
@@ -700,12 +1098,48 @@ fn request_missing_params(latest: &Mutex<Sample>, tx: &Sender<Cmd>) -> std::io::
     Ok(())
 }
 
+fn tlog_reply(
+    mut reader: BufReader<TcpStream>,
+    method: &str,
+    headers: &HashMap<String, String>,
+) -> std::io::Result<()> {
+    if method == "GET" {
+        let bytes = serde_json::to_vec(&crate::tlog::status()).unwrap_or_else(|_| b"{}".to_vec());
+        return reply(&mut reader.into_inner(), 200, "application/json", &bytes);
+    }
+    let len = headers
+        .get("content-length")
+        .and_then(|v| v.parse::<usize>().ok())
+        .unwrap_or(0)
+        .min(8_192);
+    let mut raw = vec![0u8; len];
+    if len > 0 {
+        reader.read_exact(&mut raw)?;
+    }
+    let body: serde_json::Value = serde_json::from_slice(&raw).unwrap_or(serde_json::json!({}));
+    let enabled = body.get("enabled").and_then(serde_json::Value::as_bool).unwrap_or(false);
+    let path = body.get("path").and_then(serde_json::Value::as_str).unwrap_or("");
+    let mut socket = reader.into_inner();
+    match crate::tlog::set(enabled, path) {
+        Ok(value) => reply(&mut socket, 200, "application/json", &serde_json::to_vec(&value)?),
+        Err(error) => reply(
+            &mut socket,
+            400,
+            "application/json",
+            &serde_json::to_vec(&serde_json::json!({ "error": error }))?,
+        ),
+    }
+}
+
 fn reply(socket: &mut TcpStream, code: u16, ctype: &str, body: &[u8]) -> std::io::Result<()> {
     let reason = match code {
         200 => "OK",
+        204 => "No Content",
         400 => "Bad Request",
         404 => "Not Found",
         409 => "Conflict",
+        500 => "Error",
+        503 => "Unavailable",
         _ => "OK",
     };
     socket.write_all(
@@ -903,6 +1337,22 @@ mod diagnostics_tests {
         );
         assert_eq!(mode_outcome(&s, "FLOWHOLD", 10.0).unwrap()["ok"], false);
         assert!(mode_outcome(&s, "FLOWHOLD", 12.0).is_none());
+    }
+
+    #[test]
+    fn a_param_download_counts_gaps_without_listing_them() {
+        let mut sample = Sample::empty();
+        sample.param_count = 5;
+        sample.param_indices.insert(0);
+        sample.param_indices.insert(2);
+        let body = param_download(&sample);
+        assert_eq!(body["missing"], serde_json::json!(3));
+        assert_eq!(body["complete"], serde_json::json!(false));
+        assert!(body.get("missing_indices").is_none(), "{body}");
+        sample.param_indices.extend([1u16, 3, 4]);
+        let full = param_download(&sample);
+        assert_eq!(full["missing"], serde_json::json!(0));
+        assert_eq!(full["complete"], serde_json::json!(true));
     }
 
     #[test]

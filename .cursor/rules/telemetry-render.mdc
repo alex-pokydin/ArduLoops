@@ -1,0 +1,14 @@
+---
+description: Update only the telemetry field that changed, not the surrounding screen.
+globs: src/**/*.tsx
+alwaysApply: false
+---
+
+# Telemetry render
+
+The vehicle store emits a new sample many times a second. A component that also draws layout, lists, or a diagram must not subscribe to that whole sample.
+
+- Read one field, or a small slice, with `usePicked` from `src/mav/view.tsx`. The shell outside a vehicle view uses `useStorePicked`.
+- Return the same value until the displayed field changes. A slice that is an object needs an equality check; a new object on every packet renders forever.
+- Put the live number, craft, or spark in its own component that subscribes itself. The parent subscribes only to what changes its structure: link, mode, and the parameters it labels.
+- `useViewSample` and `getSnapshot` are for that leaf, or for a click handler via `getLatest`. Do not pass the sample down through a parent that re-renders on every packet.

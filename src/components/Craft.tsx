@@ -15,8 +15,7 @@ function msgTone(text: string): string {
 
 type PlaneCam = "rear" | "side" | "top";
 
-function viewCam(vehicle: "copter" | "plane", cam: PlaneCam, axis: Axis, live3d: boolean): CraftViewCam {
-  if (live3d) return "iso";
+function viewCam(vehicle: "copter" | "plane", cam: PlaneCam, axis: Axis): CraftViewCam {
   if (vehicle === "plane") return cam;
   if (axis === "pitch" || axis === "d") return "side";
   if (axis === "yaw") return "top";
@@ -27,6 +26,25 @@ export function camStickAxis(cam: PlaneCam): Axis {
   if (cam === "side") return "pitch";
   if (cam === "top") return "yaw";
   return "roll";
+}
+
+function battFill(pct: number | null): number {
+  if (pct == null) return 0;
+  return Math.max(0, Math.min(15.2, (pct / 100) * 15.2));
+}
+
+function battTone(pct: number | null): string {
+  if (pct == null) return "";
+  if (pct <= 15) return "bad";
+  if (pct <= 30) return "warn";
+  return "ok";
+}
+
+function battTitle(tr: typeof import("../i18n/i18n").t, battery: { volts: number | null; pct: number | null } | undefined): string {
+  if (battery?.volts == null && battery?.pct == null) return tr("No battery reading yet.");
+  if (battery.volts != null && battery.pct != null) return tr("{v} V · {pct}%", { v: battery.volts.toFixed(1), pct: battery.pct });
+  if (battery.volts != null) return tr("{v} V", { v: battery.volts.toFixed(1) });
+  return tr("{pct}%", { pct: battery.pct ?? 0 });
 }
 
 export function Craft({
@@ -41,8 +59,8 @@ export function Craft({
   altLabel,
   altClass,
   axis,
-  live3d,
   status,
+  battery,
   vehicle = "copter",
   alive = true,
   onCam,
@@ -58,8 +76,8 @@ export function Craft({
   altLabel: ReactNode;
   altClass: string;
   axis: Axis;
-  live3d: boolean;
   status: string;
+  battery?: { volts: number | null; pct: number | null };
   vehicle?: "copter" | "plane";
   alive?: boolean;
   onCam?: (cam: PlaneCam) => void;
@@ -73,7 +91,7 @@ export function Craft({
   const msgLine = useRef<HTMLSpanElement>(null);
   const glRef = useRef<HTMLCanvasElement>(null);
   const viewRef = useRef<CraftView | null>(null);
-  const view = viewCam(vehicle, cam, axis, live3d);
+  const view = viewCam(vehicle, cam, axis);
   const [topish, setTopish] = useState(false);
   const top = topish;
   const aliveRef = useRef(alive);
@@ -146,15 +164,13 @@ export function Craft({
   }, [ticker]);
 
   const viewCap =
-    live3d
-      ? "3D"
-      : axis === "d" && vehicle === "copter"
-        ? t("side view · height")
-        : view === "side"
-          ? t("side view")
-          : view === "top"
-            ? t("top view")
-            : t("rear view");
+    axis === "d" && vehicle === "copter"
+      ? t("side view · height")
+      : view === "side"
+        ? t("side view")
+        : view === "top"
+          ? t("top view")
+          : t("rear view");
   const cap = !alive ? t("Idle") : grounded ? t("On the ground") : viewCap;
   return (
     <div className={[!alive ? "craft idle" : grounded ? "craft grounded" : "craft", top ? "top" : ""].filter(Boolean).join(" ")}>
@@ -252,6 +268,23 @@ export function Craft({
           </span>
         </div>
       ) : null}
+      <div className={["craft-batt", ticker ? "lift" : "", battTone(battery?.pct ?? null)].filter(Boolean).join(" ")} title={battTitle(t, battery)}>
+        <svg viewBox="0 0 22 12" aria-hidden="true">
+          <rect x="0.6" y="0.6" width="18" height="10.8" rx="1.6" />
+          <rect x="19.2" y="3.4" width="2.2" height="5.2" rx="0.6" />
+          <rect className="fill" x="2" y="2" height="8" width={battFill(battery?.pct ?? null)} />
+        </svg>
+        <b>
+          {battery?.volts != null ? (
+            <>
+              {battery.volts.toFixed(1)}
+              <em>{t("V")}</em>
+            </>
+          ) : null}
+          {battery?.pct != null ? <span>{battery.pct}%</span> : null}
+          {battery?.volts == null && battery?.pct == null ? "—" : null}
+        </b>
+      </div>
     </div>
   );
 }
