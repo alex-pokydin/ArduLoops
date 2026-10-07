@@ -270,8 +270,60 @@ fn xml_block(tag: &str, body: &str) -> String {
     format!("<{tag}>\n{safe}\n</{tag}>\n")
 }
 
+fn script_quote_body(value: &Value) -> Option<String> {
+    let quote = value.get("script")?;
+    let name = quote.get("name")?.as_str()?.trim();
+    if name.is_empty()
+        || name.len() > 64
+        || !name.ends_with(".lua")
+        || name.contains('/')
+        || name.contains('\\')
+        || name.contains("..")
+    {
+        return None;
+    }
+    let selection = clip_chars(quote.get("selection")?.as_str()?.trim(), 96_000);
+    let source = clip_chars(quote.get("body")?.as_str()?.trim(), 96_000);
+    if selection.is_empty() || source.is_empty() {
+        return None;
+    }
+    let start = quote.get("startLine").and_then(Value::as_u64).unwrap_or(0);
+    let end = quote.get("endLine").and_then(Value::as_u64).unwrap_or(start);
+    let dirty = quote.get("dirty").and_then(Value::as_bool).unwrap_or(false);
+    Some(json!({
+        "name": name,
+        "start": start,
+        "end": end,
+        "selection": selection,
+        "body": source,
+        "dirty": dirty,
+    }).to_string())
+}
+
+fn quote_for_model(body: &str) -> String {
+    let Ok(value) = serde_json::from_str::<Value>(body) else {
+        return body.to_string();
+    };
+    let name = value["name"].as_str().unwrap_or("script.lua");
+    let start = value["start"].as_u64().unwrap_or(0);
+    let end = value["end"].as_u64().unwrap_or(start);
+    let selection = value["selection"].as_str().unwrap_or("");
+    let source = value["body"].as_str().unwrap_or("");
+    let state = if value["dirty"].as_bool().unwrap_or(false) {
+        "The editor has unsaved edits, so this can differ from the file on the vehicle."
+    } else {
+        "The editor matches the last loaded or saved copy."
+    };
+    format!(
+        "Lua file {name}, lines {start}-{end}. {state} Do not call script_read for {name}; the selection and the full source are below.\nselection:\n{selection}\nsource:\n{source}"
+    )
+}
+
 fn for_context(role: &str, body: &str) -> String {
     let body = body.trim();
+    if role == "quote" {
+        return quote_for_model(body);
+    }
     if role != "tool" {
         return body.to_string();
     }

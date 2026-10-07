@@ -5,12 +5,13 @@ import { addLog } from "../log";
 import { axisView, type Axis } from "../mav/axis";
 import { noteUi, send } from "../mav/cmd";
 import { paramOf } from "./GainRow";
+import { isSitl } from "../mav/sim";
 import { getLatest } from "../mav/store";
 import { frameLive, usePicked, viewBuffer } from "../mav/view";
 import type { Sample } from "../mav/types";
 import type { NodeDef } from "../lib/gains";
 import { GainRow } from "./GainRow";
-import { Craft, camStickAxis } from "./Craft";
+import { Craft, camStickAxis, type CraftImu } from "./Craft";
 
 type Feel = { kind: string; title: string; hint: string; axis?: Axis };
 
@@ -308,6 +309,34 @@ function SignalLog({
   return null;
 }
 
+function finite(value: number | undefined): number | null {
+  return typeof value === "number" && Number.isFinite(value) ? value : null;
+}
+
+function imuOf(s: Sample): CraftImu {
+  const nums = s.live_nums;
+  const x = finite(nums?.["VIBRATION.vibration_x"]);
+  const y = finite(nums?.["VIBRATION.vibration_y"]);
+  const z = finite(nums?.["VIBRATION.vibration_z"]);
+  const axes = [x, y, z].filter((value): value is number => value != null);
+  const c0 = finite(nums?.["VIBRATION.clipping_0"]);
+  const c1 = finite(nums?.["VIBRATION.clipping_1"]);
+  const c2 = finite(nums?.["VIBRATION.clipping_2"]);
+  const clips = [c0, c1, c2].filter((value): value is number => value != null);
+  return {
+    vibe: axes.length ? Math.max(...axes.map((value) => Math.abs(value))) : null,
+    clip: clips.length ? clips.reduce((sum, value) => sum + value, 0) : null,
+    x, y, z, c0, c1, c2,
+  };
+}
+
+function sameImu(a: CraftImu, b: CraftImu): boolean {
+  const near = (left: number | null, right: number | null) =>
+    (left == null ? null : Math.round(left * 10)) === (right == null ? null : Math.round(right * 10));
+  return near(a.vibe, b.vibe) && near(a.x, b.x) && near(a.y, b.y) && near(a.z, b.z)
+    && a.clip === b.clip && a.c0 === b.c0 && a.c1 === b.c1 && a.c2 === b.c2;
+}
+
 function batteryOf(s: Sample): { volts: number | null; pct: number | null } {
   const mv = s.live_nums?.["SYS_STATUS.voltage_battery"];
   const pctRaw = s.live_nums?.["SYS_STATUS.battery_remaining"];
@@ -340,6 +369,7 @@ function CraftLive({
       status: s.texts?.[0] ?? "",
       alive: s.ok,
       battery: batteryOf(s),
+      imu: imuOf(s),
     }),
     (a, b) =>
       a.roll === b.roll &&
@@ -354,7 +384,8 @@ function CraftLive({
       a.status === b.status &&
       a.alive === b.alive &&
       a.battery.volts === b.battery.volts &&
-      a.battery.pct === b.battery.pct,
+      a.battery.pct === b.battery.pct &&
+      sameImu(a.imu, b.imu),
   );
   let altLabel: ReactNode = t("AGL height");
   let altClass = "";
@@ -385,6 +416,7 @@ function CraftLive({
       axis={axis}
       status={pose.status}
       battery={pose.battery}
+      imu={pose.imu}
       vehicle={vehicle}
       alive={pose.alive}
       onCam={onCam}
@@ -648,7 +680,7 @@ export function Aside({
 
   function applyPreset(name: "wool" | "stock" | "hot") {
     const before = getLatest();
-    if (!frameLive(vehicle, before)) return;
+    if (!frameLive(vehicle, before) || !(isSitl(before.params) || before.sitl_running)) return;
     const pset = PRESET[name];
     const ang = name === "wool" ? 2 : 4.5;
     const written: { name: string; value: number }[] = [];
@@ -692,6 +724,7 @@ export function Aside({
   const tuneNode = nodes.find((n) => n.id === sel) ?? nodes.find((n) => n.guide) ?? nodes[0] ?? null;
   const stickAxis = vehicle === "plane" ? camStickAxis(planeCam) : axis;
   const [controlsOpen, setControlsOpen] = useState(false);
+  const sitl = usePicked((s) => isSitl(s.params) || !!s.sitl_running);
 
   return (
     <aside className={alive ? undefined : "idle"}>
@@ -726,8 +759,8 @@ export function Aside({
         </div>
       </div>
       </div>
-      <FeelLive axis={axis} vehicle={vehicle} stickName={t(stickAxis)} />
-      {presets ? <PresetBar alive={alive} onPick={applyPreset} /> : null}
+      {sitl ? <FeelLive axis={axis} vehicle={vehicle} stickName={t(stickAxis)} /> : null}
+      {sitl && presets ? <PresetBar alive={alive} onPick={applyPreset} /> : null}
       {knobs && tuneNode ? (
           <>
             <div className="tune-cap">

@@ -402,6 +402,10 @@ mod tests {
         assert_eq!(out["peak_error"]["actual"], json!(-40.0));
         assert_eq!(out["peak_error"]["opposite_sign"], json!(true));
         assert_eq!(out["past_command"], json!(null));
+        assert_eq!(out["sides"]["active_count"], json!(2), "{out}");
+        assert_eq!(out["sides"]["beyond"]["count"], json!(0), "{out}");
+        assert_eq!(out["sides"]["short"]["mean"], json!(35.0), "{out}");
+        assert_eq!(out["sides"]["short"]["share"], json!(0.5), "{out}");
         assert_eq!(out["release"]["actual"], json!(30.0));
         assert_eq!(out["release"]["delay_s"], json!(null));
         assert_eq!(out["release"]["crossings"], json!(2));
@@ -450,6 +454,9 @@ mod tests {
         assert_eq!(over["holds"][0]["from"], json!(0.0), "{over}");
         assert_eq!(over["holds"][0]["command"], json!(10.0), "{over}");
         assert_eq!(over["holds"][0]["overshoot"], json!(6.0), "{over}");
+        assert_eq!(over["sides"]["beyond"]["mean"], json!(6.0), "{over}");
+        assert_eq!(over["sides"]["beyond"]["share"], json!(1.0), "{over}");
+        assert!(over["sides"]["short"]["mean"].is_null(), "{over}");
         assert_eq!(over["holds"][0]["reached"], json!(true), "{over}");
         assert!((over["holds"][0]["hold_s"].as_f64().unwrap() - 0.35).abs() < 0.001, "{over}");
 
@@ -463,6 +470,9 @@ mod tests {
         let ramp = track_bytes(&flat, "RATE", "R", None, None);
         assert_eq!(ramp["hold_count"], json!(0), "{ramp}");
         assert!(ramp["holds"].as_array().unwrap().is_empty(), "{ramp}");
+        assert_eq!(ramp["sides"]["beyond"]["count"], json!(0), "{ramp}");
+        assert_eq!(ramp["sides"]["short"]["count"], json!(0), "{ramp}");
+        assert!(ramp["sides"]["beyond"]["mean"].is_null(), "{ramp}");
 
         let mut missed = Vec::new();
         push_fmt(&mut missed, 129, "RATE", "Qff", "TimeUS,RDes,R");
@@ -512,6 +522,59 @@ mod tests {
         assert!(!commands.contains(&30.0), "{listed}");
         assert!(!commands.contains(&600.0), "{listed}");
         assert_eq!(commands, vec![10.0, 40.0, 50.0, 60.0, 70.0, 80.0, 90.0, 100.0, 110.0, 120.0], "{listed}");
+    }
+
+    #[test]
+    fn sides_split_past_and_short_without_the_opposite_sign() {
+        let mut buf = Vec::new();
+        push_fmt(&mut buf, 129, "RATE", "Qff", "TimeUS,RDes,R");
+        for (us, desired, actual) in [
+            (0u64, 10.0f32, 80.0),
+            (100_000, 100.0, 140.0),
+            (200_000, 100.0, 160.0),
+            (300_000, 80.0, 50.0),
+            (400_000, 40.0, -10.0),
+            (500_000, 100.0, 100.0),
+            (600_000, 0.0, 0.0),
+        ] {
+            rate_row(&mut buf, us, desired, actual);
+        }
+        let out = track_bytes(&buf, "RATE", "R", None, None);
+        assert_eq!(out["actual"], json!("R"), "{out}");
+        assert_eq!(out["desired"], json!("RDes"), "{out}");
+        assert_eq!(out["sides"]["active_count"], json!(5), "{out}");
+        assert_eq!(out["sides"]["beyond"]["count"], json!(2), "{out}");
+        assert_eq!(out["sides"]["beyond"]["share"], json!(0.4), "{out}");
+        assert_eq!(out["sides"]["beyond"]["mean"], json!(50.0), "{out}");
+        assert_eq!(out["sides"]["beyond"]["p95"], json!(60.0), "{out}");
+        assert_eq!(out["sides"]["short"]["count"], json!(1), "{out}");
+        assert_eq!(out["sides"]["short"]["share"], json!(0.2), "{out}");
+        assert_eq!(out["sides"]["short"]["mean"], json!(30.0), "{out}");
+        assert_eq!(out["sides"]["short"]["p95"], json!(30.0), "{out}");
+    }
+
+    #[test]
+    fn a_heading_is_not_split_into_sides() {
+        let mut buf = Vec::new();
+        push_fmt(&mut buf, 129, "ANG", "Qff", "TimeUS,DesYaw,Yaw");
+        for (us, desired, actual) in [(0u64, 20.0f32, 10.0), (100_000, 40.0, 80.0), (200_000, 10.0, 20.0)] {
+            sample_row(&mut buf, 129, us, &[desired, actual]);
+        }
+        let yaw = track_bytes(&buf, "ANG", "Yaw", None, None);
+        assert_eq!(yaw["circular"], json!(true), "{yaw}");
+        assert!(yaw["sides"].is_null(), "{yaw}");
+
+        let mut rate = Vec::new();
+        push_fmt(&mut rate, 129, "RATE", "Qff", "TimeUS,RDes,R");
+        for (us, desired, actual) in [(0u64, 20.0f32, 10.0), (100_000, 40.0, 80.0), (200_000, 10.0, 20.0)] {
+            rate_row(&mut rate, us, desired, actual);
+        }
+        let linear = track_bytes(&rate, "RATE", "R", None, None);
+        assert_eq!(linear["sides"]["beyond"]["mean"], json!(25.0), "{linear}");
+        assert_eq!(linear["sides"]["beyond"]["p95"], json!(40.0), "{linear}");
+        assert_eq!(linear["sides"]["beyond"]["share"], json!(0.667), "{linear}");
+        assert_eq!(linear["sides"]["short"]["mean"], json!(10.0), "{linear}");
+        assert_eq!(linear["sides"]["short"]["share"], json!(0.333), "{linear}");
     }
 
     #[test]
@@ -830,12 +893,14 @@ mod tests {
         assert!(pid["desired_unit"].is_null(), "{pid}");
         assert!((pid["error_rms"].as_f64().unwrap() - 0.0).abs() < 1e-9);
         let note = rate["note"].as_str().unwrap();
-        assert!(note.contains("The sentence reports that ratio.\n"), "{note}");
+        assert!(note.contains("`spread` = std(`actual`) / std(`desired`).\n"), "{note}");
         assert!(note.contains("It is not a percent.\n"), "{note}");
         assert!(note.contains("The sentence is that the columns line up at this shift.\n"), "{note}");
         assert!(note.contains("It is not evidence that D is high, and it is not a reason to change D.\n"), "{note}");
         assert!(note.contains("A modest `corr` beside a small `error_rms` is a hold.\n"), "{note}");
         assert!(note.contains("not a frequency, not an overshoot, not damping, and not a gain."), "{note}");
+        assert!(note.contains("`beyond` = |`actual`| - |`desired`|, where that is positive."), "{note}");
+        assert!(note.contains("No samples on a side leaves `mean` and `p95` null."), "{note}");
         assert!(note.contains("It does not say why actual varied more, and it does not name a parameter."), "{note}");
         assert!(!note.contains("percent past the command"), "{note}");
         assert!(!note.contains("varied more than the command"), "{note}");

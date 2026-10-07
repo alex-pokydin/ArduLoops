@@ -6,7 +6,7 @@ use std::sync::mpsc::Sender;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
-use crate::link::{mode_custom, remember_brief, Cmd, LogBrief, Sample};
+use crate::link::{mode_custom, remember_brief, Cmd, LogBrief, Sample, ScriptJob};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 pub const HTTP_ADDR: &str = "127.0.0.1:8767";
@@ -68,6 +68,10 @@ fn handle(stream: TcpStream, latest: Arc<Mutex<Sample>>, tx: Sender<Cmd>) -> std
     }
 
     let (path, query) = split_query(&raw_path);
+
+    if path == "/scripts" || path.starts_with("/scripts/") {
+        return scripts_http(reader, &method, &path, &query, &headers, &latest, &tx);
+    }
 
     if method == "POST" && path == "/open" {
         let len = headers
@@ -1230,6 +1234,96 @@ fn https_page(url: &str) -> bool {
     let host = rest.split(['/', '?', '#']).next().unwrap_or("");
     let host = host.split('@').next_back().unwrap_or("");
     !host.is_empty() && host.contains('.')
+}
+
+fn scripts_http(
+    mut reader: BufReader<TcpStream>,
+    method: &str,
+    path: &str,
+    query: &HashMap<String, String>,
+    headers: &HashMap<String, String>,
+    latest: &Arc<Mutex<Sample>>,
+    tx: &Sender<Cmd>,
+) -> std::io::Result<()> {
+    let sample = latest.lock().map(|g| g.clone()).unwrap_or_else(|_| Sample::empty());
+    let mut status = crate::link::scripting_flags(&sample);
+    if method == "GET" && path == "/scripts" {
+        if sample.ok && status["enabled"].as_bool() == Some(true) {
+            match script_exchange(tx, ScriptJob::List, Duration::from_secs(12)) {
+                Ok(listed) => {
+                    status["ok"] = serde_json::json!(true);
+                    status["files"] = listed.get("files").cloned().unwrap_or_else(|| serde_json::json!([]));
+                }
+                Err(error) if error == "File transfer is busy" => {
+                    status["ok"] = serde_json::json!(true);
+                    status["busy"] = serde_json::json!(true);
+                    status["files"] = serde_json::json!([]);
+                }
+                Err(error) => {
+                    status["ok"] = serde_json::json!(false);
+                    status["error"] = serde_json::json!(error);
+                    status["files"] = serde_json::json!([]);
+                }
+            }
+        } else {
+            status["ok"] = serde_json::json!(sample.ok);
+            status["files"] = serde_json::json!([]);
+        }
+        let mut socket = reader.into_inner();
+        return reply(&mut socket, 200, "application/json", &serde_json::to_vec(&status)?);
+    }
+    if !sample.ok {
+        let mut socket = reader.into_inner();
+        return reply(
+            &mut socket,
+            409,
+            "application/json",
+            &serde_json::to_vec(&serde_json::json!({ "error": "Disconnected" }))?,
+        );
+    }
+    let job = if method == "GET" && path == "/scripts/file" {
+        let name = query.get("name").cloned().unwrap_or_default();
+        ScriptJob::Read { name }
+    } else if method == "POST" && (path == "/scripts/file" || path == "/scripts/delete" || path == "/scripts/restart") {
+        let len = headers.get("content-length").and_then(|v| v.parse::<usize>().ok()).unwrap_or(0).min(120_000);
+        let mut raw = vec![0u8; len];
+        if len > 0 {
+            reader.read_exact(&mut raw)?;
+        }
+        let body: serde_json::Value = serde_json::from_slice(&raw).unwrap_or_else(|_| serde_json::json!({}));
+        if path == "/scripts/restart" {
+            ScriptJob::Restart
+        } else if path == "/scripts/delete" {
+            ScriptJob::Delete { name: body["name"].as_str().unwrap_or("").to_string() }
+        } else {
+            ScriptJob::Write {
+                name: body["name"].as_str().unwrap_or("").to_string(),
+                body: body["body"].as_str().unwrap_or("").to_string(),
+            }
+        }
+    } else {
+        let mut socket = reader.into_inner();
+        return reply(&mut socket, 404, "application/json", br#"{"error":"Not found"}"#);
+    };
+    let wait = if matches!(job, ScriptJob::Write { .. }) { 40 } else { 20 };
+    let mut socket = reader.into_inner();
+    match script_exchange(tx, job, Duration::from_secs(wait)) {
+        Ok(value) => reply(&mut socket, 200, "application/json", &serde_json::to_vec(&value)?),
+        Err(error) => reply(
+            &mut socket,
+            409,
+            "application/json",
+            &serde_json::to_vec(&serde_json::json!({ "error": error }))?,
+        ),
+    }
+}
+
+fn script_exchange(tx: &Sender<Cmd>, job: ScriptJob, wait: Duration) -> Result<serde_json::Value, String> {
+    static GATE: std::sync::Mutex<()> = std::sync::Mutex::new(());
+    let _gate = GATE.try_lock().map_err(|_| "File transfer is busy".to_string())?;
+    let (reply_tx, reply_rx) = std::sync::mpsc::channel();
+    tx.send(Cmd::Script { job, reply: reply_tx }).map_err(|_| "Link stopped".to_string())?;
+    reply_rx.recv_timeout(wait).unwrap_or_else(|_| Err("Script request timed out".into()))
 }
 
 fn reply(socket: &mut TcpStream, code: u16, ctype: &str, body: &[u8]) -> std::io::Result<()> {

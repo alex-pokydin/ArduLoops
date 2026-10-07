@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { lazy, Suspense, useMemo, useState } from "react";
 import { Aside, type LogRow } from "../components/Aside";
 import { AxisSwitch } from "../components/AxisSwitch";
 import { Cascade } from "../components/Cascade";
@@ -13,7 +13,10 @@ import { axisLabel, type Axis } from "../mav/axis";
 import { CopterLoopView } from "./LoopView";
 import { AuditLibrary } from "../components/AuditLibrary";
 import { ControllerView } from "../components/ControllerView";
-import { WorkspaceTabs } from "../components/WorkspaceTabs";
+import { WorkspaceTabs, type WorkspaceId } from "../components/WorkspaceTabs";
+
+const ScriptsLibrary = lazy(() => import("../components/ScriptsLibrary").then((mod) => ({ default: mod.ScriptsLibrary })));
+const COPTER_TABS: WorkspaceId[] = ["loops", "firmware", "scripts", "audit"];
 
 export function CopterApp({
   log,
@@ -24,7 +27,7 @@ export function CopterApp({
   const [sel, setSel] = useState<string | null>(null);
   const [axis, setAxis] = useState<Axis>("roll");
   const [showAll, setShowAll] = useState(false);
-  const [workspace, setWorkspace] = useState<"loops" | "firmware" | "audit">("loops");
+  const [workspace, setWorkspace] = useState<WorkspaceId>("loops");
   const col1Default = useMemo(() => preferredLayoutWidth(LAYERS), []);
 
   function onAxis(next: Axis) {
@@ -65,10 +68,27 @@ export function CopterApp({
     );
   }
 
+  if (workspace === "scripts") {
+    return (
+      <main>
+        <Suspense fallback={<section className="scope work"><p className="work-empty">…</p></section>}>
+          <ScriptsLibrary current="scripts" ids={COPTER_TABS} onWorkspace={setWorkspace} />
+        </Suspense>
+        <Aside
+          log={log}
+          sel={sel}
+          onSel={onPick}
+          axis={axis}
+          inspect={<CopterInspect sel={sel} onSel={onPick} axis={axis} showAll={showAll} />}
+        />
+      </main>
+    );
+  }
+
   if (workspace === "audit") {
     return (
       <main>
-        <AuditLibrary current="audit" ids={["loops", "firmware", "audit"]} onWorkspace={setWorkspace} />
+        <AuditLibrary current="audit" ids={COPTER_TABS} onWorkspace={setWorkspace} />
         <Aside
           log={log}
           sel={sel}
@@ -87,7 +107,7 @@ export function CopterApp({
           frame="copter"
           col1Default={col1Default}
           toolbar={<>
-            <WorkspaceTabs current="loops" ids={["loops", "firmware", "audit"]} onSelect={setWorkspace} />
+            <WorkspaceTabs current="loops" ids={COPTER_TABS} onSelect={setWorkspace} />
             <AxisSwitch axis={axis} onAxis={onAxis} />
           </>}
           scheme={<Cascade sel={sel} onSel={onPick} axis={axis} showAll={showAll} onShowAll={setShowAll} />}

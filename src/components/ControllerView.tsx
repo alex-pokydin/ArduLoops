@@ -24,7 +24,7 @@ export function ControllerView({ onWorkspace }: { onWorkspace: (id: WorkspaceId)
   return (
     <section className="scope work">
       <div className="work-bar">
-        <WorkspaceTabs current="firmware" ids={["loops", "firmware", "audit"]} onSelect={onWorkspace} />
+        <WorkspaceTabs current="firmware" ids={["loops", "firmware", "scripts", "audit"]} onSelect={onWorkspace} />
       </div>
       <ControllerBoard />
       <div className="studio-tabs controller-tabs" role="tablist" aria-label={t("controller")}>

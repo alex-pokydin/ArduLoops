@@ -372,6 +372,10 @@ fn apply_cmd(
         Cmd::Connect { .. } | Cmd::Disconnect | Cmd::SitlStart { .. } | Cmd::SitlStop => {}
         Cmd::Reboot => reboot_fc(conn, st),
         Cmd::RebootBootloader => reboot_to_bootloader(conn, st),
+        Cmd::Script { job, reply } => {
+            let result = run_script_job(conn, st, job, on_sample, latest, sitl);
+            let _ = reply.send(result);
+        }
     }
 }
 

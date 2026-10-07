@@ -134,14 +134,22 @@ fn drain_steers(c: &Connection, chat: &str, after: &mut i64) -> Option<String> {
     let mut bodies = Vec::new();
     {
         let mut st = c.prepare(
-            "SELECT id, body FROM ai_message WHERE chat_id=?1 AND role='steer' AND id>?2 ORDER BY id",
+            "SELECT id, role, body FROM ai_message WHERE chat_id=?1 AND id>?2 AND role IN ('steer', 'quote') ORDER BY id",
         ).ok()?;
         let mut rows = st.query(params![chat, *after]).ok()?;
         while let Ok(Some(row)) = rows.next() {
             let id: i64 = row.get(0).unwrap_or(0);
-            let body: String = row.get(1).unwrap_or_default();
+            let role: String = row.get(1).unwrap_or_default();
+            let body: String = row.get(2).unwrap_or_default();
             if id > *after {
                 *after = id;
+            }
+            if role == "quote" {
+                let text = quote_for_model(&body);
+                if !text.trim().is_empty() {
+                    bodies.push(text);
+                }
+                continue;
             }
             ids.push(id);
             let body = body.trim();
@@ -565,6 +573,68 @@ fn fold_identical_pending(c: &Connection, id: &str, status: &str) {
     c.execute(sql, params![status, chat, kind, param, payload, id, value, old]).ok();
 }
 
+pub fn propose_script(chat_id: &str, op: &str, name: &str, body: &str, reason: &str) -> Result<Value, String> {
+    if !matches!(op, "write" | "delete" | "restart") {
+        return Err("op must be write, delete, or restart".into());
+    }
+    let reason = reason.split_whitespace().collect::<Vec<_>>().join(" ");
+    if reason.is_empty() {
+        return Err("reason is required".into());
+    }
+    if reason.chars().count() > 400 {
+        return Err("reason is longer than 400 characters".into());
+    }
+    let (title, stored) = if op == "restart" {
+        ("scripting".to_string(), String::new())
+    } else {
+        let title = crate::link::script_file_name(name)?;
+        if op == "write" {
+            if body.len() > 96 * 1024 {
+                return Err("Script is larger than 96 KB".into());
+            }
+            if body.contains('\0') {
+                return Err("Script must be text".into());
+            }
+            (title, body.to_string())
+        } else {
+            (title, String::new())
+        }
+    };
+    let c = conn()?;
+    let chat = if chat_id.is_empty() {
+        script_chat(&c)?
+    } else {
+        c.execute("UPDATE ai_chat SET updated_at=?1 WHERE id=?2", params![now(), chat_id]).ok();
+        chat_id.to_string()
+    };
+    let payload = json!({ "op": op, "name": title, "body": stored }).to_string();
+    let mut held = hold_change(&c, &chat, "script", &title, None, stored.len() as f64, &reason, &payload);
+    if let Some(obj) = held.as_object_mut() {
+        obj.insert("chat".into(), json!(chat));
+        obj.insert(
+            "note".into(),
+            json!("Nothing was written. Approve or reject the card in the ArduLoops chat."),
+        );
+    }
+    Ok(held)
+}
+
+fn script_chat(c: &Connection) -> Result<String, String> {
+    let existing: Result<String, _> = c.query_row(
+        "SELECT id FROM ai_chat ORDER BY updated_at DESC LIMIT 1",
+        [],
+        |row| row.get(0),
+    );
+    if let Ok(id) = existing {
+        c.execute("UPDATE ai_chat SET updated_at=?1 WHERE id=?2", params![now(), id]).ok();
+        return Ok(id);
+    }
+    create_chat(c, &json!({ "title": "Lua scripts" }))["id"]
+        .as_str()
+        .map(str::to_string)
+        .ok_or_else(|| "Could not open a chat".into())
+}
+
 /// Stores a vehicle change until the user approves it. Nothing is sent.
 fn hold_change(c: &Connection, chat: &str, kind: &str, title: &str, old: Option<f64>, new_value: f64, reason: &str, payload: &str) -> Value {
     let existing: Result<String, _> = c.query_row(
@@ -603,6 +673,15 @@ fn run_saved(kind: &str, param: &str, value: f64, payload: &str, tx: &Sender<Cmd
         "disarm" => bridge_post("/cmd", &json!({"op": "arm", "on": false}), 8),
         "reboot" => bridge_post("/cmd", &json!({"op": "reboot"}), 8),
         "erase_logs" => bridge_post("/logs/erase", &json!({"confirm": true}), 15),
+        "script" => {
+            let args: Value = serde_json::from_str(payload).unwrap_or_else(|_| json!({}));
+            match args["op"].as_str().unwrap_or("") {
+                "write" => bridge_post("/scripts/file", &args, 40),
+                "delete" => bridge_post("/scripts/delete", &args, 20),
+                "restart" => bridge_post("/scripts/restart", &json!({}), 12),
+                _ => json!({ "ok": false, "error": "Unknown script action" }),
+            }
+        }
         "flash" => {
             let args: Value = serde_json::from_str(payload).unwrap_or_else(|_| json!({}));
             bridge_post("/firmware/flash", &args, 60)

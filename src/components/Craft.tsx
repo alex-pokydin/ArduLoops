@@ -3,6 +3,17 @@ import { useT } from "../i18n/i18n";
 import type { Axis } from "../mav/axis";
 import { createCraftView, type CraftView, type CraftViewCam } from "./craft3d";
 
+export type CraftImu = {
+  vibe: number | null;
+  clip: number | null;
+  x: number | null;
+  y: number | null;
+  z: number | null;
+  c0: number | null;
+  c1: number | null;
+  c2: number | null;
+};
+
 const MSG_MS = 60_000;
 const SEV = /^(EMERGENCY|ALERT|CRITICAL|ERROR|WARNING|NOTICE|INFO|DEBUG)\s+/i;
 
@@ -40,6 +51,47 @@ function battTone(pct: number | null): string {
   return "ok";
 }
 
+function vibeTone(value: number | null): string {
+  if (value == null) return "";
+  if (value >= 60) return "bad";
+  if (value >= 30) return "warn";
+  return "ok";
+}
+
+function clipTone(value: number | null): string {
+  if (value == null) return "";
+  return value > 0 ? "bad" : "ok";
+}
+
+function fmtVibe(value: number | null): string {
+  if (value == null) return "—";
+  return value >= 10 ? value.toFixed(0) : value.toFixed(1);
+}
+
+function fmtAxis(value: number | null): string {
+  return value == null ? "—" : value.toFixed(1);
+}
+
+function fmtClip(value: number | null): string {
+  return value == null ? "—" : String(Math.round(value));
+}
+
+function imuTitle(tr: typeof import("../i18n/i18n").t, imu: CraftImu | undefined): string {
+  if (imu?.vibe == null && imu?.clip == null) return tr("No vibration reading yet.");
+  return tr(
+    "Largest axis {n} m/s². X {x}, Y {y}, Z {z}. Under 30 is usual. 60 is too high. Clip {a}, {b}, {c}. Above zero the accelerometer saturated.",
+    {
+      n: fmtVibe(imu?.vibe ?? null),
+      x: fmtAxis(imu?.x ?? null),
+      y: fmtAxis(imu?.y ?? null),
+      z: fmtAxis(imu?.z ?? null),
+      a: fmtClip(imu?.c0 ?? null),
+      b: fmtClip(imu?.c1 ?? null),
+      c: fmtClip(imu?.c2 ?? null),
+    },
+  );
+}
+
 function battTitle(tr: typeof import("../i18n/i18n").t, battery: { volts: number | null; pct: number | null } | undefined): string {
   if (battery?.volts == null && battery?.pct == null) return tr("No battery reading yet.");
   if (battery.volts != null && battery.pct != null) return tr("{v} V · {pct}%", { v: battery.volts.toFixed(1), pct: battery.pct });
@@ -61,6 +113,7 @@ export function Craft({
   axis,
   status,
   battery,
+  imu,
   vehicle = "copter",
   alive = true,
   onCam,
@@ -78,6 +131,7 @@ export function Craft({
   axis: Axis;
   status: string;
   battery?: { volts: number | null; pct: number | null };
+  imu?: CraftImu;
   vehicle?: "copter" | "plane";
   alive?: boolean;
   onCam?: (cam: PlaneCam) => void;
@@ -268,6 +322,19 @@ export function Craft({
           </span>
         </div>
       ) : null}
+      <div className={["craft-imu", ticker ? "lift" : ""].filter(Boolean).join(" ")} title={imuTitle(t, imu)}>
+        <p className={vibeTone(imu?.vibe ?? null)}>
+          <span>{t("vibe")}</span>
+          <b>
+            {fmtVibe(imu?.vibe ?? null)}
+            {imu?.vibe != null ? <em>{t("m/s²")}</em> : null}
+          </b>
+        </p>
+        <p className={clipTone(imu?.clip ?? null)}>
+          <span>{t("clip")}</span>
+          <b>{fmtClip(imu?.clip ?? null)}</b>
+        </p>
+      </div>
       <div className={["craft-batt", ticker ? "lift" : "", battTone(battery?.pct ?? null)].filter(Boolean).join(" ")} title={battTitle(t, battery)}>
         <svg viewBox="0 0 22 12" aria-hidden="true">
           <rect x="0.6" y="0.6" width="18" height="10.8" rx="1.6" />

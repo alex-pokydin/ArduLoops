@@ -406,6 +406,15 @@ fn run_tool(
             audit(c, "disconnect", "assistant disconnect", "requested", "agent (safe_mode)");
             run_link_wait(c, chat, "disconnect", "Disconnect", "")
         },
+        "script_list" => bridge_get("/scripts", 15),
+        "script_read" => {
+            let name = args["name"].as_str().unwrap_or("").trim();
+            if name.is_empty() {
+                return json!({ "ok": false, "error": "name is required" });
+            }
+            bridge_get(&format!("/scripts/file?name={}", url_query(name)), 20)
+        }
+        "script_write" | "script_delete" | "script_restart" => script_change_tool(name, args, c, chat),
         "wizard_widget" => wizard_widget(args, sample, c, chat),
         "health" => bridge_get("/health", 8),
         _ => json!({ "error": "unknown tool" }),
@@ -573,14 +582,8 @@ fn log_compute_tool(args: &Value, file: &str) -> Value {
 const LIVE_CHARTS: usize = 5;
 const LIVE_LINES: usize = 8;
 
-fn live_fields(args: &Value) -> Value {
-    let mut value = crate::link::live_catalog();
-    if args.get("only_present").and_then(|v| v.as_bool()) == Some(true) {
-        if let Some(rows) = value.get_mut("fields").and_then(|v| v.as_array_mut()) {
-            rows.retain(|row| row.get("present").and_then(|v| v.as_bool()) == Some(true));
-        }
-    }
-    value
+fn live_fields(_args: &Value) -> Value {
+    crate::link::live_catalog()
 }
 
 fn live_buffer(args: &Value) -> Value {

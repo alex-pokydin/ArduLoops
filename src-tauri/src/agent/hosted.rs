@@ -47,6 +47,27 @@ fn clear_session() {
     let _ = fs::remove_file(session_path());
 }
 
+fn hosted_assistant_on() -> bool {
+    let Ok(bytes) = fs::read(session_path()) else {
+        return false;
+    };
+    let Ok(value) = serde_json::from_slice::<Value>(&bytes) else {
+        return false;
+    };
+    value["assistant"].as_str() != Some("off")
+}
+
+fn set_hosted_assistant(on: bool) {
+    let Ok(raw) = fs::read_to_string(session_path()) else {
+        return;
+    };
+    let Ok(mut stored) = serde_json::from_str::<Value>(&raw) else {
+        return;
+    };
+    stored["assistant"] = json!(if on { "on" } else { "off" });
+    let _ = fs::write(session_path(), stored.to_string());
+}
+
 fn http_agent() -> ureq::Agent {
     ureq::AgentBuilder::new().timeout(std::time::Duration::from_secs(4)).build()
 }
@@ -97,6 +118,9 @@ fn claim_session(nonce: &str) -> Result<String, String> {
         "uid": value["uid"].as_str().unwrap_or(""),
         "plan": value["plan"].as_str().unwrap_or("free"),
     }))?;
+    if let Ok(c) = conn() {
+        arm_default_hosted(&c);
+    }
     Ok(value["email"].as_str().unwrap_or("").to_string())
 }
 
@@ -143,8 +167,21 @@ pub fn account_status() -> Value {
     }
 }
 
+fn auth_origin() -> String {
+    std::env::var("ARDULOOPS_AUTH_ORIGIN")
+        .unwrap_or_else(|_| "https://arduloops-api.firebaseapp.com".into())
+}
+
 pub fn login_url() -> String {
-    format!("{}/login?return=http://127.0.0.1:8767/auth/callback", api_base())
+    // Google rejects the Cloud Run host. The button is served from Firebase Hosting.
+    format!("{}/login?return=http://127.0.0.1:8767/auth/callback", auth_origin())
+}
+
+pub fn cabinet_url() -> Result<String, String> {
+    let value = api_post("/v1/auth/link", &json!({}))?;
+    let nonce = value["nonce"].as_str().filter(|item| !item.is_empty())
+        .ok_or_else(|| "Sign-in did not return a code.".to_string())?;
+    Ok(format!("{}/account?nonce={nonce}", auth_origin()))
 }
 
 pub fn logout_session() {

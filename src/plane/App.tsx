@@ -1,7 +1,10 @@
-import { useMemo, useState } from "react";
+import { lazy, Suspense, useMemo, useState } from "react";
 import { Aside, type LogRow } from "../components/Aside";
 import { AuditLibrary } from "../components/AuditLibrary";
-import { WorkspaceTabs } from "../components/WorkspaceTabs";
+import { WorkspaceTabs, type WorkspaceId } from "../components/WorkspaceTabs";
+
+const ScriptsLibrary = lazy(() => import("../components/ScriptsLibrary").then((mod) => ({ default: mod.ScriptsLibrary })));
+const PLANE_TABS: WorkspaceId[] = ["loops", "scripts", "audit"];
 import { Scope } from "../components/Scope";
 import { Studio } from "../components/Studio";
 import { useT } from "../i18n/i18n";
@@ -23,7 +26,7 @@ export function PlaneApp({
   const [sel, setSel] = useState<string | null>(null);
   const [axis, setAxis] = useState<Axis>("roll");
   const [showAll, setShowAll] = useState(false);
-  const [workspace, setWorkspace] = useState<"loops" | "audit">("loops");
+  const [workspace, setWorkspace] = useState<WorkspaceId>("loops");
   const col1Default = useMemo(() => preferredLayoutWidth(LAYERS), []);
   const loopAxis = axis === "d" ? "roll" : axis;
 
@@ -42,10 +45,31 @@ export function PlaneApp({
     else if (next === "rll_ang" || next === "rll_rate" || next === "aileron" || next === "ahrs") setAxis("roll");
   }
 
+  if (workspace === "scripts") {
+    return (
+      <main>
+        <Suspense fallback={<section className="scope work"><p className="work-empty">…</p></section>}>
+          <ScriptsLibrary current="scripts" ids={PLANE_TABS} onWorkspace={setWorkspace} />
+        </Suspense>
+        <Aside
+          log={log}
+          sel={sel}
+          onSel={onPick}
+          axis={loopAxis}
+          modes={MODES}
+          nodes={NODES}
+          presets={false}
+          vehicle="plane"
+          inspect={<PlaneInspect sel={sel} onSel={onPick} showAll={showAll} />}
+        />
+      </main>
+    );
+  }
+
   if (workspace === "audit") {
     return (
       <main>
-        <AuditLibrary current="audit" ids={["loops", "audit"]} onWorkspace={(id) => { if (id === "loops" || id === "audit") setWorkspace(id); }} />
+        <AuditLibrary current="audit" ids={PLANE_TABS} onWorkspace={setWorkspace} />
         <Aside
           log={log}
           sel={sel}
@@ -68,7 +92,7 @@ export function PlaneApp({
           frame="plane"
           col1Default={col1Default}
           toolbar={<>
-            <WorkspaceTabs current="loops" ids={["loops", "audit"]} onSelect={(id) => { if (id === "loops" || id === "audit") setWorkspace(id); }} />
+            <WorkspaceTabs current="loops" ids={PLANE_TABS} onSelect={setWorkspace} />
             <PlaneAxisSwitch axis={loopAxis} onAxis={onAxis} />
           </>}
           scheme={<PlaneMap sel={sel} onSel={onPick} showAll={showAll} onShowAll={setShowAll} />}

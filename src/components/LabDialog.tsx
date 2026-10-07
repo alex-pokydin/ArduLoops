@@ -125,6 +125,11 @@ export function LabDialog({
       void ai.status().then((s) => {
         setAccount(s.account || null);
         setAiConfigured(s.configured);
+        const provider = s.active?.storage === "hosted" ? s.active.provider : "";
+        if (provider) {
+          setAiProvider((current) => (current === "disabled" ? provider : current));
+          setSavedProvider((current) => (current === "disabled" || current === "" ? provider : current));
+        }
       }).catch(() => {});
     }, 2000);
     return () => window.clearInterval(timer);
@@ -247,7 +252,7 @@ export function LabDialog({
                     className="google-signin"
                     onClick={() => {
                       void ai.loginUrl().then((res) => {
-                        window.open(res.url, "arduloops-auth", "width=480,height=720");
+                        openExternal(res.url);
                       }).catch((err: Error) => setAiState(err.message));
                     }}
                   >
@@ -269,39 +274,18 @@ export function LabDialog({
               </span>
             </div>
             {account?.signed_in ? (
-              <div className="ai-opt">
-                <select aria-label={t("AI assistant")} value={aiProvider} onChange={(ev) => { setAiProvider(ev.target.value); setAiState(""); }}>
-                  <option value="disabled">{t("Disabled")}</option>
-                  <option value="gemini">Gemini</option>
-                  <option value="openai">OpenAI</option>
-                  <option value="anthropic">Anthropic</option>
-                  <option value="xai">xAI</option>
-                </select>
-                {aiProvider !== "disabled" ? (
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setAiState(t("checking"));
-                      void ai.saveProvider(aiProvider, "", "hosted").then((res) => {
-                        applyAi(res);
-                        setAiState(res.ok === false ? (res.status || "network unavailable") : "ready");
-                        setAiKey("");
-                      }).catch((err: Error) => setAiState(err.message));
-                    }}
-                  >
-                    {t("Use ArduLoops")}
-                  </button>
-                ) : null}
-                <button type="button" onClick={() => void ai.checkout("start").then((res) => window.open(res.url)).catch((err: Error) => setAiState(err.message))}>
-                  {t("Start · 30 a day")}
-                </button>
-                <button type="button" onClick={() => void ai.checkout("plus").then((res) => window.open(res.url)).catch((err: Error) => setAiState(err.message))}>
-                  {t("Plus · 100 a day")}
-                </button>
-                <button type="button" onClick={() => void ai.portal().then((res) => window.open(res.url)).catch((err: Error) => setAiState(err.message))}>
-                  {t("Manage subscription")}
-                </button>
-              </div>
+              <a
+                className="cabinet-link"
+                href="https://arduloops-api.firebaseapp.com/account"
+                onClick={(ev) => {
+                  ev.preventDefault();
+                  void ai.cabinet()
+                    .then((res) => openExternal(res.url))
+                    .catch(() => openExternal("https://arduloops-api.firebaseapp.com/account"));
+                }}
+              >
+                {t("Account")}
+              </a>
             ) : null}
             <button
               type="button"

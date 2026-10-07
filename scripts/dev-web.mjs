@@ -35,7 +35,7 @@ function startApi() {
   const apiRoot = join(root, "..", "arduloops-api");
   const script = join(apiRoot, "src", "server.mjs");
   if (!existsSync(script)) return;
-  process.env.ARDULOOPS_API = process.env.ARDULOOPS_API || "http://127.0.0.1:8788";
+  process.env.ARDULOOPS_API = process.env.ARDULOOPS_API || "https://api-qm4zps6yqa-ew.a.run.app";
   const child = spawn(process.execPath, [script], {
     stdio: "inherit",
     cwd: apiRoot,

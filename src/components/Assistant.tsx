@@ -1,4 +1,4 @@
-import { memo, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore, type FormEvent, type PointerEvent as ReactPointerEvent } from "react";
+import { lazy, memo, Suspense, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore, type FormEvent, type PointerEvent as ReactPointerEvent } from "react";
 import type { Components } from "react-markdown";
 import Markdown from "react-markdown";
 import rehypeKatex from "rehype-katex";
@@ -12,9 +12,19 @@ import type { WizardClose } from "../wizards/close";
 import { ChartStrip, chartsFromTools } from "./FindingCharts";
 import { LiveView, liveSpecFromTools, type LiveSpec } from "./LivePlots";
 import { getLang, useT } from "../i18n/i18n";
+import { getLuaQuote, quoteLabel, setLuaQuote, subscribeLuaQuote } from "../luaQuote";
 import { subscribe } from "../mav/store";
 import { useVehicle, viewSample } from "../mav/view";
 import type { Sample } from "../mav/types";
+
+const LuaSource = lazy(() => import("./LuaSource").then((mod) => ({ default: mod.LuaSource })));
+
+function hostedQuota(status: AiStatus | null): { left: number; limit: number } | null {
+  const account = status?.account;
+  if (!account?.signed_in || status?.active?.storage !== "hosted") return null;
+  if (account.limit == null || account.used == null) return null;
+  return { left: Math.max(0, account.limit - account.used), limit: account.limit };
+}
 
 function sameDrone(chatKey: string | undefined, sample: { boot_uid?: string; board_name?: string; frame?: string }): boolean {
   const key = chatKey?.trim() ?? "";
@@ -112,7 +122,27 @@ function payloadTitle(item: Proposal): string {
   }
 }
 
+function scriptPayload(item: Proposal): { op: string; body: string } {
+  const raw = item.payload?.trim() ?? "";
+  if (!raw.startsWith("{")) return { op: "", body: "" };
+  try {
+    const value = JSON.parse(raw) as { op?: unknown; body?: unknown };
+    return {
+      op: typeof value.op === "string" ? value.op : "",
+      body: typeof value.body === "string" ? value.body : "",
+    };
+  } catch {
+    return { op: "", body: "" };
+  }
+}
+
 function proposalTitle(tr: typeof import("../i18n/i18n").t, p: Proposal): string {
+  if (p.kind === "script") {
+    const op = scriptPayload(p).op;
+    if (op === "delete") return tr("Delete {name}", { name: p.param });
+    if (op === "restart") return tr("Reload Lua scripting");
+    return tr("Write {name}", { name: p.param });
+  }
   if (p.kind === "wizard") return payloadTitle(p) || wizardTitle(tr, p.param);
   if (p.kind === "mode") return `${tr("Flight mode")} ${p.param}`;
   if (p.kind === "arm") return tr("Arm");
@@ -205,6 +235,12 @@ function commentText(item: Proposal | undefined): string {
 }
 
 function changeLine(tr: typeof import("../i18n/i18n").t, item: Proposal): string {
+  if (item.kind === "script") {
+    const script = scriptPayload(item);
+    if (script.op === "delete") return tr("Delete {name}", { name: item.param });
+    if (script.op === "restart") return tr("Reload Lua scripting");
+    return tr("Write {name} · {bytes} B", { name: item.param, bytes: script.body.length });
+  }
   if (!item.kind || item.kind === "param") return `${item.param} = ${fmt(item.new)} (${tr("was {value}", { value: fmt(item.old) })})`;
   if (item.kind === "mode") return item.param;
   const payload = item.payload?.trim() ?? "";
@@ -250,6 +286,9 @@ function ProposalIcon({ kind }: { kind: string }) {
   if (kind === "wizard") {
     return <svg {...common}><rect x="2.6" y="2.6" width="10.8" height="10.8" rx="1.6" fill="none" stroke="currentColor" strokeWidth="1.4" /><path d="M5 8h6" fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" /></svg>;
   }
+  if (kind === "script") {
+    return <svg {...common}><path d="M5.2 4.2 2.4 8l2.8 3.8M10.8 4.2 13.6 8l-2.8 3.8M9 3.2 7 12.8" fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round" /></svg>;
+  }
   if (kind === "comment") {
     return <svg {...common}><rect x="2.4" y="2.2" width="11.2" height="11.6" rx="1.4" fill="none" stroke="currentColor" strokeWidth="1.4" /><path d="M4.6 5.4h6.8M4.6 8h6.8M4.6 10.6h4.2" fill="none" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" /></svg>;
   }
@@ -276,7 +315,7 @@ function ProposalCard({
   const wizardNote = kind === "wizard" ? shown[0]?.reason.trim() ?? "" : "";
   const comment = kind === "comment";
   const [draft, setDraft] = useState(() => commentText(shown[0]));
-  const expandable = !wizardNote && !comment && (shown.length > 1 || shown.some((item) => item.reason.trim().length > 0));
+  const expandable = kind === "script" || (!wizardNote && !comment && (shown.length > 1 || shown.some((item) => item.reason.trim().length > 0)));
   const ids = uniqueChanges(pending).map((item) => item.id);
   return (
     <article className={`proposal${waiting.length && !pending.length ? " wait" : ""}${outcome ? " done" : ""}`}>
@@ -328,6 +367,11 @@ function ProposalCard({
                 ) : <b>{changeLine(t, item)}</b>}
               </p>
               {item.reason ? <p className="reason">{item.reason === "Restore the audited value" ? t(item.reason) : item.reason}</p> : null}
+              {item.kind === "script" && scriptPayload(item).op === "write" && scriptPayload(item).body ? (
+                <Suspense fallback={null}>
+                  <LuaSource value={scriptPayload(item).body} />
+                </Suspense>
+              ) : null}
             </li>
           ))}
         </ul>
@@ -383,6 +427,31 @@ export function Assistant({
   const sendAbort = useRef<AbortController | null>(null);
   const sending = useRef(false);
   const pulled = useRef("");
+  const proposalWatch = useRef(0);
+  const proposalJson = useRef("");
+  const threadGen = useRef(0);
+  const messagesRef = useRef(messages);
+  messagesRef.current = messages;
+  function openThread() {
+    threadGen.current += 1;
+    return threadGen.current;
+  }
+  function adoptThread(gen: number, thread: { messages: Msg[]; proposals: Proposal[] }) {
+    if (gen !== threadGen.current) return false;
+    messagesRef.current = thread.messages;
+    proposalJson.current = JSON.stringify(thread.proposals);
+    setMessages(thread.messages);
+    setProposals(thread.proposals);
+    return true;
+  }
+  function releaseLive() {
+    setLive((prev) => {
+      const reply = prev?.reply ?? "";
+      if (reply.trim() && !replyLanded(messagesRef.current, reply)) return prev;
+      return null;
+    });
+    if (!sending.current) setBusy(false);
+  }
   const narrow = useNarrow();
 
   async function refreshStatus() {
@@ -403,9 +472,9 @@ export function Assistant({
     if (!id && list.chats.length === 0) return;
     if (id && id !== chatId) setChatId(id);
     if (id) {
+      const gen = openThread();
       const thread = await ai.thread(id);
-      setMessages(thread.messages);
-      setProposals(thread.proposals);
+      adoptThread(gen, thread);
     }
   }
 
@@ -423,41 +492,66 @@ export function Assistant({
 
   useEffect(() => {
     if (!chatId) return;
+    const gen = openThread();
+    let stop = false;
     void ai.thread(chatId).then((thread) => {
-      setMessages(thread.messages);
-      setProposals(thread.proposals);
+      if (stop) return;
+      adoptThread(gen, thread);
     }).catch(() => {});
+    return () => { stop = true; };
   }, [chatId]);
 
   useEffect(() => {
     if (!chatId || !status?.configured) return;
     let stop = false;
     let wasLive = false;
+    let settling = false;
     const tick = () => {
       void ai.live(chatId).then((row) => {
         if (stop) return;
         if (row.active) {
           wasLive = true;
+          settling = false;
           setBusy(true);
           setLive((prev) => (sameLive(prev, row) ? prev : row));
           const mark = `${row.tool ?? ""}\n${row.input ?? ""}\n${row.note ?? ""}`;
           if (pulled.current !== mark) {
             pulled.current = mark;
+            const gen = openThread();
             void ai.thread(chatId).then((thread) => {
               if (stop) return;
-              setMessages(thread.messages);
-              setProposals(thread.proposals);
+              adoptThread(gen, thread);
             }).catch(() => {});
           }
           return;
         }
-        setLive(null);
-        if (!sending.current) setBusy(false);
+        if (settling) return;
         if (wasLive) {
           wasLive = false;
+          settling = true;
+          const gen = openThread();
           void ai.thread(chatId).then((thread) => {
             if (stop) return;
-            setMessages(thread.messages);
+            if (adoptThread(gen, thread)) releaseLive();
+            else wasLive = true;
+          }).catch(() => {
+            if (stop) return;
+            wasLive = true;
+          }).finally(() => {
+            settling = false;
+          });
+          return;
+        }
+        releaseLive();
+        const now = Date.now();
+        if (now - proposalWatch.current > 2000) {
+          proposalWatch.current = now;
+          const gen = threadGen.current;
+          void ai.thread(chatId).then((thread) => {
+            if (stop || gen !== threadGen.current) return;
+            const next = JSON.stringify(thread.proposals);
+            if (next === proposalJson.current) return;
+            proposalJson.current = next;
             setProposals(thread.proposals);
           }).catch(() => {});
         }
@@ -477,25 +571,26 @@ export function Assistant({
     const text = (preset ?? draft).trim();
     if (!text) return;
     const attached = logId;
+    const quoted = preset ? null : getLuaQuote();
     if (busy) {
       if (!chatId) return;
       setDraft("");
       setLogId("");
+      setLuaQuote(null);
       try {
-        const res = await ai.send(chatId, text, getLang(), model, reasoning, attached);
+        const res = await ai.send(chatId, text, getLang(), model, reasoning, attached, quoted);
         if (!res.ok) setNote(res.status || "network unavailable");
+        const gen = openThread();
         const thread = await ai.thread(chatId);
-        setMessages(thread.messages);
-        setProposals(thread.proposals);
+        adoptThread(gen, thread);
       } catch (err) {
         setDraft(text);
         setLogId(attached);
+        if (quoted) setLuaQuote(quoted);
         setNote(err instanceof Error && err.message !== "Failed to fetch" ? err.message : "This turn stopped before a reply.");
+        const gen = openThread();
         const thread = await ai.thread(chatId).catch(() => null);
-        if (thread) {
-          setMessages(thread.messages);
-          setProposals(thread.proposals);
-        }
+        if (thread) adoptThread(gen, thread);
       }
       return;
     }
@@ -504,6 +599,7 @@ export function Assistant({
     setNote("");
     setDraft("");
     setLogId("");
+    setLuaQuote(null);
     const ctrl = new AbortController();
     sendAbort.current = ctrl;
     sending.current = true;
@@ -514,29 +610,29 @@ export function Assistant({
         id = created.id;
         setChatId(id);
       }
-      const res = await ai.send(id, text, getLang(), model, reasoning, attached, ctrl.signal);
+      const res = await ai.send(id, text, getLang(), model, reasoning, attached, quoted, ctrl.signal);
       if (!res.ok) setNote(res.status || "network unavailable");
+      const gen = openThread();
       const thread = await ai.thread(id);
-      setMessages(thread.messages);
-      setProposals(thread.proposals);
+      adoptThread(gen, thread);
       const list = await ai.chats();
       setChats(list.chats);
     } catch (err) {
       if (ctrl.signal.aborted) return;
       if (!preset) setDraft(text);
       setLogId(attached);
+      if (quoted) setLuaQuote(quoted);
       setNote(err instanceof Error && err.message !== "Failed to fetch" ? err.message : "This turn stopped before a reply.");
       if (id) {
+        const gen = openThread();
         const thread = await ai.thread(id).catch(() => null);
-        if (thread) {
-          setMessages(thread.messages);
-          setProposals(thread.proposals);
-        }
+        if (thread) adoptThread(gen, thread);
       }
     } finally {
       sending.current = false;
       if (sendAbort.current === ctrl) sendAbort.current = null;
       if (!ctrl.signal.aborted) setBusy(false);
+      void refreshStatus();
     }
   }
 
@@ -561,9 +657,9 @@ export function Assistant({
     } finally {
       if (chatId) {
         try {
+          const gen = openThread();
           const thread = await ai.thread(chatId);
-          setMessages(thread.messages);
-          setProposals(thread.proposals);
+          adoptThread(gen, thread);
         } catch {
           /* the decision error stays on screen */
         }
@@ -581,8 +677,9 @@ export function Assistant({
     }
     if (chatId) {
       try {
+        const gen = openThread();
         const thread = await ai.thread(chatId);
-        setProposals(thread.proposals);
+        if (gen === threadGen.current) setProposals(thread.proposals);
       } catch {
         /* the decision error stays on screen */
       }
@@ -687,9 +784,9 @@ export function Assistant({
     } finally {
       if (chatId) {
         try {
+          const gen = openThread();
           const thread = await ai.thread(chatId);
-          setMessages(thread.messages);
-          setProposals(thread.proposals);
+          adoptThread(gen, thread);
         } catch {
           /* the decision error stays on screen */
         }
@@ -717,6 +814,7 @@ export function Assistant({
             model={model}
             models={models}
             bench={status?.bench || null}
+            quota={hostedQuota(status)}
             onPick={setChatId}
             onDraft={setDraft}
             onModel={setModel}
@@ -725,7 +823,7 @@ export function Assistant({
             onCancelWait={onCancelWait}
             onOpenWizard={(id, wizard) => setWizardAsk({ id, wizard })}
             wizardOpenId={wizardAsk?.id ?? ""}
-            onNew={() => { setChatId(""); setMessages([]); setProposals([]); }}
+            onNew={() => { threadGen.current += 1; setChatId(""); setMessages([]); setProposals([]); }}
             onBench={openBench}
             onStop={() => void ai.benchStop().then(() => refreshStatus())}
             query={query}
@@ -789,7 +887,7 @@ export function Assistant({
                 aria-label={t("New chat")}
                 title={t("New chat")}
                 onPointerDown={(ev) => ev.stopPropagation()}
-                onClick={() => { setChatId(""); setMessages([]); setProposals([]); }}
+                onClick={() => { threadGen.current += 1; setChatId(""); setMessages([]); setProposals([]); }}
               >
                 <NewChatIcon />
               </button>
@@ -834,6 +932,7 @@ export function Assistant({
               model={model}
               models={models}
               bench={status?.bench || null}
+              quota={hostedQuota(status)}
               compact
               onPick={setChatId}
               onDraft={setDraft}
@@ -843,7 +942,7 @@ export function Assistant({
               onCancelWait={onCancelWait}
               onOpenWizard={(id, wizard) => setWizardAsk({ id, wizard })}
               wizardOpenId={wizardAsk?.id ?? ""}
-              onNew={() => { setChatId(""); setMessages([]); setProposals([]); }}
+              onNew={() => { threadGen.current += 1; setChatId(""); setMessages([]); setProposals([]); }}
               onBench={openBench}
               onStop={() => void ai.benchStop().then(() => refreshStatus())}
               query={query}
@@ -927,7 +1026,7 @@ function logChoices(logs: LocalLog[], selected: string): LocalLog[] {
 }
 
 function ChatPane({
-  t, chats, chatId, messages, proposals, draft, busy, followUser, note, model, models, bench, compact,
+  t, chats, chatId, messages, proposals, draft, busy, followUser, note, model, models, bench, quota, compact,
   onPick, onDraft, onModel, onSend, onDecision, onCancelWait, onOpenWizard, wizardOpenId, onNew, onBench, onStop,
   query, onQuery, reasoning, onReasoning, provider, onRename, onCancel,
   logs, logId, onLog, onImported, onContinue, drone, live, flow,
@@ -944,6 +1043,7 @@ function ChatPane({
   model: string;
   models: string[];
   bench: { left_s: number } | null;
+  quota: { left: number; limit: number } | null;
   compact?: boolean;
   onPick: (id: string) => void;
   onDraft: (v: string) => void;
@@ -972,6 +1072,7 @@ function ChatPane({
   live: LiveTurn | null;
   flow?: Sample["log_download"];
 }) {
+  const scriptQuote = useSyncExternalStore(subscribeLuaQuote, getLuaQuote, getLuaQuote);
   const scroller = useRef<HTMLDivElement>(null);
   const stick = useRef(true);
   const pinning = useRef(false);
@@ -993,6 +1094,13 @@ function ChatPane({
   const [earlier, setEarlier] = useState(0);
   useEffect(() => { setEarlier(0); }, [chatId]);
   const shownThread = useMemo(() => tailTurns(thread, 6 + earlier), [thread, earlier]);
+  const replyBook = useRef<ReplyBook>({ seq: 0, pending: null, landed: new Map() });
+  const replyChat = useRef(chatId);
+  if (replyChat.current !== chatId) {
+    replyChat.current = chatId;
+    replyBook.current = { seq: 0, pending: null, landed: new Map() };
+  }
+  const held = holdReply(shownThread, live?.reply, replyBook.current);
   const hidden = thread.length - shownThread.length;
   const liveView = useMemo(() => latestLive(shownThread), [shownThread]);
   const [liveOpen, setLiveOpen] = useState(false);
@@ -1013,27 +1121,34 @@ function ChatPane({
   }, [live?.reply, live?.thought, liveOnTools, liveTools, shownThread]);
   const followBottom = useRef(true);
   const wasBusy = useRef(false);
+  const sawFollow = useRef(false);
+  const place = useRef<number | null>(null);
   useLayoutEffect(() => {
     const el = scroller.current;
     if (!el) return;
-    if (seenChat.current !== chatId) {
+    const switched = seenChat.current !== chatId;
+    if (switched) {
       seenChat.current = chatId;
       stick.current = true;
       followBottom.current = true;
+      place.current = null;
     }
+    if (followUser && !sawFollow.current) stick.current = true;
+    sawFollow.current = followUser;
     const ended = wasBusy.current && !busy;
     wasBusy.current = busy;
-    if (busy) {
-      followBottom.current = false;
-      if (followUser && stick.current) pinTurn(el, pinning);
-      return;
-    }
-    if (ended && followUser && stick.current) {
-      const top = turnTop(el);
-      const max = Math.max(0, el.scrollHeight - el.clientHeight);
-      pinning.current = true;
-      el.scrollTop = Math.min(top, max);
-      requestAnimationFrame(() => { pinning.current = false; });
+    if (busy) followBottom.current = false;
+    const holdTurn = !switched && followUser && stick.current && (busy || ended);
+    if (holdTurn) {
+      if (busy) pinTurn(el, pinning);
+      else {
+        const top = turnTop(el);
+        const max = Math.max(0, el.scrollHeight - el.clientHeight);
+        pinning.current = true;
+        el.scrollTop = Math.min(top, max);
+        requestAnimationFrame(() => { pinning.current = false; });
+      }
+      place.current = userOffset(el);
       return;
     }
     if (followBottom.current && stick.current) {
@@ -1041,8 +1156,18 @@ function ChatPane({
       pinning.current = true;
       el.scrollTop = el.scrollHeight;
       requestAnimationFrame(() => { pinning.current = false; });
+      place.current = userOffset(el);
+      return;
     }
-  }, [messages, proposals, busy, followUser, chatId, live?.thought, live?.tool, live?.reply]);
+    const saved = place.current;
+    const next = userOffset(el);
+    if (saved != null && next != null && Math.abs(next - saved) > 1) {
+      pinning.current = true;
+      el.scrollTop += next - saved;
+      requestAnimationFrame(() => { pinning.current = false; });
+    }
+    place.current = userOffset(el);
+  }, [messages, proposals, busy, followUser, chatId, live?.thought, live?.tool, live?.reply, earlier]);
   useEffect(() => {
     const el = box.current;
     if (!el) return;
@@ -1139,6 +1264,7 @@ function ChatPane({
           onScroll={(ev) => {
             if (pinning.current) return;
             const el = ev.currentTarget;
+            place.current = userOffset(el);
             if (busy) {
               stick.current = Math.abs(el.scrollTop - turnTop(el)) < 80;
               return;
@@ -1159,19 +1285,23 @@ function ChatPane({
               </div>
             ) : null}
             {hidden > 0 ? (
-              <button type="button" className="ai-earlier" onClick={() => setEarlier((count) => count + 6)}>
+              <button type="button" className="ai-earlier" onClick={() => { stick.current = false; setEarlier((count) => count + 6); }}>
                 {t("Show earlier")}
               </button>
             ) : null}
-            {shownThread.map((block, index) => block.kind === "tools" ? (
+            {held.map((block, index) => block.kind === "tools" ? (
               <ToolGroup key={block.key} t={t} items={block.items} workedMs={block.workedMs} note={block.note} flow={index === liveTools ? flow : undefined} thought={keptThoughts[block.key]} live={busy && liveOnTools && index === liveTools ? live : null} />
             ) : block.kind === "proposal" ? (
               <ProposalCard key={block.key} t={t} items={block.items} busy={busy} onDecision={onDecision} onCancelWait={onCancelWait} onOpenWizard={onOpenWizard} wizardOpenId={wizardOpenId} />
             ) : (
-              block.attach ? (
+              block.attach || block.quote ? (
                 <div key={block.key} className="ai-user-block">
-                  <article className={block.msg.role}>{block.msg.body}</article>
-                  <span className="ai-chip ai-chip-sent" title={block.attach}>{block.attach}</span>
+                  <article className={block.msg.role}>
+                    {block.msg.role === "steer" ? <span className="ai-steer-label">{t("Note for later")}</span> : null}
+                    {block.msg.body}
+                  </article>
+                  {block.attach ? <span className="ai-chip ai-chip-sent" title={block.attach}>{block.attach}</span> : null}
+                  {block.quote ? <span className="ai-chip ai-chip-line" title={block.quoteTitle}>{block.quote}</span> : null}
                 </div>
               ) : (
               <article key={block.key} className={block.msg.role}>
@@ -1182,16 +1312,11 @@ function ChatPane({
                     <button type="button" disabled={busy} onClick={() => onSend(t("The tools above already returned. Continue from those results and do not call them again."))}>{t("Continue")}</button>
                   </div>
                 ) : block.msg.role === "assistant" ? <AssistantMarkdown text={shownNotice(block.msg.body, t)} /> : block.msg.body}
-                {block.msg.role === "assistant" ? <ChartStrip charts={chartsUnder(shownThread, index)} /> : null}
-                {block.msg.role === "assistant" && liveView?.index === index ? <LiveView spec={liveView.spec} open={liveOpen} onOpen={() => setLiveOpen(true)} onClose={() => setLiveOpen(false)} /> : null}
+                {block.msg.role === "assistant" && block.msg.at !== -1 ? <ChartStrip charts={chartsUnder(held, index)} /> : null}
+                {block.msg.role === "assistant" && block.msg.at !== -1 && liveView?.index === index ? <LiveView spec={liveView.spec} open={liveOpen} onOpen={() => setLiveOpen(true)} onClose={() => setLiveOpen(false)} /> : null}
               </article>
               )
             ))}
-            {live?.reply && messages.at(-1)?.body !== live.reply ? (
-              <article className="assistant">
-                <AssistantMarkdown text={live.reply} />
-              </article>
-            ) : null}
             {busy && !live?.reply && !liveOnTools ? (
               <div className="ai-tools-live" role="status">
                 <p className="ai-tools ai-tools-status"><span className="ai-tools-names">{live?.tool ? liveTitle(live, flow) : t("Thinking…")}</span></p>
@@ -1199,6 +1324,7 @@ function ChatPane({
               </div>
             ) : null}
             {busy ? <div className="ai-run-pad" /> : null}
+            {quota ? <p className="ai-quota">{t("{left} of {limit} requests left today.", quota)}</p> : null}
           </div>
         </div>
         <div className="ai-dock">
@@ -1215,8 +1341,14 @@ function ChatPane({
                 {note === "paused_limit" ? <button type="button" onClick={onContinue}>{t("Continue")}</button> : null}
               </p>
             ) : null}
-            {logId || reasoning ? (
+            {scriptQuote || logId || reasoning ? (
               <div className="ai-chips">
+                {scriptQuote ? (
+                  <span className="ai-chip ai-chip-line" title={scriptQuote.selection}>
+                    <span>{quoteLabel(scriptQuote)}</span>
+                    <button type="button" aria-label={t("Remove")} onClick={() => setLuaQuote(null)}>×</button>
+                  </span>
+                ) : null}
                 {logId ? (
                   <span className="ai-chip">{logName(logId)}<button type="button" aria-label={t("Remove")} onClick={() => onLog("")}>×</button></span>
                 ) : null}
@@ -1376,9 +1508,23 @@ const AssistantMarkdown = memo(function AssistantMarkdown({ text }: { text: stri
 
 type ToolItem = { key: string; name: string; input?: string; output: string };
 type ThreadBlock =
-  | { kind: "msg"; key: string; msg: Msg; at: number; attach?: string }
+  | { kind: "msg"; key: string; msg: Msg; at: number; attach?: string; quote?: string; quoteTitle?: string }
   | { kind: "tools"; key: string; items: ToolItem[]; workedMs?: number; note?: string; at: number }
   | { kind: "proposal"; key: string; items: Proposal[]; at: number };
+
+function quoteChip(body: string): { label: string; title: string } {
+  try {
+    const value = JSON.parse(body) as { name?: string; start?: number; end?: number; selection?: string };
+    const name = value.name || "lua";
+    const start = value.start || 0;
+    const end = value.end || start;
+    const label = start && end && end !== start ? `${name} · ${start}–${end}` : start ? `${name} · ${start}` : name;
+    return { label, title: value.selection || label };
+  } catch {
+    const line = body.split("\n")[0]?.slice(0, 80) || "lua";
+    return { label: line, title: line };
+  }
+}
 
 function parseTool(body: string): { name: string; input?: string; output: string } {
   const trimmed = body.trim();
@@ -1465,6 +1611,14 @@ function groupMessages(messages: Msg[]): ThreadBlock[] {
       const prev = out.at(-1);
       if (prev?.kind === "msg" && prev.msg.role === "user" && !prev.attach) {
         out[out.length - 1] = { ...prev, attach: msg.body };
+      }
+      continue;
+    }
+    if (msg.role === "quote") {
+      const chip = quoteChip(msg.body);
+      const prev = out.at(-1);
+      if (prev?.kind === "msg" && (prev.msg.role === "user" || prev.msg.role === "steer") && !prev.quote) {
+        out[out.length - 1] = { ...prev, quote: chip.label, quoteTitle: chip.title };
       }
       continue;
     }
@@ -1687,6 +1841,100 @@ function idBit(value: unknown): string {
 function lastUser(el: HTMLElement): HTMLElement | null {
   const users = el.querySelectorAll("article.user");
   return users.length ? users[users.length - 1] as HTMLElement : null;
+}
+
+type ReplyBook = {
+  seq: number;
+  pending: { key: string; body: string } | null;
+  landed: Map<number, string>;
+};
+
+function holdReply(blocks: ThreadBlock[], reply: string | undefined, book: ReplyBook): ThreadBlock[] {
+  const text = reply?.trim() ?? "";
+  if (text && !exactReply(blocks, text)) {
+    if (!book.pending) {
+      book.seq += 1;
+      book.pending = { key: `stream-${book.seq}`, body: text };
+    } else {
+      book.pending.body = text;
+    }
+    const tail = trailingAssistant(blocks);
+    if (tail && sameReply(tail.msg.body, text)) {
+      book.landed.set(tail.msg.at, book.pending.key);
+      book.pending = null;
+    } else {
+      return stampReply(blocks, book).concat({
+        kind: "msg",
+        key: book.pending.key,
+        msg: { role: "assistant", body: reply ?? "", at: -1 },
+        at: -1,
+      });
+    }
+  } else if (book.pending && text) {
+    const tail = trailingAssistant(blocks);
+    if (tail) book.landed.set(tail.msg.at, book.pending.key);
+    book.pending = null;
+  } else if (book.pending) {
+    const tail = trailingAssistant(blocks);
+    if (tail && sameReply(tail.msg.body, book.pending.body)) book.landed.set(tail.msg.at, book.pending.key);
+    book.pending = null;
+  }
+  return stampReply(blocks, book);
+}
+
+function stampReply(blocks: ThreadBlock[], book: ReplyBook): ThreadBlock[] {
+  if (!book.landed.size) return blocks;
+  return blocks.map((block) => {
+    if (block.kind !== "msg") return block;
+    const key = book.landed.get(block.msg.at);
+    return key ? { ...block, key } : block;
+  });
+}
+
+function exactReply(blocks: ThreadBlock[], reply: string): boolean {
+  const text = reply.trim();
+  for (let i = blocks.length - 1; i >= 0; i--) {
+    const block = blocks[i];
+    if (block.kind !== "msg") continue;
+    if (block.msg.role === "user") return false;
+    if (block.msg.role === "assistant" && block.msg.body.trim() === text) return true;
+  }
+  return false;
+}
+
+function trailingAssistant(blocks: ThreadBlock[]): Extract<ThreadBlock, { kind: "msg" }> | null {
+  for (let i = blocks.length - 1; i >= 0; i--) {
+    const block = blocks[i];
+    if (block.kind === "proposal") continue;
+    if (block.kind === "tools") return null;
+    if (block.msg.role === "user") return null;
+    if (block.msg.role === "assistant" && block.msg.at !== -1) return block;
+  }
+  return null;
+}
+
+function sameReply(saved: string, live: string): boolean {
+  const body = saved.trim();
+  const text = live.trim();
+  if (!body || !text) return false;
+  return body === text || (text.length >= 80 && body.startsWith(text));
+}
+
+function replyLanded(messages: Msg[], reply: string): boolean {
+  const text = reply.trim();
+  if (!text) return true;
+  for (let i = messages.length - 1; i >= 0; i--) {
+    const msg = messages[i];
+    if (msg.role === "user") return false;
+    if (msg.role === "assistant" && msg.body.trim() === text) return true;
+  }
+  return false;
+}
+
+function userOffset(el: HTMLElement): number | null {
+  const user = lastUser(el);
+  if (!user) return null;
+  return user.getBoundingClientRect().top - el.getBoundingClientRect().top;
 }
 
 function turnTop(el: HTMLElement): number {

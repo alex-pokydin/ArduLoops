@@ -163,6 +163,25 @@ fn wizard_widget(args: &Value, sample: &Sample, c: &Connection, chat: &str) -> V
     )
 }
 
+fn script_change_tool(name: &str, args: &Value, _c: &Connection, chat: &str) -> Value {
+    let op = match name {
+        "script_write" => "write",
+        "script_delete" => "delete",
+        "script_restart" => "restart",
+        _ => return json!({ "ok": false, "error": "Unknown script action" }),
+    };
+    match propose_script(
+        chat,
+        op,
+        args["name"].as_str().unwrap_or(""),
+        args["body"].as_str().unwrap_or(""),
+        args["reason"].as_str().unwrap_or(""),
+    ) {
+        Ok(value) => value,
+        Err(error) => json!({ "ok": false, "error": error }),
+    }
+}
+
 fn set_param_tool(args: &Value, sample: &Sample, c: &Connection, chat: &str) -> Value {
     let changes = match param_changes(args, true) {
         Ok(changes) => changes,
@@ -473,7 +492,8 @@ fn source_read(frame: &str, args: &Value) -> Value {
 fn runs_in_parallel(name: &str, args: &Value) -> bool {
     match name {
         "set_param" | "set_mode" | "arm" | "disarm" | "reboot" | "erase_vehicle_logs" | "connect"
-        | "disconnect" | "vehicle_comment" | "download_vehicle_log" | "show_live" => false,
+        | "disconnect" | "vehicle_comment" | "download_vehicle_log" | "show_live"
+        | "script_list" | "script_read" | "script_write" | "script_delete" | "script_restart" => false,
         "firmware_build" => !matches!(args["action"].as_str(), Some("submit") | Some("status") | Some("logs") | Some("download")),
         "firmware_flash" => !matches!(args["action"].as_str(), Some("start_bootloader") | Some("prepare")),
         _ => true,

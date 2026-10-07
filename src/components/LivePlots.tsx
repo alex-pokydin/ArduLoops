@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent } from "react";
 import { createPortal } from "react-dom";
 import { useT } from "../i18n/i18n";
-import { customCatalog, customPane, resolveLine, type CatalogTrace, type Pane } from "../lib/traces";
+import { customCatalog, customPane, liveFieldSig, resolveLine, type CatalogTrace, type Pane } from "../lib/traces";
 import { getLatest } from "../mav/store";
 import { useStorePicked } from "../mav/view";
 import { PlotStack } from "./TracePanes";
@@ -128,7 +128,11 @@ export function LiveWindow({ spec, onClose }: { spec: LiveSpec; onClose: () => v
   const placed = useRef<{ left: string; top: string; width: string; height: string } | null>(null);
   const [full, setFull] = useState(false);
   const paramN = useStorePicked((s) => Object.keys(s.params).length);
-  const panes = useMemo(() => panesFor(spec, customCatalog(getLatest().params || {})), [spec, paramN]);
+  const liveSig = useStorePicked((s) => liveFieldSig(s.live_nums));
+  const panes = useMemo(
+    () => panesFor(spec, customCatalog(getLatest().params || {}, getLatest().live_nums)),
+    [spec, paramN, liveSig],
+  );
 
   function placeFull(on: boolean) {
     const node = frame.current;

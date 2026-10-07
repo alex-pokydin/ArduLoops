@@ -3,6 +3,7 @@ import {
   CUSTOM_ID,
   customCatalog,
   customPane,
+  liveFieldSig,
   panesForIds,
   resolveLine,
   type CatalogTrace,
@@ -64,9 +65,13 @@ export function Scope({
   const frame = vehicle === "plane" ? "plane" : "copter";
   const modeKey = usePicked((s) => (s.ok ? watchModeKey(frame, s) : ""));
   const paramN = usePicked((s) => Object.keys(s.params || {}).length);
+  const liveSig = usePicked((s) => liveFieldSig(s.live_nums));
   const blocks = useMemo(() => liveNodes(frame, getLatest()), [frame, modeKey]);
   const near = useMemo(() => neighborIds(frame, sel, getLatest()), [frame, sel, modeKey]);
-  const catalog = useMemo(() => customCatalog(getLatest().params || {}), [paramN]);
+  const catalog = useMemo(
+    () => customCatalog(getLatest().params || {}, getLatest().live_nums),
+    [paramN, liveSig],
+  );
   const [watch, setWatch] = useState<string[]>(() => defaultWatch(frame, sel, getLatest()));
   const [lines, setLines] = useState<string[]>(() => loadLines(frame));
   const customOn = watch.includes(CUSTOM_ID);

@@ -33,6 +33,12 @@ fn absorb_message(nums: &mut HashMap<String, f64>, msg: &MavMessage) {
     if message.starts_with("PARAM_") || message.starts_with("LOG_") || message == "FILE_TRANSFER_PROTOCOL" {
         return;
     }
+    if message == "NAMED_VALUE_FLOAT" || message == "NAMED_VALUE_INT" {
+        if let Some((name, n)) = named_script_value(obj) {
+            nums.insert(format!("{message}.{name}"), n);
+        }
+        return;
+    }
     let axis = obj.get("axis").and_then(|v| v.as_str()).and_then(|s| s.rsplit('_').next());
     for (key, item) in obj {
         if key == "type" || key == "axis" {
@@ -67,7 +73,59 @@ pub fn live_meta(raw: &str) -> Option<(String, String, String)> {
     if !live_name(raw) {
         return None;
     }
-    Some((raw.to_string(), raw.to_string(), String::new()))
+    let label = named_label(raw).unwrap_or_else(|| raw.to_string());
+    Some((raw.to_string(), label, String::new()))
+}
+
+fn named_script_value(obj: &serde_json::Map<String, serde_json::Value>) -> Option<(String, f64)> {
+    let n = obj.get("value")?.as_f64()?;
+    if !n.is_finite() {
+        return None;
+    }
+    let name = script_name(obj.get("name")?)?;
+    Some((name, n))
+}
+
+fn script_name(item: &serde_json::Value) -> Option<String> {
+    let raw = if let Some(text) = item.as_str() {
+        text.as_bytes().to_vec()
+    } else {
+        let rows = item.as_array()?;
+        rows.iter().filter_map(|v| v.as_u64().and_then(|n| u8::try_from(n).ok())).collect()
+    };
+    let end = raw.iter().position(|b| *b == 0).unwrap_or(raw.len());
+    let bytes = &raw[..end];
+    if bytes.is_empty() || bytes.len() > 10 {
+        return None;
+    }
+    if !bytes.iter().all(|b| b.is_ascii_alphanumeric() || *b == b'_') {
+        return None;
+    }
+    String::from_utf8(bytes.to_vec()).ok()
+}
+
+fn field_entry(id: &str, unit: &str) -> serde_json::Value {
+    let mut row = serde_json::Map::new();
+    if let Some(label) = named_label(id) {
+        if label != id {
+            row.insert("l".into(), serde_json::Value::String(label));
+        }
+    }
+    if !unit.is_empty() {
+        row.insert("u".into(), serde_json::Value::String(unit.to_string()));
+    }
+    serde_json::Value::Object(row)
+}
+
+fn named_label(raw: &str) -> Option<String> {
+    let (msg, name) = raw.split_once('.')?;
+    if msg != "NAMED_VALUE_FLOAT" && msg != "NAMED_VALUE_INT" {
+        return None;
+    }
+    if name.is_empty() || name.contains('.') {
+        return None;
+    }
+    Some(name.to_string())
 }
 
 pub fn live_catalog() -> serde_json::Value {
@@ -188,19 +246,14 @@ impl LiveBuf {
                 ids.extend(point.v.keys().cloned());
             }
         }
-        let fields: Vec<serde_json::Value> = ids.into_iter().map(|id| {
-            let label = id.clone();
-            serde_json::json!({
-                "id": id,
-                "label": label,
-                "unit": "",
-                "present": true,
-            })
-        }).collect();
+        let mut fields = serde_json::Map::new();
+        for id in ids {
+            fields.insert(id.clone(), field_entry(&id, ""));
+        }
         serde_json::json!({
             "ok": true,
             "fields": fields,
-            "note": "id is the MAVLink field, MESSAGE.field. An empty unit is unknown. It was not in the message. A field that has not arrived is not listed.",
+            "note": "The key is the id, MESSAGE.field. l is a shorter label and is omitted when it matches the id. u is the unit and is omitted when empty. An empty unit is unknown. It was not in the message. A field that has not arrived is not listed.",
         })
     }
 }

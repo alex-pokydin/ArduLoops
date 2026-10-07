@@ -1,5 +1,5 @@
 // Desired/actual tracking, step fit, and frequency response.
-// The track `note` is the field-by-field reading. One fact per line.
+// The track `note` is the field-by-field reading. One fact per line. A child is indented under its parent.
 
 macro_rules! note {
     ($($line:literal),+ $(,)?) => {
@@ -154,6 +154,7 @@ fn track_rows(rows: &[TrackRow], heading: bool) -> Value {
         "step": step_of(rows),
         "hold_count": hold_count,
         "holds": holds,
+        "sides": sides_of(rows, heading, max_abs),
         "error_p95": round_meas(percentile_abs(rows, heading, 0.95)),
         "corr": shape.0,
         "spread": shape.1,
@@ -174,128 +175,74 @@ fn track_rows(rows: &[TrackRow], heading: bool) -> Value {
         "output_abs_p95": output_span(rows).1,
         "output_at_peak": output_span(rows).2,
         "note": note!(
-            "Every number here is the interval that was passed.",
-            "None of these numbers names a parameter.",
-            "`sample_hz` is the median rate of these rows.",
-            "Motion faster than that spacing is not resolved here.",
-            "Time outside those bounds is not in the number.",
-            "Another job with different bounds is a separate result.",
-            "An interval that contains more than one mode stretch does not describe one of those stretches.",
-            "`error` is actual minus desired on the same row.",
-            "`desired` is the command recorded in this message.",
-            "It is not the controller that formed that command.",
-            "`actual_unit` and `desired_unit`, when present, are the units this log recorded for those columns.",
-            "A null unit means the log named no unit.",
-            "A unit that was not recorded is unknown.",
-            "On Roll, Pitch, and Yaw that difference is the short arc: `circular` is true, and `wrapped_samples` is how many rows crossed 0°.",
-            "A step across 0° is a small error.",
-            "Rate columns stay linear.",
-            "`error_rms` covers every sample in the interval.",
-            "If desired moved during the interval, that error is how actual followed the moving command.",
-            "It is not the error of a hold.",
-            "A small `error_rms` does not say the loop is tuned.",
-            "`error_p95` is the absolute error that 95 percent of the samples are at or below.",
-            "It is not a limit.",
-            "`corr` is the correlation of desired and actual.",
-            "It does not include the amplitude ratio, the lag, or the size of the error.",
-            "A high `corr` does not say the command was large or fast, and it does not say the motion was well damped.",
-            "A `corr` below 1 does not say the loop is poorly tuned.",
-            "When desired barely moves, `corr` is not a comparison with another loop.",
-            "`error_rms` is that reading.",
-            "A modest `corr` beside a small `error_rms` is a hold.",
-            "Actual contains motion that desired does not.",
-            "A `corr` near zero or below zero means the two columns do not share one shape.",
-            "A noisy actual beside a smoother desired can produce that.",
-            "It does not say this loop is the weakest, and it does not say an outer loop on the same stretch failed.",
-            "That outer loop is its own track.",
-            "A high `corr` can sit beside a `spread` above 1.",
-            "`spread` is the standard deviation of actual divided by the standard deviation of desired.",
-            "The sentence reports that ratio.",
-            "It is not a percent.",
-            "Above 1 means actual varied more than desired.",
-            "Below 1 means actual varied less than desired.",
-            "That difference of variation is not a frequency, not an overshoot, not damping, and not a gain.",
-            "It is not `past_command`.",
-            "It does not say why actual varied more, and it does not name a parameter.",
-            "The overshoot of one command that then held is `step`, and only when `step` is present.",
-            "Below 1 is not the absence of an overshoot.",
-            "On a heading that crossed 0°, `corr` and `spread` are null, because those columns are not a straight line.",
-            "`lag_s` is a whole number of samples times the median sample interval.",
-            "Positive means actual is taken from a later row, and negative from an earlier row.",
-            "The sentence is that the columns line up at this shift.",
-            "It is not the delay of the controller, not a phase delay, not `delay_s`, and not `group_delay_s` from an frf of the same pair.",
-            "That alignment is not the aircraft leading the command.",
-            "One sample of `sample_hz` is the resolution of that shift.",
-            "Zero, and a value within one sample including a small negative value, is that resolution.",
-            "It does not say the delay is zero.",
-            "A null `lag_s` means the command barely moves or the heading crossed 0°.",
-            "`output_abs_max` and `output_abs_p95` are the absolute output column beside the actual column, such as ROut beside R.",
-            "`output_at_peak` is the share of samples sitting at that maximum.",
-            "That maximum is the peak inside this interval, not a limit stored elsewhere.",
-            "A large excess beside a small `output_abs_max` means actual ran past the command while that output column stayed small.",
-            "A null output means the message has no such column.",
-            "`max_abs_desired` is the largest absolute desired in this interval only; the error here does not describe a larger command.",
-            "`active_error_rms` and `active_count` use only samples whose absolute desired is at least a quarter of that largest value.",
-            "`opposite_sign` means actual and desired were both nonzero and had different signs on that row.",
-            "`past_command` is the row where actual ran furthest past desired while both had the same sign and desired was still at least half of its largest absolute value.",
-            "A null `past_command` means no such row; it is not an excess of zero.",
-            "The excess on that row is how far actual ran past desired on that one row.",
-            "The row does not include the command on the samples before it.",
-            "Actual can still be past a command that has already fallen.",
-            "`past_command` and `peak_error` are not a step overshoot.",
-            "`peak_error` is the largest absolute error on one row.",
-            "A step overshoot is the first peak of actual after one command that then held.",
-            "A null `step` means this interval did not identify that.",
-            "`spread` and `peak_error` do not stand in for it.",
+            "Every number here is this interval only. None of them names a parameter.",
+            "An interval with more than one mode stretch does not describe one of those stretches.",
+            "`sample_hz` is the median rate of these rows. Faster motion is not resolved.",
+            "`actual` and `desired` are the columns. `desired` is the command recorded here, not the controller that formed it.",
+            "`actual_unit` and `desired_unit` are the units the log recorded. Null means the log named no unit.",
+            "`error` = `actual` - `desired` on the same row.",
+            "  On Roll, Pitch, and Yaw the error is the short arc. `circular` is true, and `wrapped_samples` is how many rows crossed 0°. A step across 0° is a small error. Rate columns stay linear.",
+            "`error_rms` = rms(`error`) over every sample. A moving command makes this the following error, not the error of a hold. A small value does not say the loop is tuned.",
+            "`error_p95` = percentile_95(|`error`|). It is not a limit.",
+            "`max_abs_desired` is the largest absolute command here.",
+            "`active_count` counts samples with |`desired`| >= 0.25 * `max_abs_desired`. `active_error_rms` = rms(`error`) on those samples.",
+            "`corr` is whether desired and actual share a shape. It leaves out amplitude, lag, and the size of the error.",
+            "  A modest `corr` beside a small `error_rms` is a hold.",
+            "  Actual contains motion that desired does not.",
+            "  Near zero or below, the columns do not share one shape. Noise can do that. It does not say this loop is the weakest. The outer loop is its own track.",
+            "  When desired barely moves, `corr` is not a comparison with another loop. On a heading that crossed 0°, `corr` and `spread` are null.",
+            "`spread` = std(`actual`) / std(`desired`).",
+            "  It is not a percent.",
+            "  Above 1 means actual varied more than desired. Below 1 means less.",
+            "  That difference of variation is not a frequency, not an overshoot, not damping, and not a gain.",
+            "  It does not say why actual varied more, and it does not name a parameter.",
+            "`lag_s` is the whole-sample shift of `sample_hz` that lines the columns up. Positive takes actual from a later row.",
+            "  The sentence is that the columns line up at this shift.",
+            "  It is not the delay of the controller, and it is not `group_delay_s`.",
+            "  Within one sample of zero is the resolution of that shift. It does not say the delay is zero.",
+            "  Null means the command barely moves or the heading crossed 0°.",
+            "`peak_error` is the row with the largest absolute error.",
+            "  `error` is actual minus desired on that row.",
+            "  `opposite_sign` means both were nonzero and had different signs.",
+            "`past_command` is the one row where actual ran furthest past desired, same sign, while desired was still at least half its largest absolute value.",
+            "  `excess` = |`actual`| - |`desired`| on that row.",
+            "  Null means no such row. It is not an excess of zero.",
+            "  Actual can still be past a command that has already fallen.",
             "`release` is the largest actual left in the half-second after desired fell below a quarter of its own peak.",
-            "`delay_s` is the time from the rise of that command until actual first reached half of it with the same sign.",
-            "It is that command only. It does not describe a different command.",
-            "Null with `already_at_half` true means actual was already past half when that rise started, so there is no measured latency.",
-            "Null with `already_at_half` false means actual did not reach half within a second.",
-            "`crossings` is how many times the error changed sign in the half-second after the command fell.",
-            "`error_span` is the largest error minus the smallest error in that same half-second.",
-            "`actual_from` and `actual_to` are the actual value at the start and end of that half-second, one change.",
-            "A large crossing count with a small `error_span` is the error changing sign.",
-            "`step` is a second-order fit on a command that held.",
-            "A null `step` means the command did not hold, the residual was large beside that command, or the best frequency sat on the edge of the search.",
-            "A frequency on that edge is not an identified natural frequency.",
-            "`zeta` and `wn_hz` describe the held command in this interval, and `fit_rms` is the residual in the same units as actual.",
-            "They do not describe a larger command that was not the one fitted.",
-            "`hold_count` is how many times the command changed to a new level and then stayed there.",
-            "`holds` lists those changes in time order, at most ten.",
-            "When `hold_count` is larger than ten, the ten that were steady before the change and held longest after it are the ones listed.",
-            "The entries are not an average.",
-            "A stay shorter than three samples, or shorter than 0.15 s, is not an entry.",
-            "`overshoot` is how far actual went past that new level while it held.",
-            "Zero means actual did not go past the new level.",
-            "`reached` is whether actual got to that new level during the hold.",
-            "`zeta`, `wn_hz`, and `fit_rms` on an entry are present only when the level before the change was steady for at least 0.15 s and the fit identified that hold.",
-            "A null `zeta` on an entry means that hold was not identified as a second-order step.",
-            "An empty `holds` and a `hold_count` of zero mean no command changed and then held in this interval.",
-            "`p`, `i`, `d`, and `ff` are the PID terms on the same row, and only when that message has Tar and Act.",
-            "`p_rms`, `i_rms`, `d_rms`, and `ff_rms` are the root mean square of those columns across this interval.",
-            "A null term or share means that column is absent, so this result has no measurement of that term.",
-            "A value of zero means the column was present and zero in this interval.",
-            "It does not say the controller is missing that term.",
-            "Comparing `p_rms`, `i_rms`, `d_rms`, and `ff_rms` says which term was larger here.",
-            "`p_share`, `i_share`, `d_share`, and `ff_share` are that term's square divided by the sum of the squares of the terms present here.",
-            "The shares that are present add to 1.",
-            "A share is not a cause.",
-            "A large `d_share` is the D column following faster changes, including noise.",
-            "It is not evidence that D is high, and it is not a reason to change D.",
-            "`error_peak_hz` is the loudest frequency of actual minus desired in this interval, after the mean is removed.",
-            "`error_peak_share` is that one bin's fraction of the error spectrum.",
-            "A small `error_peak_share` means the error is spread across frequencies, not one tone.",
-            "A null `error_peak_hz` means fewer than 16 samples or more than 8192, so no spectrum was taken.",
-            "That peak is a frequency of this error.",
-            "It is not a motor harmonic.",
-            "A larger `d_rms`, `i_rms`, or `ff_rms` does not say the loop depends on that term, and it does not say that gain is too high.",
-            "Noise, a sustained offset, or a moving command can raise a term.",
-            "A small `i_rms` on a short interval does not say I is missing.",
-            "`dmod_min` below 1 means the D term was reduced on at least one sample.",
-            "A minimum of 1 means it was not reduced in this interval.",
-            "A column named P on a rate row is not the P term.",
-            "The separate maximum of each column is not these rows.",
+            "  `command` is that peak. `delay_s` is the time from its rise until actual first reached half of it, same sign. It is that command only.",
+            "  Null with `already_at_half` true means actual was already past half. False means it did not reach half within a second.",
+            "  `crossings` counts sign changes of the error in that half-second. `error_span` is the largest error minus the smallest. `actual_from` and `actual_to` are actual at the start and end.",
+            "`output_abs_max` and `output_abs_p95` are the absolute output beside actual, such as ROut beside R. `output_at_peak` is the share of samples at that maximum.",
+            "  The maximum is inside this interval, not a stored limit. Null means no such column.",
+            "`step` is the fit of one command that held. `zeta`, `wn_hz`, and `fit_rms` are that fit. `fit_rms` is the residual.",
+            "  Null means the command did not hold, the residual was large, or the frequency sat on the edge of the search. An edge frequency is not identified.",
+            "`hold_count` is how many times the command changed and then stayed.",
+            "`holds` lists those changes, at most ten, in time order. Further ones keep those that were steady before and held longest. The entries are not an average.",
+            "  Shorter than three samples, or shorter than 0.15 s, is not an entry. An empty list and a count of zero mean no such command.",
+            "  `from` is the level before. `command` is the new level. `hold_s` is how long it stayed.",
+            "  `overshoot` = max(0, sign(`command` - `from`) * (`actual` - `command`)). `reached` is true once actual has covered 0.9 of the step.",
+            "  `zeta`, `wn_hz`, and `fit_rms` appear only when the level before was steady for 0.15 s and the fit identified the hold.",
+            "`sides` uses the samples in `active_count` where `actual` and `desired` have the same sign.",
+            "  `beyond` = |`actual`| - |`desired`|, where that is positive.",
+            "  `short` = |`desired`| - |`actual`|, where actual is closer. `actual` = 0 gives |`desired`|.",
+            "  Opposite signs and an exact match are on neither side, so the shares can sum to less than 1.",
+            "  A null `sides` means the command never reached a quarter of its largest value, or the columns are a heading.",
+            "  Each side has `count`, `share`, `mean`, and `p95`.",
+            "    `count` is how many samples landed there.",
+            "    `share` = `count` / `active_count`.",
+            "    `mean` = sum(gaps) / `count`, in the column units.",
+            "    `p95` = percentile_95(gaps).",
+            "    No samples on a side leaves `mean` and `p95` null.",
+            "`p_rms`, `i_rms`, `d_rms`, and `ff_rms` are the PID terms when the message has Tar and Act.",
+            "  Null means that column is absent. Zero means the column was present and zero. A small `i_rms` on a short interval does not say I is missing.",
+            "  `p_share` = `p_rms`^2 / (`p_rms`^2 + `i_rms`^2 + `d_rms`^2 + `ff_rms`^2), and the same for `i_share`, `d_share`, and `ff_share`, using the terms present. The shares add to 1. A share is not a cause.",
+            "  A large `d_share` is the D column following faster changes, including noise.",
+            "  It is not evidence that D is high, and it is not a reason to change D.",
+            "  A column named P on a rate row is not the P term. The separate maximum of each column is not these rows.",
+            "`dmod_min` below 1 means D was reduced on at least one sample. 1 means it was not.",
+            "`error_peak_hz` is the loudest frequency of the error after the mean is removed.",
+            "  `error_peak_share` is that bin's fraction of the spectrum. Near 1 is one tone. A small share is spread across frequencies.",
+            "  Null means fewer than 16 samples or more than 8192. It is not a motor harmonic.",
         ),
     });
     out
@@ -727,6 +674,59 @@ fn hold_list(rows: &[TrackRow], heading: bool) -> (usize, Value) {
         })
     }).collect();
     (count, json!(holds))
+}
+
+fn sides_of(rows: &[TrackRow], heading: bool, max_abs: f64) -> Value {
+    if heading || max_abs < 1e-9 {
+        return Value::Null;
+    }
+    let floor = 0.25 * max_abs;
+    let mut beyond = Vec::new();
+    let mut short = Vec::new();
+    let mut active = 0usize;
+    for row in rows {
+        if row.desired.abs() < floor {
+            continue;
+        }
+        active += 1;
+        let gap = row.actual.abs() - row.desired.abs();
+        if row.actual != 0.0 && row.desired.signum() != row.actual.signum() {
+            continue;
+        }
+        if gap > 0.0 {
+            beyond.push(gap);
+        } else if gap < 0.0 {
+            short.push(-gap);
+        }
+    }
+    if active == 0 {
+        return Value::Null;
+    }
+    json!({
+        "active_count": active,
+        "beyond": side_stats(&beyond, active),
+        "short": side_stats(&short, active),
+    })
+}
+
+fn side_stats(values: &[f64], active: usize) -> Value {
+    if values.is_empty() {
+        return json!({ "count": 0, "share": 0.0, "mean": Value::Null, "p95": Value::Null });
+    }
+    let mean = values.iter().sum::<f64>() / values.len() as f64;
+    json!({
+        "count": values.len(),
+        "share": round_meas(values.len() as f64 / active as f64),
+        "mean": round_meas(mean),
+        "p95": round_meas(percentile(values, 0.95)),
+    })
+}
+
+fn percentile(values: &[f64], p: f64) -> f64 {
+    let mut sorted = values.to_vec();
+    sorted.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
+    let rank = ((p * sorted.len() as f64).ceil() as usize).saturating_sub(1).min(sorted.len() - 1);
+    sorted[rank]
 }
 
 fn hold_events(rows: &[TrackRow], heading: bool) -> Vec<HoldEvent> {

@@ -1,3 +1,4 @@
+import type { LuaQuote } from "../luaQuote";
 import { APP_HTTP } from "../mav/link";
 
 export type AiAccount = {
@@ -59,10 +60,10 @@ export const ai = {
     json("/ai/chats/rename", { method: "POST", body: JSON.stringify({ id, title }) }),
   thread: (chat: string) => json<{ messages: Msg[]; proposals: Proposal[] }>(`/ai/messages?chat=${encodeURIComponent(chat)}`),
   live: (chat: string) => json<LiveTurn>(`/ai/live?chat=${encodeURIComponent(chat)}`),
-  send: (chat: string, text: string, lang: string, model: string, reasoning: string, log = "", signal?: AbortSignal) =>
+  send: (chat: string, text: string, lang: string, model: string, reasoning: string, log = "", script: LuaQuote | null = null, signal?: AbortSignal) =>
     json<{ ok: boolean; status?: string; message?: string; proposal?: Proposal | null }>("/ai/send", {
       method: "POST",
-      body: JSON.stringify({ chat, text, lang, model, reasoning, log }),
+      body: JSON.stringify({ chat, text, lang, model, reasoning, log, ...(script ? { script } : {}) }),
       signal,
     }),
   stop: () => json("/ai/stop", { method: "POST", body: "{}" }),
@@ -96,6 +97,7 @@ export const ai = {
       body: JSON.stringify({ provider, api_key, op }),
     }),
   loginUrl: () => json<{ url: string }>("/ai/login", { method: "POST", body: "{}" }),
+  cabinet: () => json<{ url: string }>("/ai/cabinet", { method: "POST", body: "{}" }),
   logout: () => json<AiStatus>("/ai/logout", { method: "POST", body: "{}" }),
   checkout: (plan: "start" | "plus") => json<{ url: string }>("/ai/checkout", { method: "POST", body: JSON.stringify({ plan }) }),
   portal: () => json<{ url: string }>("/ai/portal", { method: "POST", body: "{}" }),

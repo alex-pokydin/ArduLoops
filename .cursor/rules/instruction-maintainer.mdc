@@ -25,6 +25,10 @@ Skills state what is true. A tool description says what the tool is for, which d
 
 A spectrum skill can say that one peak is an average over the file and does not show whether a frequency moves. It does not say which notch parameter to leave alone.
 
+`skills/ROOT.md` is embedded whole on every turn. Do not move a constraint into a file that turn might not read.
+
+Write the source the way it should be read. A claim and the limit that belongs to it are one paragraph: a few sentences, one source line. Parallel claims are a list, one item each, and the limit stays on that item. A line break without a blank line or a list marker is neither a paragraph nor an item. Do not use it to structure the file.
+
 # Role
 
 You are an instruction-system maintainer.
@@ -638,7 +642,7 @@ Section names should tell the reader what kind of contract lives there.
 
 Avoid paragraphs that contain several independent rules joined by `and`, `unless`, `except`, and `but`.
 
-Prefer:
+Prefer separate paragraphs, each one source line:
 
 ```text
 If the link is down, do not send a vehicle-changing command.
@@ -648,7 +652,7 @@ Reconnect using a URL already returned in the conversation.
 Ask the user for a URL only when no returned URL is available.
 ```
 
-over one dense paragraph encoding all three behaviors.
+over one dense paragraph encoding all three behaviors. A line break inside a paragraph does not make a new rule.
 
 ---
 
@@ -695,8 +699,7 @@ A compact contrast is often clearer than a long explanation.
 Example:
 
 ```text
-Sensor quality says whether the sensor measurement is usable.
-It does not measure controller tracking.
+Sensor quality says whether the sensor measurement is usable. It does not measure controller tracking.
 ```
 
 Or:

@@ -2,6 +2,34 @@
 
 
 #[cfg(test)]
+mod script_names {
+    use super::{parse_dir_entries, script_file_name};
+
+    #[test]
+    fn a_script_name_is_one_lua_file() {
+        assert!(script_file_name("hello.lua").is_ok());
+        assert!(script_file_name("Hello_1.lua").is_ok());
+        assert!(script_file_name("../hello.lua").is_err());
+        assert!(script_file_name("scripts/hello.lua").is_err());
+        assert!(script_file_name("hello.txt").is_err());
+        assert!(script_file_name(".lua").is_err());
+    }
+
+    #[test]
+    fn a_directory_page_keeps_files() {
+        let raw = b"Fhello.lua\t12\0Dmodules\0Fskip\0";
+        let rows = parse_dir_entries(raw);
+        assert_eq!(rows.len(), 3);
+        assert_eq!(rows[0].kind, 'F');
+        assert_eq!(rows[0].name, "hello.lua");
+        assert_eq!(rows[0].bytes, 12);
+        assert_eq!(rows[1].kind, 'D');
+        assert_eq!(rows[1].name, "modules");
+    }
+}
+
+
+#[cfg(test)]
 mod normalize_tests {
     use super::normalize_link;
 
@@ -75,7 +103,7 @@ mod diagnostics_tests {
 
 #[cfg(test)]
 mod live_buffer_tests {
-    use super::{handle_msg, wall_time, with_live_cleared, LinkState, Sample};
+    use super::{handle_msg, live_meta, wall_time, with_live_cleared, LinkState, Sample};
     use mavlink::ardupilotmega::{ATTITUDE_DATA, DISTANCE_SENSOR_DATA, OPTICAL_FLOW_DATA, RANGEFINDER_DATA, MavMessage};
     use mavlink::MavHeader;
 
@@ -174,16 +202,79 @@ mod live_buffer_tests {
         let value = with_live_cleared(|buf| {
             let mut sample = Sample::empty();
             sample.live_nums.insert("DISTANCE_SENSOR.current_distance".into(), 1.5);
+            sample.live_nums.insert("NAMED_VALUE_FLOAT.TUT_TICK".into(), 3.5);
             buf.push_at(&sample, now);
             buf.catalog()
         });
-        let fields = value["fields"].as_array().unwrap();
-        let rng = fields.iter().find(|row| row["id"] == "DISTANCE_SENSOR.current_distance").unwrap();
-        assert!(fields.iter().all(|row| row["id"] != "OPTICAL_FLOW.quality"));
-        assert_eq!(rng["present"], true);
-        assert_eq!(rng["label"], "DISTANCE_SENSOR.current_distance");
-        assert_eq!(rng["unit"], "");
+        let fields = value["fields"].as_object().unwrap();
+        let rng = fields.get("DISTANCE_SENSOR.current_distance").unwrap();
+        assert!(fields.get("OPTICAL_FLOW.quality").is_none());
+        assert_eq!(rng, &serde_json::json!({}));
+        assert_eq!(fields["NAMED_VALUE_FLOAT.TUT_TICK"]["l"], "TUT_TICK");
+        assert!(rng.get("l").is_none());
+        assert!(rng.get("u").is_none());
+        assert!(rng.get("p").is_none());
         assert!(value["note"].as_str().unwrap().contains("An empty unit is unknown."));
+    }
+
+    #[test]
+    fn a_named_float_keeps_the_script_name() {
+        let mut st = LinkState::new();
+        let hdr = MavHeader { system_id: 1, component_id: 1, sequence: 0 };
+        handle_msg(
+            &mut st,
+            &hdr,
+            MavMessage::NAMED_VALUE_FLOAT(mavlink::ardupilotmega::NAMED_VALUE_FLOAT_DATA {
+                time_boot_ms: 10,
+                value: 3.5,
+                name: name10("TUT_TICK"),
+            }),
+        );
+        handle_msg(
+            &mut st,
+            &hdr,
+            MavMessage::NAMED_VALUE_FLOAT(mavlink::ardupilotmega::NAMED_VALUE_FLOAT_DATA {
+                time_boot_ms: 20,
+                value: 9.0,
+                name: name10("OTHER"),
+            }),
+        );
+        assert_eq!(st.sample.live_nums.get("NAMED_VALUE_FLOAT.TUT_TICK"), Some(&3.5));
+        assert_eq!(st.sample.live_nums.get("NAMED_VALUE_FLOAT.OTHER"), Some(&9.0));
+        assert!(!st.sample.live_nums.contains_key("NAMED_VALUE_FLOAT.value"));
+        assert!(!st.sample.live_nums.contains_key("NAMED_VALUE_FLOAT.time_boot_ms"));
+        handle_msg(
+            &mut st,
+            &hdr,
+            MavMessage::NAMED_VALUE_INT(mavlink::ardupilotmega::NAMED_VALUE_INT_DATA {
+                time_boot_ms: 30,
+                value: 4,
+                name: name10("TUT_N"),
+            }),
+        );
+        assert_eq!(st.sample.live_nums.get("NAMED_VALUE_INT.TUT_N"), Some(&4.0));
+        handle_msg(
+            &mut st,
+            &hdr,
+            MavMessage::NAMED_VALUE_FLOAT(mavlink::ardupilotmega::NAMED_VALUE_FLOAT_DATA {
+                value: 1.0,
+                name: name10("bad name"),
+                ..Default::default()
+            }),
+        );
+        assert!(!st.sample.live_nums.keys().any(|key| key.contains("bad")));
+        assert!(!st.sample.live_nums.contains_key("NAMED_VALUE_FLOAT.value"));
+        let (id, label, _) = live_meta("NAMED_VALUE_FLOAT.TUT_TICK").unwrap();
+        assert_eq!(id, "NAMED_VALUE_FLOAT.TUT_TICK");
+        assert_eq!(label, "TUT_TICK");
+    }
+
+    fn name10(text: &str) -> [u8; 10] {
+        let mut name = [0u8; 10];
+        let bytes = text.as_bytes();
+        let n = bytes.len().min(10);
+        name[..n].copy_from_slice(&bytes[..n]);
+        name
     }
 }
 

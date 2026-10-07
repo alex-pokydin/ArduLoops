@@ -3,6 +3,7 @@ import { useT } from "../i18n/i18n";
 const TABS = [
   { id: "loops", label: "loops" },
   { id: "firmware", label: "controller" },
+  { id: "scripts", label: "lua" },
   { id: "audit", label: "audit" },
 ] as const;
 

@@ -640,8 +640,14 @@ export function App() {
                   </ul>
                 ) : null}
               </div>
-              <button type="submit" title={isWaitDetail(face.detail) ? tDetail(face.detail) : undefined}>
-                {isWaitDetail(face.detail) ? t("Waiting…") : t("Link")}
+              <button
+                type="submit"
+                className={isWaitDetail(face.detail) ? "link-go wait" : "link-go"}
+                title={isWaitDetail(face.detail) ? tDetail(face.detail) : undefined}
+                aria-busy={isWaitDetail(face.detail) || undefined}
+              >
+                <i className="link-spin" aria-hidden="true" />
+                {t("Link")}
               </button>
             </form>
           )}

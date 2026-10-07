@@ -651,6 +651,12 @@ pub enum Cmd {
     },
     #[serde(rename = "sitl_stop")]
     SitlStop,
+    /// List, read, write, or delete a Lua script, or reload the scripting engine.
+    #[serde(skip)]
+    Script {
+        job: ScriptJob,
+        reply: std::sync::mpsc::Sender<Result<serde_json::Value, String>>,
+    },
 }
 
 fn strip_prefix_ci<'a>(s: &'a str, prefix: &str) -> Option<&'a str> {

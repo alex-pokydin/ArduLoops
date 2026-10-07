@@ -37,6 +37,9 @@ include!("messages.rs");
 // Opening the link and the read loop.
 include!("session.rs");
 
+// Lua scripts over MAVLink file transfer.
+include!("scripts.rs");
+
 // The minute of live samples the assistant reads.
 include!("buffer.rs");
 

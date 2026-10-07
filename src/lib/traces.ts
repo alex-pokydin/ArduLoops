@@ -152,8 +152,30 @@ export function paramTraces(params: Record<string, number>): CatalogTrace[] {
     }));
 }
 
-export function customCatalog(params: Record<string, number>): CatalogTrace[] {
-  return [...liveTraces(), ...paramTraces(params)];
+export function liveFieldSig(nums: Record<string, number> | undefined): string {
+  if (!nums) return "";
+  return Object.keys(nums).sort().join("\n");
+}
+
+function arrivedTraces(nums: Record<string, number> | undefined, known: Set<string>): CatalogTrace[] {
+  if (!nums) return [];
+  return Object.keys(nums).sort().flatMap((id) => {
+    if (!mavField(id) || known.has(id)) return [];
+    return [{
+      id,
+      live: id,
+      label: liveLabel(id),
+      unit: "",
+      role: "actual" as const,
+      group: "live" as const,
+    }];
+  });
+}
+
+export function customCatalog(params: Record<string, number>, nums?: Record<string, number>): CatalogTrace[] {
+  const curated = liveTraces();
+  const known = new Set(curated.flatMap((tr) => [tr.id, tr.label]));
+  return [...curated, ...arrivedTraces(nums, known), ...paramTraces(params)];
 }
 
 function mavField(id: string): boolean {
@@ -163,9 +185,18 @@ function mavField(id: string): boolean {
     && /^[A-Z]/.test(parts[0]);
 }
 
+function liveLabel(id: string): string {
+  const dot = id.indexOf(".");
+  if (dot <= 0) return id;
+  const msg = id.slice(0, dot);
+  const name = id.slice(dot + 1);
+  if ((msg === "NAMED_VALUE_FLOAT" || msg === "NAMED_VALUE_INT") && name && !name.includes(".")) return name;
+  return id;
+}
+
 export function resolveLine(id: string, catalog: CatalogTrace[]): CatalogTrace | undefined {
   if (mavField(id)) {
-    return { id, live: id, label: id, unit: "", role: "actual", group: "live" };
+    return { id, live: id, label: liveLabel(id), unit: "", role: "actual", group: "live" };
   }
   const hit = catalog.find((tr) => tr.id === id || tr.label === id);
   if (hit) return hit;

@@ -21,15 +21,23 @@ mod link_wait_tests {
         assert!(desc.contains("`spectrogram`"));
         assert!(desc.contains("`coherence`"));
         assert!(desc.contains("`error_peak_share`"));
-        assert!(desc.contains("An `error_peak_share` near 1 is one tone in the error."));
         assert!(desc.contains("`follows_throttle`"));
+        assert!(desc.contains("`error_rms`"));
         assert!(desc.contains("Rise time, percent overshoot, and settling time are not separate fields."));
-        assert!(desc.contains("`coherence` is actual against the command"));
-        assert!(desc.contains("`error_rms` is the tracking reading."));
-        assert!(desc.contains("not a ranking of loops"));
-        assert!(desc.contains("not a delay of the controller"));
         assert!(desc.contains("`holds` lists each command that changed and then stayed"));
-        assert!(desc.contains("The entries are not an average."));
+        assert!(desc.contains("`sides` returns `beyond` and `short`."));
+        assert!(!desc.contains("An `error_peak_share` near 1 is one tone in the error."));
+        assert!(!desc.contains("`coherence` is actual against the command"));
+        assert!(!desc.contains("`error_rms` is the tracking reading."));
+        assert!(!desc.contains("not a ranking of loops"));
+        assert!(!desc.contains("not a delay of the controller"));
+        assert!(!desc.contains("A null `mean` means that side had no samples."));
+        assert!(!desc.contains("A null `sides` means those samples were not there"));
+        assert!(!desc.contains("The entries are not an average."));
+        assert!(SKILL_ROOT.contains("not a ranking of loops"));
+        assert!(SKILL_ROOT.contains("It does not say the controller delayed by that time."));
+        assert!(SKILL_ROOT.contains("The entries are not an average."));
+        assert!(SKILL_ROOT.contains("A null `mean` means that side had no samples."));
         assert!(!desc.contains("The result note reads"), "{desc}");
         assert!(!desc.contains("The sentence reports that ratio. It is not a percent."), "{desc}");
         assert!(!desc.contains("not a frequency, not an overshoot, not damping, and not a gain."));
@@ -229,7 +237,8 @@ mod link_wait_tests {
         assert!(!desc.contains("The result note reads"));
         assert!(!desc.contains("An empty unit is unknown."));
         assert!(desc.contains("live_fields"));
-        assert!(desc.contains("A parameter is `get_param`"));
+        assert!(!desc.contains("A parameter is `get_param`"));
+        assert!(SKILL_ROOT.contains("The value is `get_param`."));
         let state = tools.iter()
             .find(|tool| tool["name"] == "vehicle_state")
             .and_then(|tool| tool["description"].as_str())
@@ -249,17 +258,27 @@ mod link_wait_tests {
             .find(|tool| tool["name"] == "live_fields")
             .and_then(|tool| tool["description"].as_str())
             .unwrap();
-        assert!(fields_desc.contains("A live field is not a parameter."));
         assert!(fields_desc.contains("MESSAGE.field"));
         assert!(!fields_desc.contains("The result note reads"));
         assert!(!fields_desc.contains("An empty unit is unknown."));
-        assert!(fields_desc.contains("list_params"));
-        assert!(fields_desc.contains("log_params"));
-        assert!(fields_desc.contains("log_schema"));
+        assert!(!fields_desc.contains("list_params"));
+        assert!(!fields_desc.contains("log_params"));
+        assert!(!fields_desc.contains("log_schema"));
+        assert!(!fields_desc.contains("A live field is not a parameter."));
+        assert!(SKILL_ROOT.contains("A live field is not a parameter."));
+        assert!(SKILL_ROOT.contains("The value is `log_params`."));
+        assert!(SKILL_ROOT.contains("The names come from `log_schema`"));
         let catalog = live_fields(&json!({}));
         assert_eq!(catalog["ok"], true);
-        assert!(catalog["fields"].is_array());
-        assert!(catalog["note"].as_str().unwrap().contains("An empty unit is unknown."));
+        assert!(catalog["fields"].is_object());
+        assert!(fields_desc.contains("`fields` is an object."));
+        assert!(!fields_desc.contains("`l`"));
+        assert!(!fields_desc.contains("`u`"));
+        assert!(!fields_desc.contains("only_present"));
+        let note = catalog["note"].as_str().unwrap();
+        assert!(note.contains("l is a shorter label"));
+        assert!(note.contains("u is the unit"));
+        assert!(note.contains("An empty unit is unknown."));
         let gap = live_buffer(&json!({ "line": "NOT_A_LINE" }));
         assert!(gap["note"].as_str().unwrap().contains("An empty unit is unknown."));
         assert!(gap["note"].as_str().unwrap().contains("missing is not a live field."));
@@ -285,11 +304,17 @@ mod link_wait_tests {
         assert!(SKILL_ROOT.contains("It does not say the controller delayed by that time."));
         assert!(SKILL_ROOT.contains("A large `d_share` is the D column following faster changes."));
         assert!(SKILL_ROOT.contains("A span is not a scale for an altitude error."));
+        assert!(SKILL_ROOT.contains("`firmware_library` returns the same text as `controller.comment`."));
+        assert!(SKILL_ROOT.contains("Do not ask when neither result is in this conversation."));
+        assert!(!SKILL_ROOT.contains("SIM_FRM_"));
+        assert!(!SKILL_ROOT.contains("Ask for the span, the mass, and the propeller size"));
         assert!(SKILL_ROOT.contains("A transient is an entry of `holds`"));
+        assert!(SKILL_ROOT.contains("`sides` splits the samples in `active_count` into `beyond` and `short`."));
         assert!(SKILL_ROOT.contains("The entries are not an average."));
         assert!(SKILL_ROOT.contains("When `sample_hz` is coarse beside that motion, the measurement does not support a gain change."));
         assert!(SKILL_ROOT.contains("Do not tell the user to open Mission Planner"));
-        assert!(SKILL_ROOT.contains("An empty `unit` was not in the message"));
+        assert!(!SKILL_ROOT.contains("`present`"));
+        assert!(!SKILL_ROOT.contains("`l` is a shorter"));
         assert_eq!(live_buffer(&json!({}))["ok"], false);
         assert_eq!(live_buffer(&json!({
             "lines": ["roll", "pitch", "yaw", "rate", "des", "p", "i", "d", "cmd"]
@@ -753,6 +778,57 @@ mod link_wait_tests {
                 .unwrap_or_else(|err| panic!("{provider} {model} tool result: {err}"));
             assert!(!next.text.trim().is_empty() || !next.calls.is_empty(), "{provider} {model} tool result");
         }
+    }
+
+    #[test]
+    fn script_edits_wait_for_a_card() {
+        let tools = tool_schema();
+        let list = tools.as_array().expect("schema");
+        for name in ["script_write", "script_delete", "script_restart"] {
+            let desc = list.iter()
+                .find(|tool| tool["name"] == name)
+                .and_then(|tool| tool["description"].as_str())
+                .unwrap_or("");
+            assert!(desc.contains("card"), "{name}: {desc}");
+            assert!(desc.contains("Safe mode does not skip"), "{name}");
+        }
+        let write = list.iter()
+            .find(|tool| tool["name"] == "script_write")
+            .and_then(|tool| tool["description"].as_str())
+            .unwrap_or("");
+        assert!(write.contains("English ASCII"), "{write}");
+        assert!(write.contains("Only comments may be in the user's language"), "{write}");
+        let read = list.iter()
+            .find(|tool| tool["name"] == "script_read")
+            .and_then(|tool| tool["description"].as_str())
+            .unwrap_or("");
+        assert!(read.contains("Lua editor quote"), "{read}");
+        assert!(SKILL_ROOT.contains("When it is off, set `SCR_ENABLE` to 1 and reboot."));
+        assert!(!write.contains("If scripting is off"), "{write}");
+    }
+
+    #[test]
+    fn a_script_quote_keeps_the_selection_and_the_source() {
+        let body = json!({
+            "name": "ccrp.lua",
+            "start": 25,
+            "end": 31,
+            "selection": "local x = 1",
+            "body": "full source",
+            "dirty": true,
+        }).to_string();
+        let rows = vec![
+            MsgRow { id: 1, role: "user".into(), body: "why this line".into() },
+            MsgRow { id: 2, role: "quote".into(), body },
+        ];
+        let text = render_context(&plan_context(&rows));
+        assert!(text.contains("why this line"), "{text}");
+        assert!(text.contains("ccrp.lua"), "{text}");
+        assert!(text.contains("lines 25-31"), "{text}");
+        assert!(text.contains("local x = 1"), "{text}");
+        assert!(text.contains("full source"), "{text}");
+        assert!(text.contains("unsaved"), "{text}");
+        assert!(text.contains("script_read"), "{text}");
     }
 
     fn saved_provider_model(provider: &str) -> Option<String> {

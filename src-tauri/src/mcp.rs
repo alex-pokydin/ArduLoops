@@ -252,6 +252,71 @@ fn tools() -> Value {
             "inputSchema": {"type": "object", "properties": {"artifact_id": {"type": "string"}, "comment": {"type": "string", "maxLength": 2000}}, "required": ["artifact_id", "comment"]}
         },
         {
+            "name": "ardupilot_script_list",
+            "description": concat!(
+                "Lua scripts on the connected vehicle, plus whether SCR_ENABLE exists and is on. ",
+                "files lists each .lua name and size. require() modules are not listed.",
+            ),
+            "inputSchema": { "type": "object", "properties": {} }
+        },
+        {
+            "name": "ardupilot_script_read",
+            "description": "Read one Lua script by file name, such as hello.lua.",
+            "inputSchema": {
+                "type": "object",
+                "properties": { "name": { "type": "string" } },
+                "required": ["name"]
+            }
+        },
+        {
+            "name": "ardupilot_script_write",
+            "description": concat!(
+                "Create or replace a Lua script. Nothing is written until the user approves the card in the ArduLoops chat. ",
+                "Pass name ending in .lua, the full body, and reason. ",
+                "The vehicle keeps the previous copy until ardupilot_script_restart is approved. ",
+                "Every string the script prints is English ASCII, including gcs:send_text and logger text. ",
+                "The status log has no Cyrillic glyphs, so another language is drawn as broken characters. ",
+                "Only comments may be in the user's language. Identifiers and string literals stay English ASCII.",
+            ),
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "name": { "type": "string" },
+                    "body": { "type": "string" },
+                    "reason": { "type": "string" }
+                },
+                "required": ["name", "body", "reason"]
+            }
+        },
+        {
+            "name": "ardupilot_script_delete",
+            "description": concat!(
+                "Delete one Lua script. Nothing is deleted until the user approves the card in the ArduLoops chat. ",
+                "Pass name and reason.",
+            ),
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "name": { "type": "string" },
+                    "reason": { "type": "string" }
+                },
+                "required": ["name", "reason"]
+            }
+        },
+        {
+            "name": "ardupilot_script_restart",
+            "description": concat!(
+                "Reload Lua so the vehicle reads the scripts directory again. ",
+                "Nothing is sent until the user approves the card in the ArduLoops chat. ",
+                "The first time SCR_ENABLE is turned on, reboot instead: the engine starts at boot.",
+            ),
+            "inputSchema": {
+                "type": "object",
+                "properties": { "reason": { "type": "string" } },
+                "required": ["reason"]
+            }
+        },
+        {
             "name": "ardupilot_recent_statustext",
             "description": "Recent STATUSTEXT, newest first.",
             "inputSchema": {
@@ -393,6 +458,32 @@ fn call_tool(name: &str, args: &Value) -> Result<Value, String> {
                 &json!({"artifact_id": id, "comment": comment}).to_string(),
             )?)
         }
+        "ardupilot_script_list" => parse_body(cli::http_get_timeout("/scripts", 15)?),
+        "ardupilot_script_read" => {
+            let name = args.get("name").and_then(Value::as_str).ok_or("name")?;
+            parse_body(cli::http_get_timeout(&format!("/scripts/file?name={}", urlencoding(name)), 20)?)
+        }
+        "ardupilot_script_write" => crate::agent::propose_script(
+            "",
+            "write",
+            args.get("name").and_then(Value::as_str).unwrap_or(""),
+            args.get("body").and_then(Value::as_str).unwrap_or(""),
+            args.get("reason").and_then(Value::as_str).unwrap_or(""),
+        ),
+        "ardupilot_script_delete" => crate::agent::propose_script(
+            "",
+            "delete",
+            args.get("name").and_then(Value::as_str).unwrap_or(""),
+            "",
+            args.get("reason").and_then(Value::as_str).unwrap_or(""),
+        ),
+        "ardupilot_script_restart" => crate::agent::propose_script(
+            "",
+            "restart",
+            "",
+            "",
+            args.get("reason").and_then(Value::as_str).unwrap_or(""),
+        ),
         "ardupilot_recent_statustext" => {
             let n = args.get("n").and_then(Value::as_u64).unwrap_or(10);
             parse_body(cli::http_get(&format!("/statustext?n={n}"))?)

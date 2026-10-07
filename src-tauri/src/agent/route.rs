@@ -63,6 +63,10 @@ pub fn route(
         ("GET", "/ai/status") => Ok(status(&c)),
         ("POST", "/ai/provider") => provider_op(&c, body),
         ("POST", "/ai/login") => Ok(json!({"url": login_url()})),
+        ("POST", "/ai/cabinet") => {
+            let url = cabinet_url().map_err(|e| (502, e))?;
+            Ok(json!({"url": url}))
+        }
         ("POST", "/ai/logout") => {
             logout_session();
             Ok(status(&c))
@@ -98,7 +102,25 @@ pub fn route(
     }
 }
 
+fn arm_default_hosted(c: &Connection) {
+    let active: i64 = c
+        .query_row("SELECT COUNT(*) FROM ai_provider WHERE active=1", [], |row| row.get(0))
+        .unwrap_or(0);
+    if active > 0 {
+        return;
+    }
+    let model = default_model("gemini");
+    let _ = c.execute(
+        "INSERT INTO ai_provider (provider, active, model, status, storage, updated_at) VALUES ('gemini', 1, ?1, 'ready', 'hosted', ?2)
+         ON CONFLICT(provider) DO UPDATE SET active=1, model=excluded.model, status='ready', storage='hosted', updated_at=excluded.updated_at",
+        params![model, now()],
+    );
+}
+
 fn status(c: &Connection) -> Value {
+    if signed_in() && hosted_assistant_on() {
+        arm_default_hosted(c);
+    }
     let mut rows = Vec::new();
     if let Ok(mut st) = c.prepare("SELECT provider, active, model, status, storage FROM ai_provider ORDER BY provider") {
         let _ = st.query_map([], |row| {
@@ -139,6 +161,9 @@ fn provider_op(c: &Connection, body: &Value) -> Result<Value, (u16, String)> {
     let op = body["op"].as_str().unwrap_or("");
     if provider == "disabled" || op == "disable" {
         c.execute("UPDATE ai_provider SET active=0", []).ok();
+        if signed_in() {
+            set_hosted_assistant(false);
+        }
         return Ok(status(c));
     }
     if !matches!(provider, "gemini" | "openai" | "anthropic" | "xai") {
@@ -155,6 +180,7 @@ fn provider_op(c: &Connection, body: &Value) -> Result<Value, (u16, String)> {
         if !signed_in() {
             return Err((401, "Sign in required.".into()));
         }
+        set_hosted_assistant(true);
         let model = default_model(provider);
         c.execute("UPDATE ai_provider SET active=0", []).ok();
         c.execute(
@@ -280,7 +306,7 @@ fn note_stopped_turns_on(c: &Connection) {
     }
     for chat in chats {
         let last: Option<String> = c.query_row(
-            "SELECT role FROM ai_message WHERE chat_id=?1 AND role NOT IN ('held', 'compact', 'context', 'work', 'attach') ORDER BY id DESC LIMIT 1",
+            "SELECT role FROM ai_message WHERE chat_id=?1 AND role NOT IN ('held', 'compact', 'context', 'work', 'attach', 'quote') ORDER BY id DESC LIMIT 1",
             [&chat],
             |row| row.get(0),
         ).ok();
@@ -448,6 +474,17 @@ fn messages(c: &Connection, chat: &str) -> Result<Value, (u16, String)> {
     Ok(json!({"messages": out, "proposals": props}))
 }
 
+fn store_script_quote(c: &Connection, chat: &str, body: &Value, t: i64) -> Result<(), (u16, String)> {
+    let Some(stored) = script_quote_body(body) else {
+        return Ok(());
+    };
+    c.execute(
+        "INSERT INTO ai_message (chat_id, role, body, created_at) VALUES (?1, 'quote', ?2, ?3)",
+        params![chat, stored, t],
+    ).map_err(|e| (500, e.to_string()))?;
+    Ok(())
+}
+
 fn send(c: &Connection, body: &Value, sample: &Sample, tx: &Sender<Cmd>) -> Result<Value, (u16, String)> {
     let chat = body["chat"].as_str().unwrap_or("");
     let text = body["text"].as_str().unwrap_or("").trim();
@@ -464,6 +501,7 @@ fn send(c: &Connection, body: &Value, sample: &Sample, tx: &Sender<Cmd>) -> Resu
             "INSERT INTO ai_message (chat_id, role, body, created_at) VALUES (?1, 'steer', ?2, ?3)",
             params![chat, text, t],
         ).map_err(|e| (500, e.to_string()))?;
+        store_script_quote(c, chat, body, t)?;
         c.execute("UPDATE ai_chat SET updated_at=?1 WHERE id=?2", params![t, chat]).ok();
         return Ok(json!({"ok": true, "status": "steer", "message": text}));
     }
@@ -476,6 +514,7 @@ fn send(c: &Connection, body: &Value, sample: &Sample, tx: &Sender<Cmd>) -> Resu
             params![chat, log_id, t],
         ).map_err(|e| (500, e.to_string()))?;
     }
+    store_script_quote(c, chat, body, t)?;
     remember_chat_vehicle(c, chat, sample);
     if title_is_new(c, chat) {
         let title: String = text.chars().take(48).collect();
