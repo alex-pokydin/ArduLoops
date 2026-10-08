@@ -1,5 +1,166 @@
 // Command dispatch and incoming MAVLink.
 
+fn deg_e7(deg: f64) -> i32 {
+    (deg * 1e7).round() as i32
+}
+
+/// SIMSTATE lat/lng are degrees×1e7. SIM_STATE's float is supposed to be degrees,
+/// but ArduPilot writes degrees×1e7 there too. A value outside ±180 is that scaled form.
+fn sim_deg(v: f32) -> f64 {
+    let n = v as f64;
+    if n.abs() > 180.0 { n / 1e7 } else { n }
+}
+
+fn nav_frame(int_item: bool) -> MavFrame {
+    if int_item {
+        MavFrame::MAV_FRAME_GLOBAL_RELATIVE_ALT_INT
+    } else {
+        MavFrame::MAV_FRAME_GLOBAL_RELATIVE_ALT
+    }
+}
+
+fn mission_shape(item: &MissionItem) -> (MavCmd, bool, i32, i32, f32) {
+    match item.kind.as_str() {
+        "takeoff" => (
+            MavCmd::MAV_CMD_NAV_TAKEOFF,
+            false,
+            deg_e7(item.lat),
+            deg_e7(item.lon),
+            item.alt as f32,
+        ),
+        "loiter" => (
+            MavCmd::MAV_CMD_NAV_LOITER_UNLIM,
+            false,
+            deg_e7(item.lat),
+            deg_e7(item.lon),
+            item.alt as f32,
+        ),
+        "rtl" => (MavCmd::MAV_CMD_NAV_RETURN_TO_LAUNCH, true, 0, 0, 0.0),
+        _ => (
+            MavCmd::MAV_CMD_NAV_WAYPOINT,
+            false,
+            deg_e7(item.lat),
+            deg_e7(item.lon),
+            item.alt as f32,
+        ),
+    }
+}
+
+fn send_mission_item(conn: &dyn MavConnection<MavMessage>, st: &LinkState, item: &MissionItem, seq: u16, int_item: bool) {
+    let (command, mission_frame, x, y, z) = mission_shape(item);
+    let frame = if mission_frame {
+        MavFrame::MAV_FRAME_MISSION
+    } else {
+        nav_frame(int_item)
+    };
+    if int_item {
+        send_msg(
+            conn,
+            &MavMessage::MISSION_ITEM_INT(MISSION_ITEM_INT_DATA {
+                param1: 0.0,
+                param2: 0.0,
+                param3: 0.0,
+                param4: 0.0,
+                x,
+                y,
+                z,
+                seq,
+                command,
+                target_system: st.target_system,
+                target_component: st.target_component,
+                frame,
+                current: 0,
+                autocontinue: 1,
+            }),
+        );
+        return;
+    }
+    send_msg(
+        conn,
+        &MavMessage::MISSION_ITEM(MISSION_ITEM_DATA {
+            param1: 0.0,
+            param2: 0.0,
+            param3: 0.0,
+            param4: 0.0,
+            x: x as f32 / 1e7,
+            y: y as f32 / 1e7,
+            z,
+            seq,
+            command,
+            target_system: st.target_system,
+            target_component: st.target_component,
+            frame,
+            current: 0,
+            autocontinue: 1,
+        }),
+    );
+}
+
+fn upload_mission(
+    conn: &dyn MavConnection<MavMessage>,
+    st: &mut LinkState,
+    items: &[MissionItem],
+    on_sample: &OnSample,
+    latest: &Mutex<Sample>,
+    sitl: &SitlCtl,
+) -> String {
+    if items.is_empty() {
+        send_msg(
+            conn,
+            &MavMessage::MISSION_CLEAR_ALL(MISSION_CLEAR_ALL_DATA {
+                target_system: st.target_system,
+                target_component: st.target_component,
+            }),
+        );
+    } else {
+        send_msg(
+            conn,
+            &MavMessage::MISSION_COUNT(MISSION_COUNT_DATA {
+                count: items.len() as u16,
+                target_system: st.target_system,
+                target_component: st.target_component,
+            }),
+        );
+    }
+    let deadline = Instant::now() + Duration::from_secs(8);
+    while Instant::now() < deadline {
+        match conn.recv() {
+            Ok((hdr, msg)) => {
+                let request = match &msg {
+                    MavMessage::MISSION_REQUEST_INT(v) => Some((v.seq, true)),
+                    MavMessage::MISSION_REQUEST(v) => Some((v.seq, false)),
+                    _ => None,
+                };
+                let ack = match &msg {
+                    MavMessage::MISSION_ACK(v) => Some(v.mavtype),
+                    _ => None,
+                };
+                handle_msg(st, &hdr, msg);
+                emit_sample(on_sample, latest, st, sitl);
+                if let Some((seq, int_item)) = request {
+                    let Some(item) = items.get(seq as usize) else {
+                        return "Mission rejected".into();
+                    };
+                    send_mission_item(conn, st, item, seq, int_item);
+                }
+                if let Some(result) = ack {
+                    if result == MavMissionResult::MAV_MISSION_ACCEPTED {
+                        return if items.is_empty() {
+                            "Mission cleared".into()
+                        } else {
+                            "Mission uploaded".into()
+                        };
+                    }
+                    return "Mission rejected".into();
+                }
+            }
+            Err(mavlink::error::MessageReadError::Io(e))
+                if e.kind() == std::io::ErrorKind::TimedOut || e.kind() == std::io::ErrorKind::WouldBlock => {}
+            Err(_) => return "Connection lost during mission upload".into(),
+        }
+    }
+    "Mission upload timed out".into()
+}
 
 fn apply_cmd(
     conn: &dyn MavConnection<MavMessage>,
@@ -290,6 +451,10 @@ fn apply_cmd(
             }
         }
         Cmd::Tune { p, i, d } => set_rate_pid(conn, st, p, i, d, None),
+        Cmd::Mission { items, reply } => {
+            let result = upload_mission(conn, st, &items, on_sample, latest, sitl);
+            let _ = reply.send(result);
+        }
         Cmd::Mode { mode } => {
             if let Some(custom) = mode_custom(&st.sample.frame, &mode) {
                 command_long(
@@ -970,11 +1135,60 @@ fn handle_msg(st: &mut LinkState, header: &MavHeader, msg: MavMessage) {
             _ => {}
         },
         MavMessage::GLOBAL_POSITION_INT(GLOBAL_POSITION_INT_DATA {
-            relative_alt, vz, ..
+            lat,
+            lon,
+            relative_alt,
+            vz,
+            ..
         }) => {
+            if lat != 0 || lon != 0 {
+                st.sample.lat = Some(lat as f64 / 1e7);
+                st.sample.lon = Some(lon as f64 / 1e7);
+            }
             st.sample.alt = Some(relative_alt as f64 / 1000.0);
             st.sample.climb = Some(-(vz as f64) / 100.0);
             apply_d_targets(st);
+        }
+        MavMessage::GPS_RAW_INT(GPS_RAW_INT_DATA {
+            lat,
+            lon,
+            fix_type,
+            satellites_visible,
+            ..
+        }) => {
+            let fix = fix_type as u8;
+            st.sample.gps_fix = Some(fix);
+            st.sample.gps_sats = Some(satellites_visible);
+            if fix >= 2 && (lat != 0 || lon != 0) {
+                st.sample.gps_lat = Some(lat as f64 / 1e7);
+                st.sample.gps_lon = Some(lon as f64 / 1e7);
+            } else {
+                st.sample.gps_lat = None;
+                st.sample.gps_lon = None;
+            }
+        }
+        MavMessage::SIMSTATE(SIMSTATE_DATA { lat, lng, .. }) => {
+            if lat != 0 || lng != 0 {
+                st.sample.truth_lat = Some(lat as f64 / 1e7);
+                st.sample.truth_lon = Some(lng as f64 / 1e7);
+            }
+        }
+        MavMessage::SIM_STATE(SIM_STATE_DATA { lat, lon, .. }) => {
+            if lat != 0.0 || lon != 0.0 {
+                st.sample.truth_lat = Some(sim_deg(lat));
+                st.sample.truth_lon = Some(sim_deg(lon));
+            }
+        }
+        MavMessage::HOME_POSITION(HOME_POSITION_DATA {
+            latitude, longitude, ..
+        }) => {
+            if latitude != 0 || longitude != 0 {
+                st.sample.home_lat = Some(latitude as f64 / 1e7);
+                st.sample.home_lon = Some(longitude as f64 / 1e7);
+            }
+        }
+        MavMessage::MISSION_CURRENT(MISSION_CURRENT_DATA { seq }) => {
+            st.sample.wp_seq = Some(seq);
         }
         MavMessage::VFR_HUD(VFR_HUD_DATA {
             airspeed,

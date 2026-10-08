@@ -1,10 +1,11 @@
 import { lazy, Suspense, useMemo, useState } from "react";
 import { Aside, type LogRow } from "../components/Aside";
 import { AuditLibrary } from "../components/AuditLibrary";
-import { WorkspaceTabs, type WorkspaceId } from "../components/WorkspaceTabs";
+import { ControllerView } from "../components/ControllerView";
+import { PLANE_WORKSPACES, WorkspaceTabs, type WorkspaceId } from "../components/WorkspaceTabs";
+import { MissionView } from "../components/MissionView";
 
 const ScriptsLibrary = lazy(() => import("../components/ScriptsLibrary").then((mod) => ({ default: mod.ScriptsLibrary })));
-const PLANE_TABS: WorkspaceId[] = ["loops", "scripts", "audit"];
 import { Scope } from "../components/Scope";
 import { Studio } from "../components/Studio";
 import { useT } from "../i18n/i18n";
@@ -45,11 +46,49 @@ export function PlaneApp({
     else if (next === "rll_ang" || next === "rll_rate" || next === "aileron" || next === "ahrs") setAxis("roll");
   }
 
+  if (workspace === "mission") {
+    return (
+      <main>
+        <MissionView current="mission" ids={PLANE_WORKSPACES} onWorkspace={setWorkspace} />
+        <Aside
+          log={log}
+          sel={sel}
+          onSel={onPick}
+          axis={loopAxis}
+          modes={MODES}
+          nodes={NODES}
+          presets={false}
+          vehicle="plane"
+          inspect={<PlaneInspect sel={sel} onSel={onPick} showAll={showAll} />}
+        />
+      </main>
+    );
+  }
+
+  if (workspace === "firmware") {
+    return (
+      <main>
+        <ControllerView ids={PLANE_WORKSPACES} onWorkspace={setWorkspace} />
+        <Aside
+          log={log}
+          sel={sel}
+          onSel={onPick}
+          axis={loopAxis}
+          modes={MODES}
+          nodes={NODES}
+          presets={false}
+          vehicle="plane"
+          inspect={<PlaneInspect sel={sel} onSel={onPick} showAll={showAll} />}
+        />
+      </main>
+    );
+  }
+
   if (workspace === "scripts") {
     return (
       <main>
         <Suspense fallback={<section className="scope work"><p className="work-empty">…</p></section>}>
-          <ScriptsLibrary current="scripts" ids={PLANE_TABS} onWorkspace={setWorkspace} />
+          <ScriptsLibrary current="scripts" ids={PLANE_WORKSPACES} onWorkspace={setWorkspace} />
         </Suspense>
         <Aside
           log={log}
@@ -69,7 +108,7 @@ export function PlaneApp({
   if (workspace === "audit") {
     return (
       <main>
-        <AuditLibrary current="audit" ids={PLANE_TABS} onWorkspace={setWorkspace} />
+        <AuditLibrary current="audit" ids={PLANE_WORKSPACES} onWorkspace={setWorkspace} />
         <Aside
           log={log}
           sel={sel}
@@ -92,7 +131,7 @@ export function PlaneApp({
           frame="plane"
           col1Default={col1Default}
           toolbar={<>
-            <WorkspaceTabs current="loops" ids={PLANE_TABS} onSelect={setWorkspace} />
+            <WorkspaceTabs current="loops" ids={PLANE_WORKSPACES} onSelect={setWorkspace} />
             <PlaneAxisSwitch axis={loopAxis} onAxis={onAxis} />
           </>}
           scheme={<PlaneMap sel={sel} onSel={onPick} showAll={showAll} onShowAll={setShowAll} />}

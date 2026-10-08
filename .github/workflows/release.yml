@@ -9,7 +9,7 @@ on:
       tag:
         description: GitHub release tag to upload installers to
         required: true
-        default: "2.0.0"
+        default: "2.1.0"
       only:
         description: Run one job (linux, windows, macos, android). Empty runs all.
         required: false

@@ -22,7 +22,25 @@ export type SimKnob = {
   hot?: boolean;
   /** Skip this knob when another name is already live (old vs GPS1). */
   hideIf?: string;
+  /**
+   * Firmware stores this offset in degrees of latitude (`north`) or longitude
+   * (`east`). The slider shows metres on the same scale as the mission map.
+   */
+  geo?: "north" | "east";
 };
+
+/** Same metre-per-degree as the mission map, so a glitch of 1.5 m is 1.5 m on screen. */
+export const M_PER_DEG = 111_320;
+
+export function geoToMeters(geo: "north" | "east", degrees: number, latDeg: number): number {
+  const cos = geo === "east" ? Math.cos((latDeg * Math.PI) / 180) || 1e-6 : 1;
+  return degrees * M_PER_DEG * cos;
+}
+
+export function geoToDegrees(geo: "north" | "east", meters: number, latDeg: number): number {
+  const cos = geo === "east" ? Math.cos((latDeg * Math.PI) / 180) || 1e-6 : 1;
+  return meters / (M_PER_DEG * cos);
+}
 
 export type SimGroup = {
   id: string;
@@ -104,6 +122,19 @@ export const SIM_GROUPS: SimGroup[] = [
         step: 0.5,
         digits: 1,
         def: 0,
+        geo: "north",
+      },
+      {
+        key: "SIM_GPS1_GLTCH_Y",
+        aliases: ["SIM_GPS_GLITCH_Y"],
+        label: "glitch E",
+        unit: "m",
+        min: -50,
+        max: 50,
+        step: 0.5,
+        digits: 1,
+        def: 0,
+        geo: "east",
       },
     ],
   },

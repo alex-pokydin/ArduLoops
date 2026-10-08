@@ -104,8 +104,68 @@ fn connect_url(args: &Value) -> Result<String, String> {
     }
 }
 
+struct WizardSpec {
+    name: &'static str,
+    copter: bool,
+    plane: bool,
+}
+
+const WIZARDS: &[WizardSpec] = &[
+    WizardSpec { name: "accel", copter: true, plane: true },
+    WizardSpec { name: "compass", copter: true, plane: true },
+    WizardSpec { name: "compass_mot", copter: true, plane: false },
+    WizardSpec { name: "motors", copter: true, plane: false },
+    WizardSpec { name: "radio", copter: true, plane: true },
+    WizardSpec { name: "modes", copter: true, plane: true },
+    WizardSpec { name: "battery", copter: true, plane: true },
+    WizardSpec { name: "failsafe", copter: true, plane: true },
+    WizardSpec { name: "servos", copter: false, plane: true },
+    WizardSpec { name: "airspeed", copter: false, plane: true },
+];
+
+fn wizard_spec(name: &str) -> Option<&'static WizardSpec> {
+    WIZARDS.iter().find(|item| item.name == name)
+}
+
 fn wizard_name_ok(name: &str) -> bool {
-    matches!(name, "accel" | "compass" | "compass_mot" | "motors" | "radio" | "modes" | "battery")
+    wizard_spec(name).is_some()
+}
+
+fn wizard_list() -> String {
+    WIZARDS.iter().map(|item| item.name).collect::<Vec<_>>().join(", ")
+}
+
+fn wizard_vehicle(spec: &WizardSpec) -> &'static str {
+    match (spec.copter, spec.plane) {
+        (true, false) => "copter",
+        (false, true) => "plane",
+        _ => "both",
+    }
+}
+
+fn wizard_frame_ok(name: &str, frame: &str) -> Result<&'static WizardSpec, String> {
+    let Some(spec) = wizard_spec(name) else {
+        return Err(format!("wizard must be {}.", wizard_list()));
+    };
+    let fits = match frame {
+        "plane" => spec.plane,
+        "copter" => spec.copter,
+        _ => false,
+    };
+    if fits {
+        return Ok(spec);
+    }
+    let need = match (spec.copter, spec.plane) {
+        (true, true) => "a copter or a plane",
+        (false, true) => "a plane",
+        (true, false) => "a copter",
+        (false, false) => "a vehicle",
+    };
+    if frame == "plane" || frame == "copter" {
+        Err(format!("{name} is for {need}."))
+    } else {
+        Err(format!("{name} needs {need} heartbeat."))
+    }
 }
 
 fn motor_wizard_frame(sample: &Sample) -> Result<(), &'static str> {
@@ -135,9 +195,10 @@ fn wizard_line(args: &Value, key: &str, max: usize) -> Result<String, String> {
 
 fn wizard_widget(args: &Value, sample: &Sample, c: &Connection, chat: &str) -> Value {
     let wizard = args["wizard"].as_str().unwrap_or("").trim();
-    if !wizard_name_ok(wizard) {
-        return json!({ "status": "failed", "error": "wizard must be accel, compass, compass_mot, motors, radio, modes, or battery." });
-    }
+    let spec = match wizard_frame_ok(wizard, &sample.frame) {
+        Ok(spec) => spec,
+        Err(error) => return json!({ "status": "failed", "error": error }),
+    };
     let title = match wizard_line(args, "title", 80) {
         Ok(title) => title,
         Err(error) => return json!({ "status": "failed", "error": error }),
@@ -159,7 +220,7 @@ fn wizard_widget(args: &Value, sample: &Sample, c: &Connection, chat: &str) -> V
         None,
         0.0,
         &description,
-        &json!({ "wizard": wizard, "title": title }).to_string(),
+        &json!({ "wizard": wizard, "title": title, "vehicle": wizard_vehicle(spec) }).to_string(),
     )
 }
 
@@ -408,6 +469,22 @@ fn record_tool(c: &Connection, chat: &str, name: &str, args: &Value, result: &Va
         return;
     }
     note_tool(c, chat, name, args, result);
+}
+
+fn note_doc(c: &Connection, chat: &str, doc: &Value) {
+    let url = doc["url"].as_str().unwrap_or("").trim();
+    if url.is_empty() {
+        return;
+    }
+    let body = json!({
+        "title": doc["title"].as_str().unwrap_or("Document").trim(),
+        "format": doc["format"].as_str().unwrap_or("").trim(),
+        "url": url,
+    }).to_string();
+    c.execute(
+        "INSERT INTO ai_message (chat_id, role, body, created_at) VALUES (?1, 'doc', ?2, ?3)",
+        params![chat, body, now()],
+    ).ok();
 }
 
 fn save_assistant(c: &Connection, chat: &str, text: &str) {

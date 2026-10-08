@@ -505,6 +505,34 @@ function FeelLive({
   );
 }
 
+export function FoldSection({
+  label,
+  extra,
+  scroll,
+  children,
+}: {
+  label: string;
+  extra?: string;
+  scroll?: boolean;
+  children: ReactNode;
+}) {
+  const [open, setOpen] = useState(false);
+  return (
+    <>
+      <button
+        type="button"
+        className={open ? "controls-toggle on aside-fold" : "controls-toggle aside-fold"}
+        aria-expanded={open}
+        onClick={() => setOpen((v) => !v)}
+      >
+        {label}
+        {extra ? <span>{extra}</span> : null}
+      </button>
+      <div className={scroll ? "fold-body fold-scroll" : "fold-body"} hidden={!open}>{children}</div>
+    </>
+  );
+}
+
 function PresetBar({ alive, onPick }: { alive: boolean; onPick: (name: "wool" | "stock" | "hot") => void }) {
   const t = useT();
   const gainP = usePicked((s) => s.gain_p);
@@ -762,11 +790,7 @@ export function Aside({
       {sitl ? <FeelLive axis={axis} vehicle={vehicle} stickName={t(stickAxis)} /> : null}
       {sitl && presets ? <PresetBar alive={alive} onPick={applyPreset} /> : null}
       {knobs && tuneNode ? (
-          <>
-            <div className="tune-cap">
-              {t(tuneNode.title)}
-              <span>{t(tuneNode.unit)}</span>
-            </div>
+          <FoldSection label={t(tuneNode.title)} extra={t(tuneNode.unit)}>
             {tuneNode.gains.length ? (
               <div className="sliders">
                 {tuneNode.gains.map((g) => (
@@ -776,7 +800,7 @@ export function Aside({
             ) : (
               <p className="tune-empty">{t("No gains. Pick a regulator — sliders stay here and on the plot.")}</p>
             )}
-          </>
+          </FoldSection>
         ) : null}
       {inspect}
       <div className="log-label">{t("Log")}</div>

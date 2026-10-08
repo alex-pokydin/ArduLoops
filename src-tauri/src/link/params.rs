@@ -537,8 +537,13 @@ fn request_streams(conn: &dyn MavConnection<MavMessage>, st: &LinkState) {
             (MSG_ATTITUDE_TARGET, 20_000.0),
             (MSG_NAV_CONTROLLER_OUTPUT, 50_000.0),
             (MSG_RC_CHANNELS, 40_000.0),
+            (MSG_GPS_RAW_INT, 200_000.0),
             (MSG_GLOBAL_POSITION_INT, 100_000.0),
+            (MSG_MISSION_CURRENT, 500_000.0),
             (MSG_VFR_HUD, 100_000.0),
+            (MSG_SIM_STATE, 200_000.0),
+            (MSG_SIMSTATE, 200_000.0),
+            (MSG_HOME_POSITION, 1_000_000.0),
             (MSG_SCALED_IMU, 200_000.0),
             (MSG_SCALED_IMU2, 200_000.0),
             (MSG_SCALED_IMU3, 200_000.0),
@@ -636,17 +641,3 @@ fn request_param_list(conn: &dyn MavConnection<MavMessage>, st: &LinkState) {
     );
 }
 
-fn request_params(conn: &dyn MavConnection<MavMessage>, st: &LinkState) {
-    request_param_list(conn, st);
-    for name in PARAM_WATCH.iter().chain(LAB_PARAMS.iter()) {
-        send_msg(
-            conn,
-            &MavMessage::PARAM_REQUEST_READ(PARAM_REQUEST_READ_DATA {
-                param_index: -1,
-                target_system: st.target_system,
-                target_component: st.target_component,
-                param_id: param_id(name),
-            }),
-        );
-    }
-}

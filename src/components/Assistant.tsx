@@ -108,6 +108,9 @@ function wizardTitle(tr: typeof import("../i18n/i18n").t, name: string): string 
   if (name === "radio") return tr("Radio setup");
   if (name === "modes") return tr("Flight modes");
   if (name === "battery") return tr("Battery setup");
+  if (name === "failsafe") return tr("Failsafe");
+  if (name === "servos") return tr("Servo outputs");
+  if (name === "airspeed") return tr("Airspeed");
   return name;
 }
 
@@ -457,7 +460,7 @@ export function Assistant({
   async function refreshStatus() {
     try {
       const s = await ai.status();
-      setStatus(s);
+      setStatus((cur) => JSON.stringify(cur) === JSON.stringify(s) ? cur : s);
       if (!model && s.active?.model) setModel(s.active.model);
       setNote((current) => (current === "Failed to fetch" ? "" : current));
     } catch {
@@ -514,7 +517,7 @@ export function Assistant({
           settling = false;
           setBusy(true);
           setLive((prev) => (sameLive(prev, row) ? prev : row));
-          const mark = `${row.tool ?? ""}\n${row.input ?? ""}\n${row.note ?? ""}`;
+          const mark = `${row.tool ?? ""}\n${row.input ?? ""}\n${row.note ?? ""}\n${(row.docs ?? []).map((doc) => doc.url).join("\n")}`;
           if (pulled.current !== mark) {
             pulled.current = mark;
             const gen = openThread();
@@ -1303,6 +1306,8 @@ function ChatPane({
                   {block.attach ? <span className="ai-chip ai-chip-sent" title={block.attach}>{block.attach}</span> : null}
                   {block.quote ? <span className="ai-chip ai-chip-line" title={block.quoteTitle}>{block.quote}</span> : null}
                 </div>
+              ) : block.docs?.length && !block.msg.body ? (
+                <DocStrip key={block.key} docs={block.docs} />
               ) : (
               <article key={block.key} className={block.msg.role}>
                 {block.msg.role === "steer" ? <span className="ai-steer-label">{t("Note for later")}</span> : null}
@@ -1313,6 +1318,7 @@ function ChatPane({
                   </div>
                 ) : block.msg.role === "assistant" ? <AssistantMarkdown text={shownNotice(block.msg.body, t)} /> : block.msg.body}
                 {block.msg.role === "assistant" && block.msg.at !== -1 ? <ChartStrip charts={chartsUnder(held, index)} /> : null}
+                {block.msg.role === "assistant" && (block.msg.at !== -1 || block.docs?.length) ? <DocStrip docs={[...(block.docs ?? []), ...(block.msg.at === -1 ? [] : docsUnder(held, index))]} /> : null}
                 {block.msg.role === "assistant" && block.msg.at !== -1 && liveView?.index === index ? <LiveView spec={liveView.spec} open={liveOpen} onOpen={() => setLiveOpen(true)} onClose={() => setLiveOpen(false)} /> : null}
               </article>
               )
@@ -1508,7 +1514,7 @@ const AssistantMarkdown = memo(function AssistantMarkdown({ text }: { text: stri
 
 type ToolItem = { key: string; name: string; input?: string; output: string };
 type ThreadBlock =
-  | { kind: "msg"; key: string; msg: Msg; at: number; attach?: string; quote?: string; quoteTitle?: string }
+  | { kind: "msg"; key: string; msg: Msg; at: number; attach?: string; quote?: string; quoteTitle?: string; docs?: SavedDoc[] }
   | { kind: "tools"; key: string; items: ToolItem[]; workedMs?: number; note?: string; at: number }
   | { kind: "proposal"; key: string; items: Proposal[]; at: number };
 
@@ -1586,6 +1592,8 @@ function groupMessages(messages: Msg[]): ThreadBlock[] {
   let note = "";
   let noteAt = 0;
   let noteMs: number | undefined;
+  const pendingDocs: SavedDoc[] = [];
+  let pendingAt = 0;
   const flushNote = (at: number) => {
     const text = note.trim();
     note = "";
@@ -1622,9 +1630,18 @@ function groupMessages(messages: Msg[]): ThreadBlock[] {
       }
       continue;
     }
+    if (msg.role === "doc") {
+      const doc = parseDoc(msg.body);
+      if (doc) {
+        pendingDocs.push(doc);
+        pendingAt = msg.at;
+      }
+      continue;
+    }
     if (msg.role !== "tool") {
       flushNote(msg.at);
-      out.push({ kind: "msg", key: `${msg.at}-${i}`, msg, at: msg.at });
+      const docs = msg.role === "assistant" ? pendingDocs.splice(0) : undefined;
+      out.push({ kind: "msg", key: `${msg.at}-${i}`, msg, at: msg.at, docs: docs?.length ? docs : undefined });
       continue;
     }
     const items: ToolItem[] = [];
@@ -1649,6 +1666,15 @@ function groupMessages(messages: Msg[]): ThreadBlock[] {
     out.push({ kind: "tools", key: `tools-${start}`, items, workedMs, note: groupNote || undefined, at: messages[start].at });
   }
   flushNote(0);
+  if (pendingDocs.length) {
+    out.push({
+      kind: "msg",
+      key: `docs-${pendingAt}`,
+      msg: { role: "assistant", body: "", at: pendingAt },
+      at: pendingAt,
+      docs: pendingDocs.splice(0),
+    });
+  }
   return out;
 }
 
@@ -1777,6 +1803,56 @@ function chartsUnder(blocks: ThreadBlock[], index: number) {
   return prev?.kind === "tools" ? chartsFromTools(prev.items) : [];
 }
 
+type SavedDoc = { title: string; format: string; url: string };
+
+function parseDoc(body: string): SavedDoc | null {
+  try {
+    const value = JSON.parse(body) as { title?: string; format?: string; url?: string };
+    if (!value?.url) return null;
+    return { title: value.title || "Document", format: value.format || "", url: value.url };
+  } catch {
+    return null;
+  }
+}
+
+function docsFromTools(items: { name: string; output: string }[]): SavedDoc[] {
+  const docs: SavedDoc[] = [];
+  for (const item of items) {
+    if (item.name !== "save_document") continue;
+    try {
+      const value = JSON.parse(item.output) as { ok?: boolean; title?: string; format?: string; url?: string };
+      if (!value || value.ok === false || !value.url) continue;
+      docs.push({
+        title: value.title || "Document",
+        format: value.format || "html",
+        url: value.url,
+      });
+    } catch {
+      /* skip */
+    }
+  }
+  return docs;
+}
+
+function docsUnder(blocks: ThreadBlock[], index: number) {
+  const prev = blocks[index - 1];
+  return prev?.kind === "tools" ? docsFromTools(prev.items) : [];
+}
+
+function DocStrip({ docs }: { docs: SavedDoc[] }) {
+  if (!docs.length) return null;
+  return (
+    <div className="ai-docs">
+      {docs.map((doc) => (
+        <a key={doc.url} className="ai-doc-card" href={doc.url} target="_blank" rel="noreferrer">
+          <b>{doc.title}</b>
+          <span>{doc.format}</span>
+        </a>
+      ))}
+    </div>
+  );
+}
+
 function latestLive(blocks: ThreadBlock[]): { index: number; spec: LiveSpec } | null {
   let hit: { index: number; spec: LiveSpec } | null = null;
   for (let i = 0; i < blocks.length; i++) {
@@ -1852,13 +1928,17 @@ type ReplyBook = {
 function holdReply(blocks: ThreadBlock[], reply: string | undefined, book: ReplyBook): ThreadBlock[] {
   const text = reply?.trim() ?? "";
   if (text && !exactReply(blocks, text)) {
+    const tail = trailingAssistant(blocks);
+    if (tail && book.landed.has(tail.msg.at) && sameReply(tail.msg.body, text)) {
+      book.pending = null;
+      return stampReply(blocks, book);
+    }
     if (!book.pending) {
       book.seq += 1;
       book.pending = { key: `stream-${book.seq}`, body: text };
     } else {
       book.pending.body = text;
     }
-    const tail = trailingAssistant(blocks);
     if (tail && sameReply(tail.msg.body, text)) {
       book.landed.set(tail.msg.at, book.pending.key);
       book.pending = null;
@@ -1926,7 +2006,7 @@ function replyLanded(messages: Msg[], reply: string): boolean {
   for (let i = messages.length - 1; i >= 0; i--) {
     const msg = messages[i];
     if (msg.role === "user") return false;
-    if (msg.role === "assistant" && msg.body.trim() === text) return true;
+    if (msg.role === "assistant" && sameReply(msg.body, text)) return true;
   }
   return false;
 }

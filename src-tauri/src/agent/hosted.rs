@@ -6,13 +6,28 @@ use futures_util::StreamExt;
 use genai::chat::ToolCall;
 
 struct Session {
-    token: String,
+    refresh_token: String,
+    id_token: String,
     email: String,
     plan: String,
 }
 
+fn local_host(url: &str) -> bool {
+    url.contains("127.0.0.1") || url.contains("localhost")
+}
+
 fn api_base() -> String {
-    std::env::var("ARDULOOPS_API").unwrap_or_else(|_| "http://127.0.0.1:8788".into())
+    // Hosting login posts the handoff to Cloud Run. A local ARDULOOPS_API is only
+    // paired with a local cabinet (ARDULOOPS_AUTH_ORIGIN on 127.0.0.1).
+    if local_host(&auth_origin()) {
+        return std::env::var("ARDULOOPS_API").unwrap_or_else(|_| "http://127.0.0.1:8788".into());
+    }
+    std::env::var("ARDULOOPS_HOSTED_API").unwrap_or_else(|_| "https://api-qm4zps6yqa-ew.a.run.app".into())
+}
+
+fn firebase_web_key() -> String {
+    std::env::var("ARDULOOPS_FIREBASE_API_KEY")
+        .unwrap_or_else(|_| "AIzaSyBdm2Ih-WzEWJpWb4_CIERBX0rvf9gp0Wc".into())
 }
 
 fn session_path() -> std::path::PathBuf {
@@ -22,15 +37,84 @@ fn session_path() -> std::path::PathBuf {
 fn load_session() -> Option<Session> {
     let bytes = fs::read(session_path()).ok()?;
     let value: Value = serde_json::from_slice(&bytes).ok()?;
-    let token = value["token"].as_str()?.to_string();
-    if token.is_empty() {
+    let refresh_token = value["refresh_token"].as_str()?.to_string();
+    if refresh_token.is_empty() {
         return None;
     }
     Some(Session {
-        token,
+        refresh_token,
+        id_token: value["id_token"].as_str().unwrap_or("").to_string(),
         email: value["email"].as_str().unwrap_or("").to_string(),
         plan: value["plan"].as_str().unwrap_or("free").to_string(),
     })
+}
+
+fn form_encode(value: &str) -> String {
+    let mut out = String::new();
+    for byte in value.bytes() {
+        match byte {
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => out.push(byte as char),
+            _ => out.push_str(&format!("%{byte:02X}")),
+        }
+    }
+    out
+}
+
+fn jwt_exp(token: &str) -> Option<u64> {
+    let payload = token.split('.').nth(1)?;
+    let bytes = base64::Engine::decode(&base64::engine::general_purpose::URL_SAFE_NO_PAD, payload).ok()?;
+    let value: Value = serde_json::from_slice(&bytes).ok()?;
+    value["exp"].as_u64()
+}
+
+fn session_id_token() -> Result<String, String> {
+    let session = load_session().ok_or_else(|| "Sign in required.".to_string())?;
+    let now = SystemTime::now().duration_since(UNIX_EPOCH).map(|item| item.as_secs()).unwrap_or(0);
+    if let Some(exp) = jwt_exp(&session.id_token) {
+        if exp > now + 120 {
+            return Ok(session.id_token);
+        }
+    }
+    let url = format!("https://securetoken.googleapis.com/v1/token?key={}", firebase_web_key());
+    let body = format!(
+        "grant_type=refresh_token&refresh_token={}",
+        form_encode(&session.refresh_token)
+    );
+    let refreshed = match http_agent()
+        .post(&url)
+        .set("content-type", "application/x-www-form-urlencoded")
+        .send_string(&body)
+    {
+        Ok(response) => {
+            let text = response.into_string().unwrap_or_default();
+            serde_json::from_str::<Value>(&text).map_err(|err| err.to_string())?
+        }
+        Err(_) => {
+            clear_session();
+            return Err("Sign in required.".into());
+        }
+    };
+    let id_token = refreshed["id_token"].as_str().unwrap_or("").to_string();
+    if id_token.is_empty() {
+        clear_session();
+        return Err("Sign in required.".into());
+    }
+    let refresh_token = refreshed["refresh_token"].as_str().unwrap_or(&session.refresh_token).to_string();
+    let mut stored = json!({
+        "refresh_token": refresh_token,
+        "id_token": id_token,
+        "email": session.email,
+        "plan": session.plan,
+    });
+    if let Ok(raw) = fs::read_to_string(session_path()) {
+        if let Ok(prev) = serde_json::from_str::<Value>(&raw) {
+            if prev["assistant"].is_string() {
+                stored["assistant"] = prev["assistant"].clone();
+            }
+        }
+    }
+    save_session(&stored)?;
+    Ok(id_token)
 }
 
 fn save_session(value: &Value) -> Result<(), String> {
@@ -69,7 +153,7 @@ fn set_hosted_assistant(on: bool) {
 }
 
 fn http_agent() -> ureq::Agent {
-    ureq::AgentBuilder::new().timeout(std::time::Duration::from_secs(4)).build()
+    ureq::AgentBuilder::new().timeout(std::time::Duration::from_secs(30)).build()
 }
 
 fn html_page(body: &str) -> String {
@@ -112,8 +196,12 @@ fn claim_session(nonce: &str) -> Result<String, String> {
     }
     let url = format!("{}/v1/auth/claim", api_base());
     let value = post_json(&url, None, &json!({"nonce": nonce}))?;
+    if value["refresh_token"].as_str().unwrap_or("").is_empty() {
+        return Err("Sign-in expired. Try again.".into());
+    }
     save_session(&json!({
-        "token": value["token"].as_str().unwrap_or(""),
+        "refresh_token": value["refresh_token"].as_str().unwrap_or(""),
+        "id_token": "",
         "email": value["email"].as_str().unwrap_or(""),
         "uid": value["uid"].as_str().unwrap_or(""),
         "plan": value["plan"].as_str().unwrap_or("free"),
@@ -124,16 +212,12 @@ fn claim_session(nonce: &str) -> Result<String, String> {
     Ok(value["email"].as_str().unwrap_or("").to_string())
 }
 
-fn session_token() -> Option<String> {
-    load_session().map(|s| s.token)
-}
-
 pub fn signed_in() -> bool {
-    session_token().is_some()
+    load_session().is_some()
 }
 
 fn api_post(path: &str, body: &Value) -> Result<Value, String> {
-    let token = session_token().ok_or_else(|| "Sign in required.".to_string())?;
+    let token = session_id_token()?;
     let url = format!("{}{path}", api_base());
     post_json(&url, Some(&token), body)
 }
@@ -178,10 +262,7 @@ pub fn login_url() -> String {
 }
 
 pub fn cabinet_url() -> Result<String, String> {
-    let value = api_post("/v1/auth/link", &json!({}))?;
-    let nonce = value["nonce"].as_str().filter(|item| !item.is_empty())
-        .ok_or_else(|| "Sign-in did not return a code.".to_string())?;
-    Ok(format!("{}/account?nonce={nonce}", auth_origin()))
+    Ok(format!("{}/account", auth_origin()))
 }
 
 pub fn logout_session() {
@@ -284,6 +365,7 @@ fn apply_sse(buf: &mut String, text: &mut String, thought: &mut String, calls: &
                 calls.push(tool_from_event(&value));
                 live_clear_reply();
             }
+            "document" => live_document(&value),
             "error" => return Err(value["message"].as_str().unwrap_or("The model request failed.").to_string()),
             _ => {}
         }
@@ -291,7 +373,7 @@ fn apply_sse(buf: &mut String, text: &mut String, thought: &mut String, calls: &
     Ok(())
 }
 
-fn hosted_request(provider: &str, model: &str, reasoning: &str, system: &str, messages: &[genai::chat::ChatMessage], quota: &str, turn_id: &Option<String>) -> Value {
+fn hosted_request(provider: &str, model: &str, reasoning: &str, system: &str, messages: &[genai::chat::ChatMessage], quota: &str, chat_id: &str, turn_id: &Option<String>) -> Value {
     let wire: Vec<Value> = messages.iter().map(wire_message).collect();
     json!({
         "provider": provider,
@@ -299,6 +381,7 @@ fn hosted_request(provider: &str, model: &str, reasoning: &str, system: &str, me
         "reasoning": reasoning,
         "system": system,
         "quota": quota,
+        "chat_id": chat_id,
         "turn_id": turn_id,
         "messages": wire,
         "tools": tool_schema(),
@@ -331,9 +414,9 @@ async fn read_hosted(resp: reqwest::Response, gen: u64, turn_slot: &mut Option<S
     Ok(ProviderTurn { text, calls, assistant })
 }
 
-fn hosted_turn(provider: &str, model: &str, reasoning: &str, system: &str, messages: &[genai::chat::ChatMessage], quota: &str, turn_slot: &mut Option<String>) -> Result<ProviderTurn, String> {
-    let token = session_token().ok_or_else(|| "Sign in required.".to_string())?;
-    let body = hosted_request(provider, model, reasoning, system, messages, quota, turn_slot);
+fn hosted_turn(provider: &str, model: &str, reasoning: &str, system: &str, messages: &[genai::chat::ChatMessage], quota: &str, chat_id: &str, turn_slot: &mut Option<String>) -> Result<ProviderTurn, String> {
+    let token = session_id_token()?;
+    let body = hosted_request(provider, model, reasoning, system, messages, quota, chat_id, turn_slot);
     let client = hosted_client();
     let url = format!("{}/v1/chat", api_base());
     let gen = turn_gen();
@@ -352,7 +435,7 @@ fn hosted_turn(provider: &str, model: &str, reasoning: &str, system: &str, messa
 fn hosted_complete(provider: &str, model: &str, prompt: &str) -> Result<String, String> {
     let mut slot = None;
     let messages = vec![genai::chat::ChatMessage::user(prompt)];
-    let turn = hosted_turn(provider, model, "", "", &messages, "fold", &mut slot)?;
+    let turn = hosted_turn(provider, model, "", "", &messages, "fold", "", &mut slot)?;
     if turn.text.trim().is_empty() {
         return Err("empty provider response".into());
     }

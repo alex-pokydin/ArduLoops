@@ -13,10 +13,10 @@ import { axisLabel, type Axis } from "../mav/axis";
 import { CopterLoopView } from "./LoopView";
 import { AuditLibrary } from "../components/AuditLibrary";
 import { ControllerView } from "../components/ControllerView";
-import { WorkspaceTabs, type WorkspaceId } from "../components/WorkspaceTabs";
+import { COPTER_WORKSPACES, WorkspaceTabs, type WorkspaceId } from "../components/WorkspaceTabs";
+import { MissionView } from "../components/MissionView";
 
 const ScriptsLibrary = lazy(() => import("../components/ScriptsLibrary").then((mod) => ({ default: mod.ScriptsLibrary })));
-const COPTER_TABS: WorkspaceId[] = ["loops", "firmware", "scripts", "audit"];
 
 export function CopterApp({
   log,
@@ -53,10 +53,25 @@ export function CopterApp({
     }
   }
 
+  if (workspace === "mission") {
+    return (
+      <main>
+        <MissionView current="mission" ids={COPTER_WORKSPACES} onWorkspace={setWorkspace} />
+        <Aside
+          log={log}
+          sel={sel}
+          onSel={onPick}
+          axis={axis}
+          inspect={<CopterInspect sel={sel} onSel={onPick} axis={axis} showAll={showAll} />}
+        />
+      </main>
+    );
+  }
+
   if (workspace === "firmware") {
     return (
       <main>
-        <ControllerView onWorkspace={setWorkspace} />
+        <ControllerView ids={COPTER_WORKSPACES} onWorkspace={setWorkspace} />
         <Aside
           log={log}
           sel={sel}
@@ -72,7 +87,7 @@ export function CopterApp({
     return (
       <main>
         <Suspense fallback={<section className="scope work"><p className="work-empty">…</p></section>}>
-          <ScriptsLibrary current="scripts" ids={COPTER_TABS} onWorkspace={setWorkspace} />
+          <ScriptsLibrary current="scripts" ids={COPTER_WORKSPACES} onWorkspace={setWorkspace} />
         </Suspense>
         <Aside
           log={log}
@@ -88,7 +103,7 @@ export function CopterApp({
   if (workspace === "audit") {
     return (
       <main>
-        <AuditLibrary current="audit" ids={COPTER_TABS} onWorkspace={setWorkspace} />
+        <AuditLibrary current="audit" ids={COPTER_WORKSPACES} onWorkspace={setWorkspace} />
         <Aside
           log={log}
           sel={sel}
@@ -107,7 +122,7 @@ export function CopterApp({
           frame="copter"
           col1Default={col1Default}
           toolbar={<>
-            <WorkspaceTabs current="loops" ids={COPTER_TABS} onSelect={setWorkspace} />
+            <WorkspaceTabs current="loops" ids={COPTER_WORKSPACES} onSelect={setWorkspace} />
             <AxisSwitch axis={axis} onAxis={onAxis} />
           </>}
           scheme={<Cascade sel={sel} onSel={onPick} axis={axis} showAll={showAll} onShowAll={setShowAll} />}

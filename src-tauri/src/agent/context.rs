@@ -324,6 +324,9 @@ fn for_context(role: &str, body: &str) -> String {
     if role == "quote" {
         return quote_for_model(body);
     }
+    if role == "doc" {
+        return format!("A document link was saved for this account: {body}");
+    }
     if role != "tool" {
         return body.to_string();
     }

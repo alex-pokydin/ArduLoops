@@ -3,11 +3,15 @@ import { useT } from "../i18n/i18n";
 const TABS = [
   { id: "loops", label: "loops" },
   { id: "firmware", label: "controller" },
+  { id: "mission", label: "mission" },
   { id: "scripts", label: "lua" },
   { id: "audit", label: "audit" },
 ] as const;
 
 export type WorkspaceId = (typeof TABS)[number]["id"];
+
+export const COPTER_WORKSPACES: WorkspaceId[] = ["loops", "firmware", "mission", "scripts", "audit"];
+export const PLANE_WORKSPACES: WorkspaceId[] = ["loops", "firmware", "mission", "scripts", "audit"];
 
 export function WorkspaceTabs({
   current,

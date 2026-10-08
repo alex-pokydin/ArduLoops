@@ -1,7 +1,7 @@
 import { Fragment, memo, useEffect, useState, useSyncExternalStore } from "react";
 import { useT } from "../i18n/i18n";
 import { getSetupSnapshot, subscribe } from "../mav/store";
-import { useStorePicked } from "../mav/view";
+import { useStorePicked, useVehicle } from "../mav/view";
 import { BatteryWizard } from "./BatterySetup";
 import { CalibrationPanel } from "./CalibrationPanel";
 import { ParameterLibrary } from "./ParameterLibrary";
@@ -155,25 +155,23 @@ function StepIcon({ kind }: { kind: Step["kind"] }) {
 
 export const HardwareSetup = memo(function HardwareSetup() {
   const t = useT();
+  const vehicle = useVehicle();
   const face = useStorePicked<{
     frame: "copter" | "plane";
-    known: boolean;
     glances: { text: string; live: boolean }[];
   }>(
     (s) => {
-      const frame = s.frame === "plane" ? "plane" : "copter";
+      const frame = vehicle;
       const steps = frame === "plane" ? PLANE : COPTER;
       const params = s.params || {};
       const rc = s.rc ?? [];
       return {
         frame,
-        known: s.frame === "plane" || s.frame === "copter",
         glances: steps.map((item) => stepGlance(item.kind, frame, params, rc)),
       };
     },
     (a, b) =>
       a.frame === b.frame &&
-      a.known === b.known &&
       a.glances.length === b.glances.length &&
       a.glances.every((g, i) => g.text === b.glances[i].text && g.live === b.glances[i].live),
   );
@@ -191,8 +189,6 @@ export const HardwareSetup = memo(function HardwareSetup() {
         {t("First setup for a {frame}.", { frame: t(frame) })}
         {" "}
         {t("This is the order of work, not a list of finished items.")}
-        {" "}
-        {face.known ? null : t("This list is for a copter until the heartbeat says plane.")}
         {" "}
         <a href={guide} target="_blank" rel="noreferrer">{t("ArduPilot mandatory hardware")}</a>
       </p>

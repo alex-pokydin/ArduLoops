@@ -3,10 +3,19 @@
 
 #[cfg(test)]
 mod link_wait_tests {
-        use super::{admit_chart, append_steer, attached_log_note, batch_token, begin_live, call_again, call_provider, change_detail, chat_tools, claim_steers_through, compact_prompt, connect_already_up, conversation_prompt, default_model, drain_steers, end_live, failure_body, fit_result, halt_turn, link_fresh, live_buffer, live_fields, live_reply, live_status, live_thinking, live_thought, load_secrets, log_download_wait_s, next_fold_turn, note_stopped_turns_on, note_tool, outcome_item, plan_context, provider_failure, provider_model, provider_turn, reasoning_effort, render_context, scrub_chart, show_live, stamp_live, tool_schema, tool_text, turn_halted, turn_is_live, turn_options, ui_notes, wizard_line, wizard_name_ok, xml_block, ChartBook, ChartSlot, MsgRow, SKILL_ROOT};
+        use super::{admit_chart, append_steer, attached_log_note, batch_token, begin_live, call_again, call_provider, change_detail, chat_tools, claim_steers_through, compact_prompt, connect_already_up, conversation_prompt, default_model, drain_steers, end_live, failure_body, fit_result, halt_turn, link_fresh, live_buffer, live_fields, live_reply, live_status, live_thinking, live_thought, load_secrets, log_download_wait_s, next_fold_turn, note_stopped_turns_on, note_tool, outcome_item, plan_context, provider_failure, provider_model, provider_turn, reasoning_effort, render_context, scrub_chart, show_live, stamp_live, tool_schema, tool_text, turn_halted, turn_is_live, turn_options, ui_notes, wizard_frame_ok, wizard_line, wizard_name_ok, wizard_vehicle, xml_block, ChartBook, ChartSlot, MsgRow, SKILL_ROOT};
     use crate::link::Sample;
     use rusqlite::Connection;
     use serde_json::json;
+
+    #[test]
+    fn save_document_is_not_a_client_tool() {
+        let tools = tool_schema();
+        let list = tools.as_array().expect("schema");
+        assert!(!list.iter().any(|tool| tool["name"] == "save_document"));
+        let tools_list = chat_tools();
+        assert!(!tools_list.iter().any(|tool| tool.name.to_string() == "save_document"));
+    }
 
     #[test]
     fn spread_stays_a_ratio_in_the_tool_description() {
@@ -693,8 +702,16 @@ mod link_wait_tests {
         assert_eq!(tools.len(), listed.len());
         assert!(tools.iter().any(|tool| tool.name.to_string() == "log_compute"));
         assert!(tools.iter().any(|tool| tool.name.to_string() == "wizard_widget"));
-        assert!(wizard_name_ok("accel") && wizard_name_ok("compass") && wizard_name_ok("compass_mot") && wizard_name_ok("motors") && wizard_name_ok("radio") && wizard_name_ok("modes") && wizard_name_ok("battery"));
+        assert!(wizard_name_ok("accel") && wizard_name_ok("compass") && wizard_name_ok("compass_mot") && wizard_name_ok("motors") && wizard_name_ok("radio") && wizard_name_ok("modes") && wizard_name_ok("battery") && wizard_name_ok("failsafe") && wizard_name_ok("servos") && wizard_name_ok("airspeed"));
         assert!(!wizard_name_ok("horizon") && !wizard_name_ok(""));
+        assert_eq!(wizard_vehicle(wizard_frame_ok("accel", "plane").unwrap()), "both");
+        assert_eq!(wizard_vehicle(wizard_frame_ok("motors", "copter").unwrap()), "copter");
+        assert_eq!(wizard_vehicle(wizard_frame_ok("servos", "plane").unwrap()), "plane");
+        assert_eq!(wizard_vehicle(wizard_frame_ok("airspeed", "plane").unwrap()), "plane");
+        assert!(wizard_frame_ok("servos", "copter").is_err());
+        assert!(wizard_frame_ok("motors", "plane").is_err());
+        assert!(wizard_frame_ok("airspeed", "").is_err());
+        assert!(wizard_frame_ok("failsafe", "copter").is_ok() && wizard_frame_ok("failsafe", "plane").is_ok());
         assert_eq!(wizard_line(&json!({"title": "  Калібрування   компаса  "}), "title", 80).unwrap(), "Калібрування компаса");
         assert!(wizard_line(&json!({"title": ""}), "title", 80).is_err());
         assert!(wizard_line(&json!({"title": "x".repeat(81)}), "title", 80).is_err());

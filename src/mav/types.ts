@@ -45,6 +45,21 @@ export type Sample = {
   aspd: number | null;
   gspd: number | null;
   hdg: number | null;
+  /** GLOBAL_POSITION_INT, degrees. Where the EKF says the vehicle is. */
+  lat?: number | null;
+  lon?: number | null;
+  /** GPS_RAW_INT, degrees. */
+  gps_lat?: number | null;
+  gps_lon?: number | null;
+  gps_sats?: number | null;
+  gps_fix?: number | null;
+  /** SITL ground truth. Absent on a real board. */
+  truth_lat?: number | null;
+  truth_lon?: number | null;
+  home_lat?: number | null;
+  home_lon?: number | null;
+  /** MISSION_CURRENT sequence. Item 0 is home. */
+  wp_seq?: number | null;
   /** VFR_HUD throttle 0…100. */
   thr_out: number | null;
   /** Rangefinder distance, metres. */

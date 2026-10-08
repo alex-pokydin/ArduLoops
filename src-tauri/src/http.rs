@@ -6,7 +6,7 @@ use std::sync::mpsc::Sender;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
-use crate::link::{mode_custom, remember_brief, Cmd, LogBrief, Sample, ScriptJob};
+use crate::link::{mode_custom, remember_brief, Cmd, LogBrief, MissionItem, Sample, ScriptJob};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 pub const HTTP_ADDR: &str = "127.0.0.1:8767";
@@ -236,6 +236,61 @@ fn handle(stream: TcpStream, latest: Arc<Mutex<Sample>>, tx: Sender<Cmd>) -> std
             || message == "Compass calibration accepted";
         return reply(&mut socket, if ok { 200 } else { 409 }, "application/json",
             &serde_json::to_vec(&serde_json::json!({"ok":ok,"message":message}))?);
+    }
+
+    if method == "POST" && path == "/mission" {
+        let len = headers
+            .get("content-length")
+            .and_then(|v| v.parse::<usize>().ok())
+            .unwrap_or(0)
+            .min(32_768);
+        let mut body = vec![0u8; len];
+        if len > 0 {
+            reader.read_exact(&mut body)?;
+        }
+        let mut socket = reader.into_inner();
+        let parsed = serde_json::from_slice::<MissionPost>(&body);
+        let Ok(parsed) = parsed else {
+            return reply(
+                &mut socket,
+                400,
+                "application/json",
+                &serde_json::to_vec(&serde_json::json!({"ok": false, "message": "Bad mission"}))?,
+            );
+        };
+        if let Err(message) = mission_items_ok(&parsed.items) {
+            return reply(
+                &mut socket,
+                400,
+                "application/json",
+                &serde_json::to_vec(&serde_json::json!({"ok": false, "message": message}))?,
+            );
+        }
+        let (result_tx, result_rx) = std::sync::mpsc::channel();
+        if tx
+            .send(Cmd::Mission {
+                items: parsed.items,
+                reply: result_tx,
+            })
+            .is_err()
+        {
+            return reply(
+                &mut socket,
+                503,
+                "application/json",
+                &serde_json::to_vec(&serde_json::json!({"ok": false, "message": "No link"}))?,
+            );
+        }
+        let message = result_rx
+            .recv_timeout(Duration::from_secs(12))
+            .unwrap_or_else(|_| "Mission upload timed out".into());
+        let ok = message == "Mission uploaded" || message == "Mission cleared";
+        return reply(
+            &mut socket,
+            if ok { 200 } else { 409 },
+            "application/json",
+            &serde_json::to_vec(&serde_json::json!({"ok": ok, "message": message}))?,
+        );
     }
 
     if method == "POST" && path == "/cmd" {
@@ -1324,6 +1379,32 @@ fn script_exchange(tx: &Sender<Cmd>, job: ScriptJob, wait: Duration) -> Result<s
     let (reply_tx, reply_rx) = std::sync::mpsc::channel();
     tx.send(Cmd::Script { job, reply: reply_tx }).map_err(|_| "Link stopped".to_string())?;
     reply_rx.recv_timeout(wait).unwrap_or_else(|_| Err("Script request timed out".into()))
+}
+
+#[derive(serde::Deserialize)]
+struct MissionPost {
+    items: Vec<MissionItem>,
+}
+
+fn mission_items_ok(items: &[MissionItem]) -> Result<(), &'static str> {
+    if items.len() > 48 {
+        return Err("Too many waypoints");
+    }
+    for item in items {
+        if !matches!(item.kind.as_str(), "waypoint" | "takeoff" | "rtl" | "loiter") {
+            return Err("Bad mission");
+        }
+        if !item.lat.is_finite() || !item.lon.is_finite() || !item.alt.is_finite() {
+            return Err("Bad mission");
+        }
+        if item.kind != "rtl" && (item.lat.abs() > 90.0 || item.lon.abs() > 180.0) {
+            return Err("Bad mission");
+        }
+        if item.alt.abs() > 5000.0 {
+            return Err("Bad mission");
+        }
+    }
+    Ok(())
 }
 
 fn reply(socket: &mut TcpStream, code: u16, ctype: &str, body: &[u8]) -> std::io::Result<()> {

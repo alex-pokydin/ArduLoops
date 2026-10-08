@@ -19,6 +19,7 @@ struct LiveTurn {
     step: String,
     reply: String,
     note: String,
+    docs: Vec<(String, String, String)>,
 }
 
 static LIVE: Mutex<Option<LiveTurn>> = Mutex::new(None);
@@ -36,6 +37,7 @@ fn begin_live(chat: &str) -> u64 {
             step: String::new(),
             reply: String::new(),
             note: String::new(),
+            docs: Vec::new(),
         });
     }
     gen
@@ -219,6 +221,31 @@ fn brief_value(value: &Value) -> String {
     }
 }
 
+fn live_document(doc: &Value) {
+    let url = doc["url"].as_str().unwrap_or("").trim().to_string();
+    if url.is_empty() {
+        return;
+    }
+    let title = doc["title"].as_str().unwrap_or("Document").trim().to_string();
+    let format = doc["format"].as_str().unwrap_or("").trim().to_string();
+    let mut chat = String::new();
+    let mut fresh = false;
+    live_mut(|live| {
+        chat = live.chat.clone();
+        if live.docs.iter().any(|item| item.2 == url) {
+            return;
+        }
+        live.docs.push((title.clone(), format.clone(), url.clone()));
+        fresh = true;
+    });
+    if !fresh || chat.is_empty() {
+        return;
+    }
+    if let Ok(c) = conn() {
+        note_doc(&c, &chat, &json!({ "title": title, "format": format, "url": url }));
+    }
+}
+
 fn live_status(chat: &str) -> Value {
     let guard = LIVE.lock().ok();
     let Some(live) = guard.as_ref().and_then(|guard| guard.as_ref()) else {
@@ -227,5 +254,6 @@ fn live_status(chat: &str) -> Value {
     if live.chat != chat {
         return json!({ "active": false });
     }
-    json!({ "active": true, "tool": live.tool, "input": live.input, "thought": thought_text(live), "reply": live.reply, "note": live.note })
+    let docs: Vec<Value> = live.docs.iter().map(|(title, format, url)| json!({ "title": title, "format": format, "url": url })).collect();
+    json!({ "active": true, "tool": live.tool, "input": live.input, "thought": thought_text(live), "reply": live.reply, "note": live.note, "docs": docs })
 }

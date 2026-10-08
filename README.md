@@ -93,10 +93,10 @@ GitHub Actions (`.github/workflows/release.yml`) builds Windows NSIS/MSI, Linux 
 
 Release assets:
 
-- `ArduLoops_2.0.0_x64-setup.exe` / `ArduLoops_2.0.0_x64_en-US.msi` — Windows
+- `ArduLoops_2.1.0_x64-setup.exe` / `ArduLoops_2.1.0_x64_en-US.msi` — Windows
 - `.deb` / `.rpm` / `.AppImage` — Linux x86_64
-- `ArduLoops_2.0.0_aarch64.dmg` / `ArduLoops_2.0.0_x64.dmg` — macOS (unsigned), with bundled SITL
-- `ArduLoops_2.0.0_aarch64.apk` — Android arm64, link client only (sideload)
+- `ArduLoops_2.1.0_aarch64.dmg` / `ArduLoops_2.1.0_x64.dmg` — macOS (unsigned), with bundled SITL
+- `ArduLoops_2.1.0_aarch64.apk` — Android arm64, link client only (sideload)
 
 ## Options
 

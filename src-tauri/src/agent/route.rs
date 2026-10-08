@@ -306,7 +306,7 @@ fn note_stopped_turns_on(c: &Connection) {
     }
     for chat in chats {
         let last: Option<String> = c.query_row(
-            "SELECT role FROM ai_message WHERE chat_id=?1 AND role NOT IN ('held', 'compact', 'context', 'work', 'attach', 'quote') ORDER BY id DESC LIMIT 1",
+            "SELECT role FROM ai_message WHERE chat_id=?1 AND role NOT IN ('held', 'compact', 'context', 'work', 'attach', 'quote', 'doc') ORDER BY id DESC LIMIT 1",
             [&chat],
             |row| row.get(0),
         ).ok();

@@ -12,7 +12,13 @@ type Pane = (typeof PANES)[number];
 
 const TAB_LABEL: Partial<Record<Pane, string>> = { calibration: "Setup" };
 
-export function ControllerView({ onWorkspace }: { onWorkspace: (id: WorkspaceId) => void }) {
+export function ControllerView({
+  ids,
+  onWorkspace,
+}: {
+  ids: WorkspaceId[];
+  onWorkspace: (id: WorkspaceId) => void;
+}) {
   const t = useT();
   const [pane, setPane] = useState<Pane>("calibration");
   const [body, setBody] = useState<Pane>("calibration");
@@ -24,7 +30,7 @@ export function ControllerView({ onWorkspace }: { onWorkspace: (id: WorkspaceId)
   return (
     <section className="scope work">
       <div className="work-bar">
-        <WorkspaceTabs current="firmware" ids={["loops", "firmware", "scripts", "audit"]} onSelect={onWorkspace} />
+        <WorkspaceTabs current="firmware" ids={ids} onSelect={onWorkspace} />
       </div>
       <ControllerBoard />
       <div className="studio-tabs controller-tabs" role="tablist" aria-label={t("controller")}>

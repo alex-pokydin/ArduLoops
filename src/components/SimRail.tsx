@@ -6,6 +6,8 @@ import { SITL_LINK } from "../mav/link";
 import {
   catalogDef,
   isSitl,
+  geoToDegrees,
+  geoToMeters,
   resolveSimKey,
   SIM_ENGINE_FAIL,
   SIM_GROUPS,
@@ -434,20 +436,23 @@ function SimKnobRow({ knob, sample }: { knob: SimKnob; sample: Sample }) {
   const params = sample.params || {};
   const name = resolveSimKey(knob, params);
   const remote = name != null ? params[name] : null;
+  const lat = sample.lat ?? sample.home_lat ?? sample.truth_lat ?? 0;
   const [local, setLocal] = useState<number | null>(null);
   const dragging = useRef(false);
   const timer = useRef(0);
-  const shown = dragging.current && local != null ? local : (local ?? remote ?? knob.def);
+  const remoteShown = remote == null ? null : knob.geo ? geoToMeters(knob.geo, remote, lat) : remote;
+  const shown = dragging.current && local != null ? local : (local ?? remoteShown ?? knob.def);
 
   useEffect(() => {
-    if (!dragging.current && remote != null) setLocal(remote);
-  }, [remote]);
+    if (!dragging.current && remoteShown != null) setLocal(remoteShown);
+  }, [remoteShown]);
 
   function push(v: number, logIt: boolean) {
     if (!name) return;
     setLocal(v);
+    const raw = knob.geo ? geoToDegrees(knob.geo, v, lat) : v;
     const fire = () => {
-      for (const key of writeSimKeys(knob, params)) send({ op: "param", name: key, value: v });
+      for (const key of writeSimKeys(knob, params)) send({ op: "param", name: key, value: raw });
       if (logIt) addLog(`${name} ${fmtSim(knob, v, t)}`, "cmd");
     };
     if (logIt) {
@@ -505,7 +510,7 @@ function SimKnobRow({ knob, sample }: { knob: SimKnob; sample: Sample }) {
         min={knob.min}
         max={knob.max}
         step={knob.step}
-        value={shown}
+        value={Math.min(knob.max, Math.max(knob.min, shown))}
         title={name}
         onPointerDown={() => {
           dragging.current = true;
@@ -533,6 +538,7 @@ function fmtSim(k: SimKnob, v: number, t: (key: string) => string): string {
   }
   if (k.unit === "%") return `${Math.round(v * 100)}%`;
   if (k.unit === "Ah" && v <= 0) return "∞";
+  if (k.geo && Math.abs(v) >= 1000) return `${(v / 1000).toFixed(1)} km`;
   const n = k.digits === 0 ? String(Math.round(v)) : v.toFixed(k.digits);
   if (!k.unit) return n;
   if (k.unit === "°" || k.unit === "×") return n + k.unit;

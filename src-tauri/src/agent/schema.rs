@@ -771,22 +771,25 @@ fn tool_schema() -> Value {
             "name": "wizard_widget",
             "description": doc!(
                 "Show a button that opens one setup wizard.",
-                "Pass `wizard`: `accel` (six-face accelerometer), `compass` (offsets and diagonals), `compass_mot` (motor-current compensation), `motors` (output binding, idle, order, and spin direction), `radio` (live channels, stick ends, and channel reverse), `modes` (flight-mode switch channel and the six positions), or `battery` (monitor, capacity, voltage match, and current zero).",
+                "Each name is for a copter, a plane, or both. The call fails when the heartbeat is missing or is the other vehicle.",
+                "Copter and plane: `accel` (six-face accelerometer), `compass` (offsets and diagonals), `radio` (live channels, stick ends, and channel reverse), `modes` (flight-mode switch channel and the six positions; the list follows the heartbeat), `battery` (monitor, capacity, voltage match, and current zero), `failsafe` (radio-loss and low-battery actions; the parameters follow the heartbeat).",
+                "Copter only: `compass_mot` (motor-current compensation), `motors` (output binding, idle, order, and spin direction).",
+                "Plane only: `servos` (four surfaces, reverse, and free outputs), `airspeed` (no sensor, or leave the sensor that is already set).",
                 "`radio` does not change the receiver port, the flight-mode switch, or the failsafe. `modes` and `battery` do not change the failsafe.",
                 "Pass `title` and `description` in the user's language. The card shows the title, then why this run is needed.",
                 "The turn stops until the user finishes that wizard or cancels the card. Safe mode does not skip this and does not start the wizard.",
                 "The button only opens the window. The user presses every step inside it, including any step that spins a motor.",
                 "`completed` means they reached the end. `result.measures` holds the values that screen can read, such as offsets, fitness, idle, compensation, or the six flight modes.",
                 "`cancelled` means they closed the window or rejected the card before the end. Measures may still show the current values.",
-                "`failed` means the procedure ended in failure, or this frame has no motor wizard.",
+                "`failed` means the procedure ended in failure, the heartbeat is the wrong vehicle, or this frame has no motor wizard.",
             ),
             "parameters": {
                 "type": "object",
                 "properties": {
                     "wizard": {
                         "type": "string",
-                        "enum": ["accel", "compass", "compass_mot", "motors", "radio", "modes", "battery"],
-                        "description": "Which wizard window to open: `accel`, `compass`, `compass_mot`, `motors`, `radio`, `modes`, or `battery`."
+                        "enum": ["accel", "compass", "compass_mot", "motors", "radio", "modes", "battery", "failsafe", "servos", "airspeed"],
+                        "description": "Which wizard window to open. Copter and plane: `accel`, `compass`, `radio`, `modes`, `battery`, `failsafe`. Copter only: `compass_mot`, `motors`. Plane only: `servos`, `airspeed`."
                     },
                     "title": {
                         "type": "string",

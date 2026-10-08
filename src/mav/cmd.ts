@@ -39,6 +39,29 @@ export async function writeParam(name: string, value: number): Promise<string | 
   return body.error || `HTTP ${response.status}`;
 }
 
+export type MissionItem = {
+  kind: "waypoint" | "takeoff" | "rtl" | "loiter";
+  lat: number;
+  lon: number;
+  alt: number;
+};
+
+/** Null means the vehicle accepted the mission. A string is the refusal. */
+export async function uploadMission(items: MissionItem[]): Promise<string | null> {
+  try {
+    const response = await fetch(`${APP_HTTP}/mission`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ items }),
+    });
+    const body = (await response.json().catch(() => ({}))) as { ok?: boolean; message?: string };
+    if (response.ok && body.ok) return null;
+    return body.message || `HTTP ${response.status}`;
+  } catch {
+    return "No link";
+  }
+}
+
 export function send(obj: Cmd): void {
   void fetch(`${APP_HTTP}/cmd`, {
     method: "POST",

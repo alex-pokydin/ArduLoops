@@ -245,6 +245,12 @@ fn drain_cmds(
 ) -> Drain {
     if let Some(u) = sitl.take_connect() {
         let mut g = url.lock().unwrap();
+        // Cygwin SITL dies when its only TCP client disconnects. The link is
+        // often already retrying this port, so a second connect to the same
+        // URL would drop the live socket and kill the sim.
+        if conn.is_some() && *g == u {
+            return Drain::None;
+        }
         *g = u;
         return Drain::Reconnect;
     }
@@ -309,8 +315,16 @@ fn drain_cmds(
             Ok(cmd) => {
                 if let Some(conn) = conn {
                     apply_cmd(conn, st, cmd, on_sample, latest, sitl);
-                } else if let Cmd::ParamsRestore { reply, .. } = cmd {
-                    let _ = reply.send(Err("Restore requires a fresh disarmed connection".into()));
+                } else {
+                    match cmd {
+                        Cmd::ParamsRestore { reply, .. } => {
+                            let _ = reply.send(Err("Restore requires a fresh disarmed connection".into()));
+                        }
+                        Cmd::Mission { reply, .. } => {
+                            let _ = reply.send("No link".into());
+                        }
+                        _ => {}
+                    }
                 }
             }
             Err(TryRecvError::Empty) => return Drain::None,
@@ -510,7 +524,7 @@ pub fn run_loop(
                     handle_msg(&mut st, &hdr, msg);
                     if !requested_initial && st.sample.heartbeat_at > 0.0 {
                         request_streams(&*conn, &st);
-                        request_params(&*conn, &st);
+                        request_param_list(&*conn, &st);
                         request_diagnostics(&*conn, &st);
                         requested_initial = true;
                     }

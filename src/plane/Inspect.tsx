@@ -1,3 +1,4 @@
+import { FoldSection } from "../components/Aside";
 import { fmtGain, liveGain, paramUi } from "../components/GainRow";
 import { t, useT } from "../i18n/i18n";
 import type { Gain } from "../lib/gains";
@@ -118,11 +119,10 @@ export function PlaneInspect({
   const outgoing = EDGES.filter((e) => e.from === sel && edgeLiveIn(e, modeKey, live));
   const dimmed = node ? !live.has(node.id) : false;
 
+  const title = node ? t(node.title) : band ? t(BAND_LABEL[band]) : t("How this mode flies");
   return (
+    <FoldSection label={title} scroll>
     <div className="inspect">
-      <div className="inspect-head">
-        <h2>{node ? t(node.title) : band ? t(BAND_LABEL[band]) : t("How this mode flies")}</h2>
-      </div>
       {node ? (
         <>
           <div className={"kind " + nodeBand(node.id)}>
@@ -207,5 +207,6 @@ export function PlaneInspect({
         </>
       )}
     </div>
+    </FoldSection>
   );
 }

@@ -36,7 +36,7 @@ fn converse(
         live_thinking();
         let quota = if turn_id.is_some() { "continue" } else { "turn" };
         let turn = if key.is_empty() {
-            hosted_turn(provider, model, reasoning, system, &messages, quota, &mut turn_id)?
+            hosted_turn(provider, model, reasoning, system, &messages, quota, chat, &mut turn_id)?
         } else {
             provider_turn(provider, model, key, reasoning, system, &messages)?
         };

@@ -284,7 +284,7 @@ export function LabDialog({
                     .catch(() => openExternal("https://arduloops-api.firebaseapp.com/account"));
                 }}
               >
-                {t("Account")}
+                {t("ArduLoops Cloud")}
               </a>
             ) : null}
             <button

@@ -104,7 +104,10 @@ mod diagnostics_tests {
 #[cfg(test)]
 mod live_buffer_tests {
     use super::{handle_msg, live_meta, wall_time, with_live_cleared, LinkState, Sample};
-    use mavlink::ardupilotmega::{ATTITUDE_DATA, DISTANCE_SENSOR_DATA, OPTICAL_FLOW_DATA, RANGEFINDER_DATA, MavMessage};
+    use mavlink::ardupilotmega::{
+        ATTITUDE_DATA, DISTANCE_SENSOR_DATA, GLOBAL_POSITION_INT_DATA, OPTICAL_FLOW_DATA, RANGEFINDER_DATA,
+        SIM_STATE_DATA, SIMSTATE_DATA, MavMessage,
+    };
     use mavlink::MavHeader;
 
     #[test]
@@ -157,6 +160,41 @@ mod live_buffer_tests {
             MavMessage::ATTITUDE(ATTITUDE_DATA { roll: 0.5, ..Default::default() }),
         );
         assert!((st.sample.roll - 0.5_f64.to_degrees()).abs() < 1e-6);
+        handle_msg(
+            &mut st,
+            &hdr,
+            MavMessage::GLOBAL_POSITION_INT(GLOBAL_POSITION_INT_DATA {
+                lat: -353_632_611,
+                lon: 1_491_652_371,
+                relative_alt: 12_340,
+                ..Default::default()
+            }),
+        );
+        assert!((st.sample.lat.unwrap_or(0.0) + 35.3632611).abs() < 1e-6);
+        assert!((st.sample.lon.unwrap_or(0.0) - 149.1652371).abs() < 1e-6);
+        assert!((st.sample.alt.unwrap_or(0.0) - 12.34).abs() < 1e-6);
+        handle_msg(
+            &mut st,
+            &hdr,
+            MavMessage::SIMSTATE(SIMSTATE_DATA {
+                lat: -353_632_000,
+                lng: 1_491_652_000,
+                ..Default::default()
+            }),
+        );
+        assert!((st.sample.truth_lat.unwrap_or(0.0) + 35.3632).abs() < 1e-6);
+        assert!((st.sample.truth_lon.unwrap_or(0.0) - 149.1652).abs() < 1e-6);
+        handle_msg(
+            &mut st,
+            &hdr,
+            MavMessage::SIM_STATE(SIM_STATE_DATA {
+                lat: -353_632_610.0,
+                lon: 1_491_652_300.0,
+                ..Default::default()
+            }),
+        );
+        assert!((st.sample.truth_lat.unwrap_or(0.0) + 35.363261).abs() < 1e-4);
+        assert!((st.sample.truth_lon.unwrap_or(0.0) - 149.16523).abs() < 1e-4);
         assert_eq!(st.sample.live_nums.get("ATTITUDE.roll"), Some(&0.5));
         assert!(st.sample.live_nums.contains_key("ATTITUDE.rollspeed"));
     }

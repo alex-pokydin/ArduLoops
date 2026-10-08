@@ -20,7 +20,7 @@ export type AiStatus = {
 
 export type Chat = { id: string; title: string; updated_at: number; vehicle_key?: string };
 export type Msg = { role: string; body: string; at: number };
-export type LiveTurn = { active: boolean; tool?: string; input?: string; thought?: string; reply?: string; note?: string };
+export type LiveTurn = { active: boolean; tool?: string; input?: string; thought?: string; reply?: string; note?: string; docs?: { title: string; format: string; url: string }[] };
 export type Proposal = {
   id: string;
   status: string;

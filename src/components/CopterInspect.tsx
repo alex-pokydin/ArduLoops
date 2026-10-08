@@ -14,6 +14,7 @@ import {
   type NodeDef,
 } from "../cascade";
 import type { Gain } from "../lib/gains";
+import { FoldSection } from "./Aside";
 import { fmtGain, liveGain, paramUi } from "./GainRow";
 import { t, useT } from "../i18n/i18n";
 import { axisTar, axisView, type Axis } from "../mav/axis";
@@ -102,11 +103,10 @@ export function CopterInspect({
   const outgoing = EDGES.filter((e) => e.from === sel && edgeShownIn(e, modeKey, closed));
   const dimmed = node ? !live.has(node.id) : false;
 
+  const title = node ? t(node.title) : band ? t(BAND_LABEL[band]) : t("Why the loops are separate");
   return (
+    <FoldSection label={title} scroll>
     <div className="inspect">
-      <div className="inspect-head">
-        <h2>{node ? t(node.title) : band ? t(BAND_LABEL[band]) : t("Why the loops are separate")}</h2>
-      </div>
       {node ? (
         <>
           <div className={"kind " + nodeBand(node.id)}>
@@ -208,5 +208,6 @@ export function CopterInspect({
         </>
       )}
     </div>
+    </FoldSection>
   );
 }

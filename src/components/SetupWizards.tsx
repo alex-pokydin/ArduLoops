@@ -378,7 +378,9 @@ function ChoiceRow({
   );
 }
 
-export function FailsafeWizard({ frame }: { frame: "copter" | "plane" }) {
+type WizardMeasures = Record<string, number | string | null>;
+
+export function FailsafeWizard({ frame, onDone }: { frame: "copter" | "plane"; onDone?: (measures: WizardMeasures) => void }) {
   const sample = useSample();
   const radioName = frame === "plane" ? "FS_SHORT_ACTN" : "FS_THR_ENABLE";
   const longName = frame === "plane" ? "FS_LONG_ACTN" : "";
@@ -415,7 +417,13 @@ export function FailsafeWizard({ frame }: { frame: "copter" | "plane" }) {
           try {
             const pairs: [string, number][] = [[radioName, radio], ["BATT_FS_LOW_ACT", batt]];
             if (frame === "plane" && long != null) pairs.push(["FS_LONG_ACTN", long]);
-            return await writeList(pairs);
+            const err = await writeList(pairs);
+            if (!err) {
+              const measures: WizardMeasures = { [radioName]: radio, BATT_FS_LOW_ACT: batt };
+              if (frame === "plane" && long != null) measures.FS_LONG_ACTN = long;
+              onDone?.(measures);
+            }
+            return err;
           } finally {
             setBusy(false);
           }
@@ -425,7 +433,18 @@ export function FailsafeWizard({ frame }: { frame: "copter" | "plane" }) {
   );
 }
 
-export function ServoWizard() {
+function servoMeasures(found: { title: string; output: number; reversed: boolean }[], flip: Record<string, boolean>, assigned: Map<string, number>): WizardMeasures {
+  const measures: WizardMeasures = {};
+  for (const surface of found) {
+    const key = surface.title.toLowerCase();
+    const output = surface.output || assigned.get(surface.title) || 0;
+    measures[`${key}_output`] = output || null;
+    measures[`${key}_reversed`] = (flip[surface.title] ?? surface.reversed) ? 1 : 0;
+  }
+  return measures;
+}
+
+export function ServoWizard({ onDone }: { onDone?: (measures: WizardMeasures) => void } = {}) {
   const t = useT();
   const sample = useSample();
   const found = SURFACES.map((surface) => {
@@ -478,7 +497,12 @@ export function ServoWizard() {
                 }
               }
               if (pairs.length < found.filter((surface) => !surface.output).length) return "No free output for a surface.";
-              return await writeList(pairs);
+              const err = await writeList(pairs);
+              if (!err) {
+                const assigned = new Map(pairs.map(([name, fn]) => [found.find((surface) => surface.fn === fn)?.title ?? "", Number(name.replace(/\D/g, ""))]));
+                onDone?.(servoMeasures(found, flip, assigned));
+              }
+              return err;
             } finally {
               setBusy(false);
             }
@@ -497,7 +521,9 @@ export function ServoWizard() {
                 const on = flip[surface.title] ?? surface.reversed;
                 return [[`SERVO${surface.output}_REVERSED`, on ? 1 : 0] as [string, number]];
               });
-              return await writeList(pairs);
+              const err = await writeList(pairs);
+              if (!err) onDone?.(servoMeasures(found, flip, new Map()));
+              return err;
             } finally {
               setBusy(false);
             }
@@ -508,7 +534,7 @@ export function ServoWizard() {
   );
 }
 
-export function AirspeedWizard() {
+export function AirspeedWizard({ onDone }: { onDone?: (measures: WizardMeasures) => void } = {}) {
   const sample = useSample();
   const type = whole(param(sample.params, "ARSPD_TYPE"));
   const [pick, setPick] = useState(type === 0 ? 0 : 1);
@@ -527,10 +553,15 @@ export function AirspeedWizard() {
         busy={busy}
         disabled={!sample.ok || type == null || (pick === 0) === (type === 0)}
         onApply={async () => {
-          if (pick !== 0) return null;
+          if (pick !== 0) {
+            onDone?.({ ARSPD_TYPE: type });
+            return null;
+          }
           setBusy(true);
           try {
-            return await writeList([["ARSPD_TYPE", 0]]);
+            const err = await writeList([["ARSPD_TYPE", 0]]);
+            if (!err) onDone?.({ ARSPD_TYPE: 0 });
+            return err;
           } finally {
             setBusy(false);
           }
