@@ -17,7 +17,7 @@ path = "src/bin/bridge.rs"
 
 [features]
 default = ["desktop"]
-desktop = ["dep:tauri", "dep:tauri-plugin-log", "dep:tauri-build"]
+desktop = ["dep:tauri", "dep:tauri-plugin-log", "dep:tauri-plugin-opener", "dep:tauri-plugin-deep-link", "dep:tauri-build"]
 
 [build-dependencies]
 tauri-build = { version = "2.6.3", optional = true , features = [] }
@@ -28,6 +28,8 @@ serde = { version = "1.0", features = ["derive"] }
 log = "0.4"
 tauri = { version = "2.11.3", optional = true , features = [] }
 tauri-plugin-log = { version = "2", optional = true }
+tauri-plugin-opener = { version = "2", optional = true }
+tauri-plugin-deep-link = { version = "2", optional = true }
 # direct-serial pulls the `serial` crate, whose termios 0.2 dependency does not build for Android.
 mavlink = { version = "0.13.1", default-features = false, features = ["std", "tcp", "udp", "serde", "ardupilotmega"] }
 ureq = { version = "2.12.1", default-features = false, features = ["tls"] }

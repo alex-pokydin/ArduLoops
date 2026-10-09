@@ -125,6 +125,7 @@ export function LabDialog({
       void ai.status().then((s) => {
         setAccount(s.account || null);
         setAiConfigured(s.configured);
+        if (s.account?.signed_in) setAiState("");
         const provider = s.active?.storage === "hosted" ? s.active.provider : "";
         if (provider) {
           setAiProvider((current) => (current === "disabled" ? provider : current));
@@ -251,6 +252,7 @@ export function LabDialog({
                     type="button"
                     className="google-signin"
                     onClick={() => {
+                      setAiState(t("Complete sign-in in the browser."));
                       void ai.loginUrl().then((res) => {
                         openExternal(res.url);
                       }).catch((err: Error) => setAiState(err.message));
@@ -264,7 +266,9 @@ export function LabDialog({
               <span>
                 {account?.signed_in
                   ? t("Signed in as {email}.", { email: account.email || "" })
-                  : t("Sign in to activate the ArduLoops assistant. Your own key still works.")}
+                  : aiState
+                    ? t(aiState)
+                    : t("Sign in to activate the ArduLoops assistant. Your own key still works.")}
                 {account?.signed_in && account.limit != null
                   ? ` ${t("{left} of {limit} requests left today.", { left: Math.max(0, account.limit - (account.used || 0)), limit: account.limit })}`
                   : ""}

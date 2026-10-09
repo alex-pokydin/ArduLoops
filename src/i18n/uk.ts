@@ -194,6 +194,7 @@ export const uk: Record<string, string> = {
   "Signed in as {email}.": "Вхід виконано: {email}.",
   "{left} of {limit} requests left today.": "Сьогодні лишилось {left} з {limit}.",
   "Sign in with Google": "Увійти через Google",
+  "Complete sign-in in the browser.": "Завершіть вхід у браузері.",
   "Sign out": "Вийти",
   "Account": "ArduLoops Cloud",
   "ArduLoops Cloud": "ArduLoops Cloud",

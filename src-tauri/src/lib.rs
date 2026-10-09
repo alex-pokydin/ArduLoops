@@ -73,23 +73,60 @@ pub fn run_bridge() {
 #[cfg(feature = "desktop")]
 mod desktop {
     use super::*;
+    use std::sync::OnceLock;
     use tauri::Manager;
+    use tauri_plugin_opener::OpenerExt;
+
+    static APP: OnceLock<tauri::AppHandle> = OnceLock::new();
+
+    pub fn open_system_url(url: &str) -> Result<(), String> {
+        let app = APP.get().ok_or_else(|| "open the link in the browser".to_string())?;
+        app.opener()
+            .open_url(url, None::<&str>)
+            .map_err(|err| err.to_string())
+    }
 
     pub fn run() {
         let (tx, rx) = mpsc::channel::<Cmd>();
         tauri::Builder::default()
             .plugin(tauri_plugin_log::Builder::default().build())
+            .plugin(tauri_plugin_opener::init())
+            .plugin(tauri_plugin_deep_link::init())
             .setup(move |app| {
                 if let Ok(path) = app.path().app_local_data_dir() {
                     crate::db::set_app_data_dir(path);
                 }
                 crate::agent::note_stopped_turns();
                 spawn_backend(rx, tx, Arc::new(|_: &Sample| {}));
+                let _ = APP.set(app.handle().clone());
+                {
+                    use tauri_plugin_deep_link::DeepLinkExt;
+                    let _ = app.deep_link().on_open_url(|event| {
+                        for item in event.urls() {
+                            crate::agent::complete_auth_url(item.as_str());
+                        }
+                    });
+                    if let Ok(Some(urls)) = app.deep_link().get_current() {
+                        for item in urls {
+                            crate::agent::complete_auth_url(item.as_str());
+                        }
+                    }
+                }
                 Ok(())
             })
             .run(tauri::generate_context!())
             .expect("error while running ArduLoops");
     }
+}
+
+#[cfg(feature = "desktop")]
+pub fn open_system_url(url: &str) -> Result<(), String> {
+    desktop::open_system_url(url)
+}
+
+#[cfg(not(feature = "desktop"))]
+pub fn open_system_url(_: &str) -> Result<(), String> {
+    Err("open the link in the browser".into())
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]

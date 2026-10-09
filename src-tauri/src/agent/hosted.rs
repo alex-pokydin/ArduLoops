@@ -171,6 +171,34 @@ pub fn finish_login(nonce: &str) -> String {
     }
 }
 
+fn nonce_from_auth_url(raw: &str) -> Option<&str> {
+    let url = raw.split('#').next()?;
+    let (base, query) = url.split_once('?')?;
+    if base != "arduloops://auth" && base != "arduloops://auth/" {
+        return None;
+    }
+    query.split('&').find_map(|pair| {
+        let (key, value) = pair.split_once('=')?;
+        (key == "nonce" && !value.is_empty()).then_some(value)
+    })
+}
+
+pub fn complete_auth_url(raw: &str) {
+    if let Some(nonce) = nonce_from_auth_url(raw) {
+        let _ = claim_session(nonce);
+    }
+}
+
+#[cfg(test)]
+mod auth_url {
+    #[test]
+    fn a_mobile_return_carries_the_nonce() {
+        assert_eq!(super::nonce_from_auth_url("arduloops://auth?nonce=deadbeef"), Some("deadbeef"));
+        assert_eq!(super::nonce_from_auth_url("arduloops://auth/?nonce=deadbeef"), Some("deadbeef"));
+        assert_eq!(super::nonce_from_auth_url("http://127.0.0.1:8767/auth/callback?nonce=deadbeef"), None);
+    }
+}
+
 fn post_json(url: &str, token: Option<&str>, body: &Value) -> Result<Value, String> {
     let mut req = http_agent().post(url).set("content-type", "application/json");
     if let Some(token) = token {
@@ -256,9 +284,18 @@ fn auth_origin() -> String {
         .unwrap_or_else(|_| "https://arduloops-api.firebaseapp.com".into())
 }
 
+fn login_return() -> &'static str {
+    if cfg!(any(target_os = "android", target_os = "ios")) {
+        "arduloops://auth"
+    } else {
+        "http://127.0.0.1:8767/auth/callback"
+    }
+}
+
 pub fn login_url() -> String {
     // Google rejects the Cloud Run host. The button is served from Firebase Hosting.
-    format!("{}/login?return=http://127.0.0.1:8767/auth/callback", auth_origin())
+    // Phone browsers cannot reach 127.0.0.1 in this app, so they return via arduloops://auth.
+    format!("{}/login?return={}", auth_origin(), form_encode(login_return()))
 }
 
 pub fn cabinet_url() -> Result<String, String> {

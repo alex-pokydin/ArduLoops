@@ -1264,7 +1264,7 @@ fn open_https(url: &str) -> Result<(), String> {
             .map(|_| ())
             .map_err(|err| err.to_string());
     }
-    #[cfg(all(unix, not(target_os = "macos"), not(target_os = "android")))]
+    #[cfg(all(unix, not(target_os = "macos"), not(target_os = "android"), not(target_os = "ios")))]
     {
         return std::process::Command::new("xdg-open")
             .arg(url)
@@ -1272,10 +1272,9 @@ fn open_https(url: &str) -> Result<(), String> {
             .map(|_| ())
             .map_err(|err| err.to_string());
     }
-    #[cfg(target_os = "android")]
+    #[cfg(any(target_os = "android", target_os = "ios"))]
     {
-        let _ = url;
-        Err("open the link in the browser".into())
+        return crate::open_system_url(url);
     }
 }
 
