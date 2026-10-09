@@ -344,10 +344,13 @@ fn wire_message(message: &genai::chat::ChatMessage) -> Value {
 
 fn hosted_client() -> reqwest::Client {
     install_tls();
-    reqwest::Client::builder()
-        .timeout(std::time::Duration::from_secs(100))
-        .build()
-        .expect("subscription client")
+    let mut builder = reqwest::Client::builder().timeout(std::time::Duration::from_secs(100));
+    // Same as the own-key client: Android has no platform verifier unless Kotlin wires it up.
+    #[cfg(target_os = "android")]
+    {
+        builder = builder.use_preconfigured_tls(mozilla_tls());
+    }
+    builder.build().expect("subscription client")
 }
 
 fn tool_from_event(value: &Value) -> ToolCall {
