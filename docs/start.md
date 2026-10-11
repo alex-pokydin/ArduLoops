@@ -6,8 +6,6 @@ We want an angle. On a copter we command the rate that takes us there. On a wing
 
 Paste a MAVLink URL in the header and click **Link**. Or open **SITL** and **Start**.
 
-![Plot: angle we want and rate we command](plot.png)
-
 ## Link
 
 | URL | Typical use |
@@ -24,8 +22,6 @@ Each SITL TCP port accepts **one** client. Do not point two ArduLoops instances 
 ## Start SITL
 
 **SITL** before the title opens a left rail. Pick copter or plane, **Start**. Windows downloads the Mission Planner sitl-exe, Linux x86_64 downloads firmware `arducopter` / `arduplane`, and the macOS release launches the SITL binaries packed into the app. All three Link `tcpout:127.0.0.1:5770`.
-
-![SITL: vehicle thumbs and start](sitl.png)
 
 To start SITL yourself, build the tree first: [Setting up the Build Environment](https://ardupilot.org/dev/docs/building-the-code.html). Then start a vehicle **without** MAVProxy if ArduLoops is the only GCS:
 
@@ -64,7 +60,7 @@ HEARTBEAT.type mounts the shell. Empty frame until the vehicle speaks.
 
 ### Copter
 
-![Layers: Copter loop map](cascade.png)
+![Copter stand. Map on the left, the selected loop as a scheme, traces underneath.](copter-loops.png)
 
 One page: **map** on the left, **loop** (the selected card as a scheme) top-right, **traces** bottom-right. Expand a pane for more room. **Pause** in the header freezes the picture; MAVLink still runs. Plot window (8–60 s) is in **Options**.
 
@@ -78,15 +74,12 @@ Wiki: [First Time Setup](https://ardupilot.org/copter/docs/initial-setup.html) �
 
 ### Plane
 
-![Map: Plane L1 and TECS](plane-map.png)
+![Plane stand. L1 and TECS outside, roll rate as the open scheme.](plane-loops.png)
 
 Same layout as copter. Click a card — the scheme and traces follow it. Pause is in the header; plot window is in **Options**.
 
 - **Map** — command (stick + mission targets), L1 + TECS outside (not PosControl), roll/pitch angle and rate, yaw damper (AHRS roll, not RLL_RATE), ground steer, then throttle / nose and aileron / elevator / rudder. Empty map shows the mode’s live path; a card shows only its in and out. Roll and pitch are **separate cards**
 - **Loop** — rate = AC_PID + FF, L1 = track → bank, TECS = energy → pitch + throttle, yaw = damper, steer = runway. Click a TECS block on the expanded scheme for extra limits
-
-![Loop: TECS energy scheme](plane-loop.png)
-
 - **Traces** — Watch any block this mode closes (rate: `PID_TUNING`; angle: `nav_roll` / `nav_pitch` vs `ATTITUDE`)
 
 Tune inner loops in **FBWA**, not MANUAL. Pitch numbers are independent of roll.

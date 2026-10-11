@@ -1,6 +1,8 @@
 import { useCallback, useEffect, useState, type FormEvent } from "react";
 import { useT } from "../i18n/i18n";
 import { APP_HTTP } from "../mav/link";
+import type { Sample } from "../mav/types";
+import { usePicked, useVehicle } from "../mav/view";
 type Controller = {
   board_id: number;
   vehicle_id: string;
@@ -41,8 +43,17 @@ function BoardMark({ plane }: { plane: boolean }) {
   );
 }
 
+function linkIsSimulator(sample: Sample): boolean {
+  return !!sample.sitl_running
+    || sample.truth_lat != null
+    || sample.truth_lon != null
+    || Object.keys(sample.params).some((name) => name.startsWith("SIM_"));
+}
+
 export function ControllerBoard() {
   const tr = useT();
+  const planeView = useVehicle() === "plane";
+  const simulator = usePicked(linkIsSimulator);
   const [controller, setController] = useState<Controller | null>(null);
   const [comment, setComment] = useState("");
   const [busy, setBusy] = useState(false);
@@ -87,12 +98,14 @@ export function ControllerBoard() {
 
   return (
     <div className="work-board">
-      <div className="work-mark" aria-hidden="true"><BoardMark plane={controller?.vehicle_id === "plane"} /></div>
+      <div className="work-mark" aria-hidden="true"><BoardMark plane={planeView || controller?.vehicle_id === "plane"} /></div>
       <div className="work-id">
         <b>{controller ? (controller.board_name ?? tr("unknown board")) : "\u00a0"}</b>
         <p>{controller
           ? `${controller.vehicle_id} · #${controller.board_id} · ${tr("System ID {id}", { id: controller.system_id })}${controller.git_identity ? ` · ${controller.git_identity}` : ""}`
-          : tr("Vehicle identity is loading. The library will filter images by board and vehicle type.")}</p>
+          : simulator
+            ? tr("This simulator has no board id. Images are not filtered by a board.")
+            : tr("Vehicle identity is loading. The library will filter images by board and vehicle type.")}</p>
         <p title={controller?.uid ?? controller?.key ?? ""}>{controller?.uid || controller?.key || "\u00a0"}</p>
       </div>
       <form className="work-note board-comment" onSubmit={(event) => void save(event)}>

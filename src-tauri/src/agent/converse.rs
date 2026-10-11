@@ -8,6 +8,7 @@ fn converse(
     key: &str,
     reasoning: &str,
     system: &str,
+    lang: &str,
     prompt: &str,
     sample: &Sample,
     c: &Connection,
@@ -35,11 +36,12 @@ fn converse(
         }
         live_thinking();
         let quota = if turn_id.is_some() { "continue" } else { "turn" };
-        let turn = if key.is_empty() {
-            hosted_turn(provider, model, reasoning, system, &messages, quota, chat, &mut turn_id)?
+        let mut turn = if key.is_empty() {
+            hosted_turn(provider, model, reasoning, system, lang, &messages, quota, chat, &mut turn_id)?
         } else {
             provider_turn(provider, model, key, reasoning, system, &messages)?
         };
+        apply_leaked_tools(&mut turn);
         if turn.calls.is_empty() {
             if turn.text.trim().is_empty() {
                 return Err("empty provider response".into());
@@ -86,22 +88,39 @@ fn tool_text(result: &Value) -> String {
 }
 
 fn scrub_chart(value: &mut Value) {
-    let Some(axes) = value.get_mut("chart").and_then(|chart| chart.get_mut("axes")).and_then(|axes| axes.as_array_mut()) else { return };
-    for axis in axes {
-        let Some(lines) = axis.get_mut("lines").and_then(|lines| lines.as_array_mut()) else { continue };
-        for line in lines {
-            let Some(obj) = line.as_object_mut() else { continue };
-            let (x_n, x_min, x_max) = series_span(obj.get("x"));
-            let (y_n, y_min, y_max) = series_span(obj.get("y"));
-            obj.remove("x");
-            obj.remove("y");
-            obj.insert("points".into(), json!(if x_n > 0 { x_n } else { y_n }));
-            obj.insert("x_min".into(), json_num(x_min));
-            obj.insert("x_max".into(), json_num(x_max));
-            obj.insert("y_min".into(), json_num(y_min));
-            obj.insert("y_max".into(), json_num(y_max));
+    if let Some(axes) = value.get_mut("chart").and_then(|chart| chart.get_mut("axes")).and_then(|axes| axes.as_array_mut()) {
+        for axis in axes {
+            let Some(lines) = axis.get_mut("lines").and_then(|lines| lines.as_array_mut()) else { continue };
+            for line in lines {
+                let Some(obj) = line.as_object_mut() else { continue };
+                let (x_n, x_min, x_max) = series_span(obj.get("x"));
+                let (y_n, y_min, y_max) = series_span(obj.get("y"));
+                obj.remove("x");
+                obj.remove("y");
+                obj.insert("points".into(), json!(if x_n > 0 { x_n } else { y_n }));
+                obj.insert("x_min".into(), json_num(x_min));
+                obj.insert("x_max".into(), json_num(x_max));
+                obj.insert("y_min".into(), json_num(y_min));
+                obj.insert("y_max".into(), json_num(y_max));
+            }
         }
     }
+    let Some(heat) = value.get_mut("chart").and_then(|chart| chart.get_mut("heatmap")).and_then(|heat| heat.as_object_mut()) else { return };
+    let (x_n, x_min, x_max) = series_span(heat.get("x"));
+    let (y_n, y_min, y_max) = series_span(heat.get("y"));
+    let (z_n, z_min, z_max) = matrix_span(heat.get("z"));
+    heat.remove("x");
+    heat.remove("y");
+    heat.remove("z");
+    heat.insert("times".into(), json!(x_n));
+    heat.insert("bins".into(), json!(y_n));
+    heat.insert("cells".into(), json!(z_n));
+    heat.insert("x_min".into(), json_num(x_min));
+    heat.insert("x_max".into(), json_num(x_max));
+    heat.insert("y_min".into(), json_num(y_min));
+    heat.insert("y_max".into(), json_num(y_max));
+    heat.insert("db_min".into(), json_num(z_min));
+    heat.insert("db_max".into(), json_num(z_max));
 }
 
 fn series_span(values: Option<&Value>) -> (usize, Option<f64>, Option<f64>) {
@@ -114,6 +133,23 @@ fn series_span(values: Option<&Value>) -> (usize, Option<f64>, Option<f64>) {
         count += 1;
         min = min.min(number);
         max = max.max(number);
+    }
+    if count == 0 { (0, None, None) } else { (count, Some(min), Some(max)) }
+}
+
+fn matrix_span(values: Option<&Value>) -> (usize, Option<f64>, Option<f64>) {
+    let Some(rows) = values.and_then(|value| value.as_array()) else { return (0, None, None) };
+    let mut min = f64::INFINITY;
+    let mut max = f64::NEG_INFINITY;
+    let mut count = 0usize;
+    for row in rows {
+        let Some(cols) = row.as_array() else { continue };
+        for cell in cols {
+            let Some(number) = cell.as_f64().filter(|number| number.is_finite()) else { continue };
+            count += 1;
+            min = min.min(number);
+            max = max.max(number);
+        }
     }
     if count == 0 { (0, None, None) } else { (count, Some(min), Some(max)) }
 }
@@ -298,12 +334,185 @@ fn block_on<T>(fut: impl std::future::Future<Output = T>) -> T {
 
 fn shown_reply(text: &str) -> String {
     let shown = strip_proposal_tag(text);
+    let shown = hide_leaked_tools(&shown);
     if let Some(start) = shown.rfind("[[propose") {
         if !shown[start..].contains("]]") {
             return shown[..start].trim().to_string();
         }
     }
     shown
+}
+
+fn close_at(text: &str, open: char, close: char) -> Option<usize> {
+    if !text.starts_with(open) {
+        return None;
+    }
+    let mut depth = 0;
+    for (i, ch) in text.char_indices() {
+        if ch == open {
+            depth += 1;
+        } else if ch == close {
+            depth -= 1;
+            if depth == 0 {
+                return Some(i);
+            }
+        }
+    }
+    None
+}
+
+fn quote_bare_keys(item: &str) -> String {
+    let chars: Vec<char> = item.chars().collect();
+    let mut out = String::new();
+    let mut i = 0;
+    while i < chars.len() {
+        let ch = chars[i];
+        if ch == '{' || ch == ',' {
+            out.push(ch);
+            i += 1;
+            while i < chars.len() && chars[i].is_whitespace() {
+                out.push(chars[i]);
+                i += 1;
+            }
+            let start = i;
+            while i < chars.len() && (chars[i].is_ascii_alphanumeric() || chars[i] == '_') {
+                i += 1;
+            }
+            let name: String = chars[start..i].iter().collect();
+            let mut j = i;
+            while j < chars.len() && chars[j].is_whitespace() {
+                j += 1;
+            }
+            if !name.is_empty() && j < chars.len() && chars[j] == ':' {
+                out.push('"');
+                out.push_str(&name);
+                out.push('"');
+                continue;
+            }
+            out.push_str(&name);
+            continue;
+        }
+        out.push(ch);
+        i += 1;
+    }
+    out
+}
+
+fn parse_leaked_args(raw: &str) -> Value {
+    let text = raw.trim();
+    if text.is_empty() {
+        return json!({});
+    }
+    let colon = text.replace('=', ":");
+    let variants = [text.to_string(), format!("{{{text}}}"), format!("{{{colon}}}")];
+    for item in &variants {
+        if let Ok(Value::Object(map)) = serde_json::from_str::<Value>(item) {
+            return Value::Object(map);
+        }
+        if let Ok(Value::Object(map)) = serde_json::from_str::<Value>(&quote_bare_keys(item)) {
+            return Value::Object(map);
+        }
+    }
+    json!({})
+}
+
+fn declared_tool(name: &str) -> bool {
+    tool_schema().as_array().is_some_and(|items| items.iter().any(|item| item["name"].as_str() == Some(name)))
+}
+
+fn leaked_call(name: &str, args: Value, index: usize) -> genai::chat::ToolCall {
+    genai::chat::ToolCall {
+        call_id: format!("leak_{}", index + 1),
+        fn_name: name.to_string(),
+        fn_arguments: args,
+        thought_signatures: None,
+    }
+}
+
+fn take_leaked_calls(text: &str) -> (String, Vec<genai::chat::ToolCall>) {
+    let mut calls = Vec::new();
+    let mut out = String::new();
+    let mut rest = text;
+    while !rest.is_empty() {
+        let gemini = rest.find("tool:default_api:");
+        let printed = rest.find("print(default_api.");
+        let (at, kind) = match (gemini, printed) {
+            (Some(g), Some(p)) if g <= p => (g, "gemini"),
+            (Some(g), None) => (g, "gemini"),
+            (None, Some(p)) => (p, "print"),
+            (Some(_), Some(p)) => (p, "print"),
+            (None, None) => {
+                out.push_str(rest);
+                break;
+            }
+        };
+        out.push_str(&rest[..at]);
+        rest = &rest[at..];
+        if kind == "gemini" {
+            rest = &rest["tool:default_api:".len()..];
+            let name_len = rest.find(|c: char| !c.is_ascii_alphanumeric() && c != '_').unwrap_or(rest.len());
+            let name = &rest[..name_len];
+            rest = &rest[name_len..];
+            if let Some(end) = close_at(rest, '{', '}') {
+                if declared_tool(name) {
+                    calls.push(leaked_call(name, parse_leaked_args(&rest[1..end]), calls.len()));
+                    rest = &rest[end + 1..];
+                    continue;
+                }
+            }
+            out.push_str("tool:default_api:");
+            out.push_str(name);
+            continue;
+        }
+        rest = &rest["print(default_api.".len()..];
+        let name_len = rest.find(|c: char| !c.is_ascii_alphanumeric() && c != '_').unwrap_or(rest.len());
+        let name = &rest[..name_len];
+        rest = &rest[name_len..];
+        if let Some(end) = close_at(rest, '(', ')') {
+            if declared_tool(name) {
+                calls.push(leaked_call(name, parse_leaked_args(&rest[1..end]), calls.len()));
+                rest = &rest[end + 1..];
+                if rest.starts_with(')') {
+                    rest = &rest[1..];
+                }
+                continue;
+            }
+        }
+        out.push_str("print(default_api.");
+        out.push_str(name);
+    }
+    let cleaned = out.replace("```tool_code", "").replace("```tool", "").replace("```", "");
+    (cleaned.trim().to_string(), calls)
+}
+
+fn unfinished_leak(tail: &str) -> bool {
+    let t = tail.trim_start();
+    if t.starts_with("tool:default_api:") || t.starts_with("print(default_api") || t.starts_with("```tool") {
+        return true;
+    }
+    const MARKS: &[&str] = &["tool:default_api:", "print(default_api.", "```tool_code"];
+    t.len() >= 8 && MARKS.iter().any(|mark| mark.starts_with(t))
+}
+
+fn hide_leaked_tools(text: &str) -> String {
+    let (clean, _) = take_leaked_calls(text);
+    let start = clean.rfind(['\n', ' ']).map(|i| i + 1).unwrap_or(0);
+    if unfinished_leak(&clean[start..]) {
+        return clean[..start].trim_end().to_string();
+    }
+    clean
+}
+
+fn apply_leaked_tools(turn: &mut ProviderTurn) {
+    let (clean, leaked) = take_leaked_calls(&turn.text);
+    if leaked.is_empty() {
+        turn.text = hide_leaked_tools(&clean);
+        return;
+    }
+    turn.text = clean;
+    turn.calls.extend(leaked);
+    turn.assistant = Some(assistant_from_calls(turn.calls.clone()));
+    live_clear_reply();
 }
 
 fn assistant_from_calls(calls: Vec<genai::chat::ToolCall>) -> genai::chat::ChatMessage {

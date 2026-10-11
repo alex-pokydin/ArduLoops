@@ -648,6 +648,10 @@ enum ChartSlot {
     Remove { known: bool },
 }
 
+fn draws_chart(name: &str) -> bool {
+    matches!(name, "show_chart" | "show_spectrum" | "show_spectrogram")
+}
+
 fn chart_slug_arg(args: &Value) -> Option<String> {
     args.get("slug").and_then(|v| v.as_str()).map(str::trim).filter(|s| !s.is_empty()).map(str::to_string)
 }
@@ -727,7 +731,7 @@ fn run_batch(
             results[i] = repeat.clone();
         } else if let Some(&first) = queued.get(&key) {
             alias.push((i, first));
-        } else if name == "show_chart" {
+        } else if draws_chart(name) {
             match admit_chart(charts, args) {
                 Ok(ChartSlot::Keep) => {
                     queued.insert(key, i);

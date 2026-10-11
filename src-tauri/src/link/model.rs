@@ -355,6 +355,14 @@ impl Sample {
             log_briefs: Vec::new(),
         }
     }
+
+    /// This link is a simulator. A missing board id is not this signal.
+    pub fn is_simulator(&self) -> bool {
+        self.sitl_running
+            || self.truth_lat.is_some()
+            || self.truth_lon.is_some()
+            || self.params.keys().any(|name| name.starts_with("SIM_"))
+    }
 }
 
 /// One item in a mission upload. `rtl` ignores lat/lon.
@@ -468,6 +476,28 @@ pub enum Cmd {
         job: ScriptJob,
         reply: std::sync::mpsc::Sender<Result<serde_json::Value, String>>,
     },
+}
+
+#[cfg(test)]
+mod sitl_id {
+    use super::*;
+
+    #[test]
+    fn a_missing_board_id_is_not_the_simulator() {
+        let mut sample = Sample::empty();
+        assert!(!sample.is_simulator());
+        sample.sitl_running = true;
+        assert!(sample.is_simulator());
+        sample.sitl_running = false;
+        sample.truth_lat = Some(-35.36);
+        assert!(sample.is_simulator());
+        sample.truth_lat = None;
+        sample.params.insert("SIM_SPEEDUP".into(), 1.0);
+        assert!(sample.is_simulator());
+        sample.params.clear();
+        sample.params.insert("FRAME_CLASS".into(), 2.0);
+        assert!(!sample.is_simulator());
+    }
 }
 
 fn strip_prefix_ci<'a>(s: &'a str, prefix: &str) -> Option<&'a str> {

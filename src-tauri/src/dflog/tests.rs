@@ -201,6 +201,21 @@ mod tests {
             buf.extend_from_slice(&[HEAD1, HEAD2, 249]);
             buf.extend_from_slice(&body);
         }
+        push_fmt(&mut buf, 140, "PARM", "QNf", "TimeUS,Name,Value");
+        let parm = |buf: &mut Vec<u8>, name: &str, value: f32| {
+            buf.extend_from_slice(&[HEAD1, HEAD2, 140]);
+            buf.extend_from_slice(&0u64.to_le_bytes());
+            let mut bytes = [0u8; 16];
+            bytes[..name.len()].copy_from_slice(name.as_bytes());
+            buf.extend_from_slice(&bytes);
+            buf.extend_from_slice(&value.to_le_bytes());
+        };
+        parm(&mut buf, "INS_HNTCH_ENABLE", 1.0);
+        parm(&mut buf, "INS_HNTCH_FREQ", 80.0);
+        parm(&mut buf, "INS_HNTCH_BW", 40.0);
+        parm(&mut buf, "INS_HNTCH_ATT", 40.0);
+        parm(&mut buf, "INS_HNTCH_HMNCS", 1.0);
+        parm(&mut buf, "INS_HNTCH_MODE", 0.0);
         let out = gyro_batch_fft_bytes(&buf);
         let hz = out["axes"][0]["peak_hz"].as_f64().unwrap();
         assert!((hz - 80.0).abs() < 2.0, "{out}");
@@ -210,6 +225,49 @@ mod tests {
         assert_eq!(out["spectrum"].as_array().unwrap().len(), 32);
         let column = &out["spectrogram"]["columns"][0];
         assert!((column["hz"].as_f64().unwrap() - 80.0).abs() < 2.0, "{out}");
+        let spectrum = picture_bytes(&buf, "spectrum", &json!({ "title": "hover", "slug": "gyro" }));
+        assert_eq!(spectrum["ok"], json!(true), "{spectrum}");
+        assert_eq!(spectrum["chart"]["x_label"], json!("Hz"));
+        assert_eq!(spectrum["chart"]["axes"][0]["lines"][0]["name"], json!("X"));
+        let lines = spectrum["chart"]["axes"][0]["lines"].as_array().unwrap();
+        assert_eq!(lines.len(), 4, "{spectrum}");
+        assert_eq!(lines[1]["name"], json!("Y"));
+        assert_eq!(lines[2]["name"], json!("Z"));
+        let bins = lines[0]["x"].as_array().unwrap();
+        assert!(bins.len() > 32, "{spectrum}");
+        let loud = lines[0]["y"].as_array().unwrap().iter().filter_map(|value| value.as_f64()).fold(f64::NEG_INFINITY, f64::max);
+        let quiet = lines[1]["y"].as_array().unwrap().iter().filter_map(|value| value.as_f64()).fold(f64::NEG_INFINITY, f64::max);
+        assert!(loud > -1.0, "{spectrum}");
+        assert!(quiet < -40.0, "{spectrum}");
+        let notch = lines.iter().find(|line| line["name"] == "notch").unwrap();
+        assert_eq!(notch["dash"], json!("dot"));
+        let tip = notch["x"].as_array().unwrap().iter().zip(notch["y"].as_array().unwrap()).find(|(hz, _)| (hz.as_f64().unwrap() - 80.0).abs() < 0.2).unwrap();
+        assert!((tip.1.as_f64().unwrap() + 40.0).abs() < 0.2, "{notch}");
+        let edge = notch["x"].as_array().unwrap().iter().zip(notch["y"].as_array().unwrap()).find(|(hz, _)| (hz.as_f64().unwrap() - 60.0).abs() < 0.2).unwrap();
+        assert!(edge.1.as_f64().unwrap().abs() < 0.2, "{notch}");
+        assert_eq!(spectrum["slug"], json!("gyro"));
+        let map = picture_bytes(&buf, "spectrogram", &json!({}));
+        assert_eq!(map["chart"]["x_label"], json!("s"), "{map}");
+        assert_eq!(map["title"], json!("spectrogram"));
+        let hz = map["chart"]["heatmap"]["y"].as_array().unwrap();
+        let z = map["chart"]["heatmap"]["z"].as_array().unwrap();
+        assert!(hz.len() > 32, "{map}");
+        assert_eq!(z.len(), hz.len());
+        assert_eq!(z[0].as_array().unwrap().len(), map["chart"]["heatmap"]["x"].as_array().unwrap().len());
+        let mut loud_hz = 0.0;
+        let mut loud_db = -80.0;
+        for (row, freq) in z.iter().zip(hz.iter()) {
+            let db = row[0].as_f64().unwrap();
+            if db > loud_db {
+                loud_db = db;
+                loud_hz = freq.as_f64().unwrap();
+            }
+        }
+        assert!((loud_hz - 80.0).abs() < 8.0, "{map}");
+        assert!((loud_db - 0.0).abs() < 0.2, "{map}");
+        let missing = picture_bytes(&[], "spectrum", &json!({}));
+        assert_eq!(missing["ok"], json!(false));
+        assert_eq!(gyro_picture("", "spectrum", &json!({}))["ok"], json!(false));
     }
 
     #[test]

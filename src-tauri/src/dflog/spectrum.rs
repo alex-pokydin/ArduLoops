@@ -99,12 +99,25 @@ pub fn gyro_batch_fft(id: &str) -> Value {
     gyro_batch_fft_bytes(&bytes)
 }
 
+struct GyroScan {
+    groups: BTreeMap<u64, GyroGroup>,
+    throttle: Vec<(u64, f64)>,
+    rpm: Vec<(u64, f64)>,
+    notch: Vec<(u64, f64)>,
+    parms: BTreeMap<String, f64>,
+}
+
 fn gyro_batch_fft_bytes(bytes: &[u8]) -> Value {
+    publish_fft(scan_gyro(bytes))
+}
+
+fn scan_gyro(bytes: &[u8]) -> GyroScan {
     let formats = parse_formats(bytes);
     let mut batches: BTreeMap<u16, GyroBatch> = BTreeMap::new();
     let mut throttle = Vec::new();
     let mut rpm = Vec::new();
     let mut notch = Vec::new();
+    let mut parms: BTreeMap<String, f64> = BTreeMap::new();
     let mut incomplete = false;
     walk(bytes, &formats, |fmt, _, values| {
         if fmt.name == "ISBH" {
@@ -140,6 +153,12 @@ fn gyro_batch_fft_bytes(bytes: &[u8]) -> Value {
                     rpm.push((t, v));
                 }
             }
+        } else if fmt.name == "PARM" {
+            if let (Some(name), Some(value)) = (field_str(fmt, values, "Name"), field_f64(fmt, values, "Value")) {
+                if value.is_finite() && (name.starts_with("INS_HNTCH_") || name.starts_with("INS_HNTC2_")) {
+                    parms.insert(name, value);
+                }
+            }
         } else if fmt.name == "FTNS" {
             if let (Some(t), Some(v)) = (time_us(fmt, values), field_f64(fmt, values, "NF")) {
                 if v.is_finite() && v > 0.0 {
@@ -172,6 +191,7 @@ fn gyro_batch_fft_bytes(bytes: &[u8]) -> Value {
             used: 0,
             spec: [Vec::new(), Vec::new(), Vec::new()],
             ridge: Vec::new(),
+            frames: Vec::new(),
         });
         if (group.rate - batch.rate).abs() > 1.0 || group.fft_n != fft_n {
             continue;
@@ -180,6 +200,7 @@ fn gyro_batch_fft_bytes(bytes: &[u8]) -> Value {
         for axis in 0..3 {
             mags[axis] = magnitude(&series[axis], fft_n);
         }
+        let column = heat_amps(&mags, batch.rate, fft_n);
         let min_bin = ((20.0 * fft_n as f64 / batch.rate).ceil() as usize).clamp(1, mags[0].len().saturating_sub(1));
         let env = |k: usize| mags[0][k].max(mags[1].get(k).copied().unwrap_or(0.0)).max(mags[2].get(k).copied().unwrap_or(0.0));
         let mut ranked = Vec::new();
@@ -222,11 +243,16 @@ fn gyro_batch_fft_bytes(bytes: &[u8]) -> Value {
                 }
             }
         }
+        group.frames.push(SpecFrame { time_us: batch.time_us, amp: column });
         group.used += 1;
     }
+    GyroScan { groups, throttle, rpm, notch, parms }
+}
+
+fn classify_captures(groups: &BTreeMap<u64, GyroGroup>) -> Vec<Value> {
     let mut views: Vec<Value> = groups.values().filter(|group| group.used > 0).map(gyro_group_view).collect();
     if views.is_empty() {
-        return json!({ "ok": false, "error": "no gyro batch in this log" });
+        return views;
     }
     views.sort_by(|a, b| {
         b["fundamental_amplitude"].as_f64().unwrap_or(0.0)
@@ -260,17 +286,25 @@ fn gyro_batch_fft_bytes(bytes: &[u8]) -> Value {
     if views.get(1).and_then(|view| view["capture"].as_str()) == Some("post-filter") {
         views[0]["capture"] = json!("pre-filter");
     }
+    views
+}
+
+fn publish_fft(mut scan: GyroScan) -> Value {
+    let views = classify_captures(&scan.groups);
+    if views.is_empty() {
+        return json!({ "ok": false, "error": "no gyro batch in this log" });
+    }
     let primary = views[0].clone();
-    throttle.sort_by_key(|row| row.0);
-    rpm.sort_by_key(|row| row.0);
-    notch.sort_by_key(|row| row.0);
+    scan.throttle.sort_by_key(|row| row.0);
+    scan.rpm.sort_by_key(|row| row.0);
+    scan.notch.sort_by_key(|row| row.0);
     let post = views.iter().find(|view| view["capture"].as_str() == Some("post-filter")).map(|view| {
         let mut body = public_capture(view);
         body["spectrogram"] = spectrogram_of(
-            groups.get(&view["instance"].as_u64().unwrap_or(0)).map(|group| &group.ridge),
-            &throttle,
-            &rpm,
-            &notch,
+            scan.groups.get(&view["instance"].as_u64().unwrap_or(0)).map(|group| &group.ridge),
+            &scan.throttle,
+            &scan.rpm,
+            &scan.notch,
         );
         body
     });
@@ -291,7 +325,7 @@ fn gyro_batch_fft_bytes(bytes: &[u8]) -> Value {
         "harmonic_attenuation_db": views.iter().find_map(|view| view.get("harmonic_attenuation_db").filter(|v| v.as_array().is_some_and(|rows| !rows.is_empty()))).cloned().unwrap_or(Value::Null),
         "peaks": primary["peaks"],
         "spectrum": primary["spectrum"],
-        "spectrogram": spectrogram_of(groups.get(&primary["instance"].as_u64().unwrap_or(0)).map(|group| &group.ridge), &throttle, &rpm, &notch),
+        "spectrogram": spectrogram_of(scan.groups.get(&primary["instance"].as_u64().unwrap_or(0)).map(|group| &group.ridge), &scan.throttle, &scan.rpm, &scan.notch),
         "axes": primary["axes"],
         "post": post,
         "instances": views.iter().map(public_capture).collect::<Vec<_>>(),
@@ -322,6 +356,11 @@ struct RidgePoint {
     more: [(f64, f64); 2],
 }
 
+struct SpecFrame {
+    time_us: u64,
+    amp: Vec<f64>,
+}
+
 struct GyroGroup {
     instance: u64,
     rate: f64,
@@ -329,6 +368,7 @@ struct GyroGroup {
     used: u32,
     spec: [Vec<f64>; 3],
     ridge: Vec<RidgePoint>,
+    frames: Vec<SpecFrame>,
 }
 
 fn public_capture(view: &Value) -> Value {
@@ -740,4 +780,416 @@ fn fft(re: &mut [f64], im: &mut [f64], inverse: bool) {
         }
         len <<= 1;
     }
+}
+
+const LINE_POINTS: usize = 1200;
+const HEAT_BINS: usize = 160;
+const HEAT_COLS: usize = 200;
+
+pub fn gyro_picture(id: &str, kind: &str, spec: &Value) -> Value {
+    if id.is_empty() {
+        return json!({ "ok": false, "error": "file is required. file is an id from list_logs, or local.id from vehicle_logs." });
+    }
+    let bytes = match read_id(id) {
+        Ok(bytes) => bytes,
+        Err(error) => return json!({ "ok": false, "error": error }),
+    };
+    picture_bytes(&bytes, kind, spec)
+}
+
+fn picture_bytes(bytes: &[u8], kind: &str, spec: &Value) -> Value {
+    let mut scan = scan_gyro(bytes);
+    scan.notch.sort_by_key(|row| row.0);
+    let views = classify_captures(&scan.groups);
+    if views.is_empty() {
+        return json!({ "ok": false, "error": "no gyro batch in this log" });
+    }
+    let title = spec.get("title").and_then(Value::as_str).unwrap_or("").trim();
+    let primary_id = views[0]["instance"].as_u64().unwrap_or(0);
+    let post_id = views.iter()
+        .find(|view| view["capture"].as_str() == Some("post-filter"))
+        .and_then(|view| view["instance"].as_u64());
+    let built = match kind {
+        "spectrum" => {
+            let Some(primary) = scan.groups.get(&primary_id) else {
+                return json!({ "ok": false, "error": "no gyro batch in this log" });
+            };
+            spectrum_chart(primary, post_id.and_then(|id| scan.groups.get(&id)), &scan.parms, title)
+        }
+        "spectrogram" => {
+            let Some(primary) = scan.groups.get(&primary_id) else {
+                return json!({ "ok": false, "error": "no gyro batch in this log" });
+            };
+            spectrogram_chart(primary, &scan.notch, title)
+        }
+        _ => return json!({ "ok": false, "error": "kind is spectrum or spectrogram." }),
+    };
+    let Some((title, chart, note)) = built else {
+        return json!({ "ok": false, "error": "no gyro batch in this log" });
+    };
+    let mut out = json!({
+        "ok": true,
+        "title": title,
+        "chart": chart,
+        "note": note,
+    });
+    if let Some(slug) = chart_slug(spec) {
+        out["slug"] = json!(slug);
+        out["chart"]["slug"] = json!(slug);
+    }
+    out
+}
+
+fn spectrum_chart(group: &GyroGroup, post: Option<&GyroGroup>, parms: &BTreeMap<String, f64>, title: &str) -> Option<(String, Value, String)> {
+    let reference = capture_peak(group);
+    let mut lines = Vec::new();
+    let mut x0 = f64::INFINITY;
+    let mut x1 = f64::NEG_INFINITY;
+    for (axis, name) in ["X", "Y", "Z"].into_iter().enumerate() {
+        let Some((x, y)) = axis_line(group, axis, reference) else { continue };
+        if let (Some(first), Some(last)) = (x.first(), x.last()) {
+            x0 = x0.min(*first);
+            x1 = x1.max(*last);
+        }
+        lines.push(json!({ "name": name, "x": x, "y": y, "hue": axis }));
+    }
+    if lines.is_empty() {
+        return None;
+    }
+    let mut note = String::from(concat!(
+        "The chart is drawn under the reply. ",
+        "x is frequency in Hz across the FFT bins. ",
+        "X, Y, and Z are dB on each gyro axis against the loudest bin of the raw pre-filter capture. ",
+        "The samples themselves are not in this text. ",
+    ));
+    if let Some(post) = post {
+        let mut filtered = false;
+        for (axis, name) in ["X", "Y", "Z"].into_iter().enumerate() {
+            let Some((x, y)) = axis_line(post, axis, reference) else { continue };
+            lines.push(json!({ "name": format!("{name} filtered"), "x": x, "y": y, "hue": axis, "dash": "dash" }));
+            filtered = true;
+        }
+        if filtered {
+            note.push_str("X filtered, Y filtered, and Z filtered are that scale on the filtered capture. ");
+        }
+    }
+    if x0.is_finite() && x1 > x0 {
+        let mut marked = false;
+        let mut dynamic = false;
+        let mut att_defaulted = false;
+        let mut harmonics_defaulted = false;
+        let mut second = false;
+        for (prefix, label, hue) in [("HNTCH", "notch", 5), ("HNTC2", "notch 2", 3)] {
+            let Some(setup) = notch_setup(parms, prefix) else { continue };
+            let Some((x, y)) = notch_mark(&setup, x0, x1) else { continue };
+            lines.push(json!({ "name": label, "x": x, "y": y, "hue": hue, "dash": "dot" }));
+            marked = true;
+            dynamic |= setup.dynamic;
+            att_defaulted |= setup.att_defaulted;
+            harmonics_defaulted |= setup.harmonics_defaulted;
+            second |= label == "notch 2";
+        }
+        if marked {
+            note.push_str(concat!(
+                "A dotted line is the configured harmonic notch: each enabled harmonic, a triangle at its center, as wide as its bandwidth, down to the configured attenuation. ",
+                "It is the setting in the log, not the measured spectrum. ",
+            ));
+            if second {
+                note.push_str("notch is the first, and notch 2 is the second. ");
+            }
+            if dynamic {
+                note.push_str("In a dynamic mode that center is the configured base frequency. ");
+            }
+            if att_defaulted {
+                note.push_str("Where ATT was not in the file, the depth is 40 dB, the firmware default. ");
+            }
+            if harmonics_defaulted {
+                note.push_str("Where harmonics were not in the file, only the base frequency is marked. ");
+            }
+        }
+    }
+    let title = if title.is_empty() { "spectrum".to_string() } else { title.to_string() };
+    Some((title.clone(), json!({
+        "title": title,
+        "x_label": "Hz",
+        "axes": [{ "label": "dB", "lines": lines }],
+    }), note))
+}
+
+fn spectrogram_chart(group: &GyroGroup, notch: &[(u64, f64)], title: &str) -> Option<(String, Value, String)> {
+    let (x, y, z) = heat_matrix(group)?;
+    let mut note = String::from(concat!(
+        "The chart is drawn under the reply. ",
+        "x is seconds from the first batch. ",
+        "y is frequency in Hz. ",
+        "Color is dB against the loudest cell of the raw pre-filter capture. ",
+        "The color scale runs from -40 to 0. ",
+        "The samples themselves are not in this text. ",
+    ));
+    let mut axes = Vec::new();
+    if let Some((nx, ny)) = notch_line(group, notch) {
+        axes.push(json!({ "label": "Hz", "lines": [{ "name": "notch", "x": nx, "y": ny }] }));
+        note.push_str("notch is the notch frequency the log recorded. ");
+    }
+    let title = if title.is_empty() { "spectrogram".to_string() } else { title.to_string() };
+    Some((title.clone(), json!({
+        "title": title,
+        "x_label": "s",
+        "heatmap": {
+            "y_label": "Hz",
+            "z_label": "dB",
+            "z_min": -40,
+            "z_max": 0,
+            "x": x,
+            "y": y,
+            "z": z,
+        },
+        "axes": axes,
+    }), note))
+}
+
+fn capture_peak(group: &GyroGroup) -> f64 {
+    let bins = group.fft_n / 2;
+    let n = bins.min(group.spec.iter().map(|axis| axis.len()).max().unwrap_or(0));
+    if n < 2 {
+        return 0.0;
+    }
+    let (min_bin, _) = band_bins(group.rate, group.fft_n, n);
+    let used = group.used.max(1) as f64;
+    let mut peak = 0.0f64;
+    for axis in &group.spec {
+        for mag in axis.iter().take(n).skip(min_bin) {
+            peak = peak.max(*mag / used);
+        }
+    }
+    peak
+}
+
+fn axis_line(group: &GyroGroup, axis: usize, reference: f64) -> Option<(Vec<f64>, Vec<f64>)> {
+    let spec = group.spec.get(axis)?;
+    let used = group.used.max(1) as f64;
+    let n = (group.fft_n / 2).min(spec.len());
+    if n < 2 {
+        return None;
+    }
+    let (min_bin, max_bin) = band_bins(group.rate, group.fft_n, n);
+    let span = (max_bin - min_bin).max(1);
+    let cells = span.min(LINE_POINTS);
+    let mut x = Vec::with_capacity(cells);
+    let mut y = Vec::with_capacity(cells);
+    for cell in 0..cells {
+        let from = min_bin + span * cell / cells;
+        let to = (min_bin + span * (cell + 1) / cells).max(from + 1).min(n);
+        let mut best_i = from;
+        let mut best = 0.0;
+        for i in from..to {
+            let mag = spec.get(i).copied().unwrap_or(0.0) / used;
+            if mag >= best {
+                best = mag;
+                best_i = i;
+            }
+        }
+        x.push((group.rate * best_i as f64 / group.fft_n as f64 * 10.0).round() / 10.0);
+        y.push((db_rel(best, reference) * 10.0).round() / 10.0);
+    }
+    (x.len() >= 2).then_some((x, y))
+}
+
+struct NotchSetup {
+    freq: f64,
+    bw: f64,
+    att: f64,
+    harmonics: u32,
+    dynamic: bool,
+    att_defaulted: bool,
+    harmonics_defaulted: bool,
+}
+
+fn notch_setup(parms: &BTreeMap<String, f64>, prefix: &str) -> Option<NotchSetup> {
+    let enable = parms.get(&format!("INS_{prefix}_ENABLE")).copied()?;
+    if enable < 0.5 {
+        return None;
+    }
+    let freq = parms.get(&format!("INS_{prefix}_FREQ")).copied()?;
+    let bw = parms.get(&format!("INS_{prefix}_BW")).copied()?;
+    if !(10.0..=495.0).contains(&freq) || !(5.0..=250.0).contains(&bw) {
+        return None;
+    }
+    let (att, att_defaulted) = match parms.get(&format!("INS_{prefix}_ATT")).copied() {
+        Some(value) if (5.0..=50.0).contains(&value) => (value, false),
+        _ => (40.0, true),
+    };
+    let (harmonics, harmonics_defaulted) = match parms.get(&format!("INS_{prefix}_HMNCS")).copied() {
+        Some(value) => (value.round().max(0.0) as u32, false),
+        None => (1, true),
+    };
+    if harmonics == 0 {
+        return None;
+    }
+    let dynamic = parms.get(&format!("INS_{prefix}_MODE")).copied().is_some_and(|mode| mode.round() as i32 != 0);
+    Some(NotchSetup { freq, bw, att, harmonics, dynamic, att_defaulted, harmonics_defaulted })
+}
+
+fn notch_db(setup: &NotchSetup, hz: f64) -> f64 {
+    let mut depth = 0.0f64;
+    for bit in 0..16 {
+        if setup.harmonics & (1 << bit) == 0 {
+            continue;
+        }
+        let n = bit as f64 + 1.0;
+        let center = setup.freq * n;
+        let half = setup.bw * n / 2.0;
+        if half <= 0.0 {
+            continue;
+        }
+        let dist = (hz - center).abs();
+        if dist >= half {
+            continue;
+        }
+        depth = depth.min(-setup.att * (1.0 - dist / half));
+    }
+    depth
+}
+
+fn notch_mark(setup: &NotchSetup, x0: f64, x1: f64) -> Option<(Vec<f64>, Vec<f64>)> {
+    let mut marks = vec![x0, x1];
+    let mut inside = false;
+    for bit in 0..16 {
+        if setup.harmonics & (1 << bit) == 0 {
+            continue;
+        }
+        let n = bit as f64 + 1.0;
+        let center = setup.freq * n;
+        let half = setup.bw * n / 2.0;
+        if center + half < x0 || center - half > x1 {
+            continue;
+        }
+        inside = true;
+        for hz in [center - half, center, center + half] {
+            if (x0..=x1).contains(&hz) {
+                marks.push(hz);
+            }
+        }
+    }
+    if !inside {
+        return None;
+    }
+    marks.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
+    marks.dedup_by(|a, b| (*a - *b).abs() < 0.05);
+    if marks.len() < 2 {
+        return None;
+    }
+    let y = marks.iter().map(|hz| (notch_db(setup, *hz) * 10.0).round() / 10.0).collect();
+    Some((marks, y))
+}
+
+fn heat_matrix(group: &GyroGroup) -> Option<(Vec<f64>, Vec<f64>, Vec<Vec<f64>>)> {
+    if group.frames.is_empty() {
+        return None;
+    }
+    let mut order: Vec<usize> = (0..group.frames.len()).collect();
+    order.sort_by_key(|&index| group.frames[index].time_us);
+    let cells = group.frames[order[0]].amp.len();
+    if cells < 2 {
+        return None;
+    }
+    let y = heat_hz(group.rate, group.fft_n, cells);
+    if y.len() != cells {
+        return None;
+    }
+    let picked = take_indexes(order.len(), HEAT_COLS);
+    let t0 = group.frames[order[picked[0]]].time_us;
+    let mut x = Vec::new();
+    let mut columns = Vec::new();
+    let mut loud = 0.0f64;
+    for index in picked {
+        let frame = &group.frames[order[index]];
+        if frame.amp.len() != cells {
+            continue;
+        }
+        loud = loud.max(frame.amp.iter().copied().fold(0.0, f64::max));
+        x.push((frame.time_us.saturating_sub(t0) as f64 / 1e6 * 100.0).round() / 100.0);
+        columns.push(&frame.amp);
+    }
+    if x.is_empty() {
+        return None;
+    }
+    let z = (0..cells).map(|bin| {
+        columns.iter().map(|column| (db_rel(column[bin], loud) * 10.0).round() / 10.0).collect()
+    }).collect();
+    Some((x, y, z))
+}
+
+fn notch_line(group: &GyroGroup, notch: &[(u64, f64)]) -> Option<(Vec<f64>, Vec<f64>)> {
+    if notch.is_empty() || group.frames.is_empty() {
+        return None;
+    }
+    let mut order: Vec<usize> = (0..group.frames.len()).collect();
+    order.sort_by_key(|&index| group.frames[index].time_us);
+    let picked = take_indexes(order.len(), HEAT_COLS);
+    let t0 = group.frames[order[picked[0]]].time_us;
+    let mut x = Vec::new();
+    let mut y = Vec::new();
+    for index in picked {
+        let frame = &group.frames[order[index]];
+        let Some(hz) = nearest(notch, frame.time_us, 500_000) else { continue };
+        x.push((frame.time_us.saturating_sub(t0) as f64 / 1e6 * 100.0).round() / 100.0);
+        y.push((hz * 10.0).round() / 10.0);
+    }
+    (x.len() >= 2).then_some((x, y))
+}
+
+fn heat_amps(mags: &[Vec<f64>; 3], rate: f64, fft_n: usize) -> Vec<f64> {
+    let n = mags[0].len();
+    if n < 2 {
+        return Vec::new();
+    }
+    let (min_bin, max_bin) = band_bins(rate, fft_n, n);
+    let span = (max_bin - min_bin).max(1);
+    let cells = span.min(HEAT_BINS);
+    let mut out = vec![0.0; cells];
+    for cell in 0..cells {
+        let from = min_bin + span * cell / cells;
+        let to = (min_bin + span * (cell + 1) / cells).max(from + 1).min(n);
+        let mut peak = 0.0;
+        for i in from..to {
+            let value = mags[0][i]
+                .max(mags[1].get(i).copied().unwrap_or(0.0))
+                .max(mags[2].get(i).copied().unwrap_or(0.0));
+            if value > peak {
+                peak = value;
+            }
+        }
+        out[cell] = peak;
+    }
+    out
+}
+
+fn heat_hz(rate: f64, fft_n: usize, cells: usize) -> Vec<f64> {
+    let (min_bin, max_bin) = band_bins(rate, fft_n, fft_n / 2);
+    let span = (max_bin - min_bin).max(1);
+    (0..cells).map(|cell| {
+        let from = min_bin + span * cell / cells;
+        let to = (min_bin + span * (cell + 1) / cells).max(from + 1);
+        let mid = (from as f64 + (to.saturating_sub(1)) as f64) / 2.0;
+        (rate * mid / fft_n as f64 * 10.0).round() / 10.0
+    }).collect()
+}
+
+fn band_bins(rate: f64, fft_n: usize, bin_count: usize) -> (usize, usize) {
+    let last = bin_count.saturating_sub(1);
+    let min_bin = ((20.0 * fft_n as f64 / rate.max(1.0)).ceil() as usize).clamp(1, last.max(1));
+    (min_bin, last.max(min_bin))
+}
+
+fn take_indexes(count: usize, cap: usize) -> Vec<usize> {
+    if count == 0 {
+        return Vec::new();
+    }
+    if count <= cap {
+        return (0..count).collect();
+    }
+    let mut indexes: Vec<usize> = (0..cap).map(|i| i * (count - 1) / (cap - 1)).collect();
+    indexes.dedup();
+    indexes
 }

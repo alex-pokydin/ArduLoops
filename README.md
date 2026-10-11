@@ -1,142 +1,55 @@
 # ArduLoops
 
-Ground station for an ArduPilot copter or plane. It shows the loops the current mode closes, sets up the vehicle, and reads a DataFlash log. Until a vehicle is linked, the app shows a **disconnected landing** (not a fake copter). HEARTBEAT then mounts the matching shell. **SITL** in the header starts official firmware SITL from the left rail.
+ArduLoops is a ground station for an ArduPilot copter or plane. You link a vehicle and watch which loops the current mode is actually closing. The same window is where you set the vehicle up, read a DataFlash log, draw a mission, and edit Lua on the board.
 
-**Assistant** is the pane on the right. It reads this link, the parameters on the vehicle, and a log you have downloaded. A number in its reply comes from a tool result. It does not invent a measurement, and it does not send you to another ground station.
+Until a heartbeat arrives, you get the start page. After the heartbeat, the shell matches the frame.
 
-The **controller** workspace is Setup, Logs, parameters, and firmware. Setup walks the frame, motors, radio, level, compass, flight modes, failsafe, and battery. Logs lists onboard DataFlash files, with firmware, frame, and duration, and downloads one for the assistant. **Audit** lists what was written.
+The assistant sits on the right. It reads this link, the parameters, and a log you have downloaded. A number in an answer is a number a tool returned. A change waits until you confirm it.
 
-The wiki is the protocol. This stand shows which loops the current mode actually closes.
+The start page itself is [`docs/start.md`](docs/start.md) (English) and [`docs/start.uk.md`](docs/start.uk.md). Home renders that markdown.
 
-Disconnected copy is [`docs/start.md`](docs/start.md) (English) and [`docs/start.uk.md`](docs/start.uk.md). Home renders that markdown, including the screenshots.
+## Where to go next
 
-## Views
+- [Loops](docs/loops.md) — the map, the scheme for the card you picked, and the traces
+- [SITL](docs/sitl.md) — start official firmware from the left rail
+- [Setup](docs/setup.md) — frame, motors, radio, sensors, modes, failsafe
+- [Parameters](docs/parameters.md) — the live set, a `.parm` file, lab Init
+- [Logs](docs/logs.md) — DataFlash on the board, and a live `.tlog`
+- [Missions](docs/missions.md) — draw a route and upload it
+- [Lua](docs/lua.md) — scripts stored on the vehicle
+- [Firmware](docs/firmware.md) — local images, and flashing one over USB
+- [Audit](docs/audit.md) — what this app wrote
+- [Assistant](docs/assistant.md) — questions against this link, with real sessions
+- [CLI and Cursor](docs/cli.md) — the same MAVLink from the terminal or from MCP
 
-After HEARTBEAT, copter and plane share **one page**: map on the left, the selected card as a **loop** scheme top-right, **traces** bottom-right. Expand a pane; drag the gutter (layout is kept). **Pause** next to the title freezes the picture while MAVLink still runs. Plot window (8–60 s) is in **Options** — the stand keeps up to a minute of samples so a longer window already has history.
+QuadPlane, an autoland flare, a full harmonic-notch wizard, and Autotune as a procedure are outside this app. When the wiki and the stand disagree, follow the wiki.
 
-### Disconnected
+## Run
 
-How to Link, how to start SITL on this OS, official First Time Setup / Tuning, what is in or out of scope.
-
-### Copter (after HEARTBEAT)
-
-**Map** — PosControl (outer) vs Attitude (inner). Dimmed blocks are not closed in this mode. **All loops** sits on the map.
-
-![Copter: map, loop and traces on one page](docs/cascade.png)
-
-**Loop** — the selected card as a scheme (rate / angle AC_PID, PosControl P or PID). Axis buttons exist because **one** rate block serves roll, pitch, yaw and height. Expand the pane for formulas and extra knobs.
-
-![Loop: closed PID diagram](docs/loop.png)
-
-**Traces** — Watch any block this mode closes. Custom Watch can pick any live field.
-
-![Plot: angle we want and rate we command](docs/plot.png)
-
-### Plane (after HEARTBEAT)
-
-**Map** — L1 + TECS outside, roll and pitch as **two cards**, yaw damper from AHRS roll, ground steer, then throttle / nose and aileron / elevator / rudder. Empty map shows the live path.
-
-![Map: Plane L1 and TECS](docs/plane-map.png)
-
-**Loop** — rate PID + FF, L1 track → bank, TECS energy → pitch + throttle, yaw damper, ground steer. Click a TECS block on the expanded scheme for extra limits.
-
-![Loop: TECS energy scheme](docs/plane-loop.png)
-
-**Traces** — Watch any block this mode closes (`PID_TUNING`, `nav_roll` / `nav_pitch` vs `ATTITUDE`).
-
-### SITL rail
-
-**SITL** before the title opens a left rail. Pick copter or plane, **Start**. Windows downloads the Mission Planner sitl-exe, Linux x86_64 downloads firmware `arducopter` / `arduplane`, and the macOS release uses the SITL binaries built in GitHub Actions (`Copter-4.7.0`) and packed into the app. All three link `tcpout:127.0.0.1:5770`. While it runs: **Start** becomes **Stop**, **Pause** / **Reset** sit next to speedup. Wind, GPS, RC fail, motors, IMU are `SIM_*`. **Reset** restores values from the start of the link.
-
-![SITL: vehicle thumbs and start](docs/sitl.png)
-
-## Requirements
-
-- [Node.js](https://nodejs.org/) (for the UI)
-- [Rust](https://rustup.rs/) (MAVLink; browser and desktop)
-- An ArduPilot vehicle on MAVLink — in-app **SITL**, or [SITL](https://ardupilot.org/dev/docs/sitl-simulator-software-in-the-loop.html) you start yourself. With `--no-mavproxy`, Link `tcpout:127.0.0.1:5760`. With MAVProxy, often `tcpout:127.0.0.1:5763`.
-
-## Run in the browser
+You need [Node.js](https://nodejs.org/) and [Rust](https://rustup.rs/).
 
 ```bash
 npm install
 npm run dev
 ```
 
-Open [http://127.0.0.1:5173](http://127.0.0.1:5173). `dev` starts Vite and the headless MAVLink process (`127.0.0.1:8767`).
+Open [http://127.0.0.1:5173](http://127.0.0.1:5173). `dev` starts the page and the MAVLink process on `127.0.0.1:8767`. `?frame=plane` or `?frame=copter` opens that shell before anything is linked.
 
-`?frame=plane` or `?frame=copter` still previews that shell without a link.
+`npm run build` makes an installer for the OS you are on. GitHub Actions builds Windows, Linux, and macOS, and packs the macOS SITL binaries into the app. The Android build is a link client only. Leave `mavlink` in `src-tauri/Cargo.toml` on **0.13.1**.
 
-Paste a connection string and click **Link**:
+Pick **TCP**, **UDP**, or **SER** in the header, fill the field, and click **Link**. You type the address, not a `tcpout:` or `udpin:` URL. The app adds that prefix itself.
 
-| URL | Typical use |
-| --- | --- |
-| `tcpout:127.0.0.1:5770` | In-app SITL |
-| `tcpout:127.0.0.1:5760` | SITL with `--no-mavproxy` (SERIAL0) |
-| `tcpout:127.0.0.1:5763` | Extra SITL GCS / MAVProxy first extra |
-| `tcpout:127.0.0.1:5762` | If 5763 is already taken |
-| `udpin:0.0.0.0:14550` | UDP listen. The vehicle sends to this port. |
-| `udpout:192.168.6.167:14550` | UDP to a vehicle. An ESP8266 bridge is also tried on port 14555. |
-| `serial:COM3:115200` | USB or radio on the desktop app. |
+| Kind | Field | When |
+| --- | --- | --- |
+| TCP | `127.0.0.1:5770` | SITL started from this app |
+| TCP | `127.0.0.1:5760` | SITL you started with `--no-mavproxy` |
+| TCP | `127.0.0.1:5763` | SITL behind MAVProxy |
+| UDP | `14550` | Listen. The vehicle sends to this port |
+| UDP | `192.168.6.167:14550` | Send to the vehicle |
+| SER | `COM3` and `115200` | USB or a radio. Desktop only; Android has no serial |
 
-Each SITL TCP port accepts **one** GCS. Do not run `npm run dev` and the desktop app against the same port at once.
+A listen on 14550 also announces on 14555, and a send to port 14550 tries 14555 on that host as well. That is how an ESP8266 or SiK Wi-Fi bridge answers. A host and port 14550 or 14551 typed under TCP is opened as UDP.
 
-## Desktop
+A SITL TCP port accepts one ground station. If `npm run dev` is already on that port, the desktop app needs a different one. On this machine, a TCP port other than 5760 or 5770 is tried again on 5763 and 5762 when the first one stays quiet.
 
-```bash
-npm run build      # native installers for this OS (same UI as `dev`)
-```
-
-On Windows that writes NSIS + MSI. On Linux: `.deb`, `.rpm` and AppImage (`--bundles deb,rpm,appimage`). On macOS: a `.dmg` (`--bundles dmg`).
-
-GitHub Actions (`.github/workflows/release.yml`) builds Windows NSIS/MSI, Linux `.deb` / `.rpm` / AppImage, and macOS Apple Silicon and Intel `.dmg` files. The macOS jobs also build ArduPilot SITL (`scripts/build-sitl-macos.sh`) and pack it into the app. Local Linux needs the [Tauri v2 prerequisites](https://v2.tauri.app/start/prerequisites/#linux) (`libwebkit2gtk-4.1-dev`, `libudev-dev`, `pkg-config`, …).
-
-Release assets:
-
-- `ArduLoops_2.1.0_x64-setup.exe` / `ArduLoops_2.1.0_x64_en-US.msi` — Windows
-- `.deb` / `.rpm` / `.AppImage` — Linux x86_64
-- `ArduLoops_2.1.0_aarch64.dmg` / `ArduLoops_2.1.0_x64.dmg` — macOS (unsigned), with bundled SITL
-- `ArduLoops_2.1.0_aarch64.apk` — Android arm64, link client only (sideload)
-
-## Options
-
-Gear in the header.
-
-- **Language** — English (default) or Ukrainian. The choice is kept in the browser.
-- **Plot window** — how far back traces go (8 / 15 / 30 / 60 s). The stand keeps a minute of samples even while the display is paused.
-- **Init** (when linked, disarmed) — write the lab stand dump. Frame class applies while disarmed (1 Hz).
-- **Export** — write live parameters to a `.parm` file.
-- **MCP** — copy a Cursor config. The running app already serves HTTP `127.0.0.1:8767`.
-
-## MCP
-
-Start ArduLoops first (`npm run dev` or the desktop exe), then add this to Cursor `mcp.json` (Options → MCP → Copy fills in the real path):
-
-```json
-{
-  "mcpServers": {
-    "arduloops": {
-      "command": "C:\\Program Files\\ArduLoops\\arduloops.exe",
-      "args": ["--mcp"]
-    }
-  }
-}
-```
-
-## CLI
-
-Same MAVLink as the UI, via HTTP `127.0.0.1:8767` of the running app.
-
-```bash
-npm run cli -- state
-npm run cli -- param get ATC_RAT_RLL_P
-npm run cli -- mode STABILIZE
-```
-
-## Notes
-
-- Copter: `ATC_*` / `PSC_*`. Plane: `RLL_*` / `PTCH_*` / `YAW2SRV_*` / `NAVL1_*` / `TECS_*` / `STEER2SRV_*`.
-- A downloaded DataFlash log can be measured in the assistant: tracking error, a hold, a spectrum. That measurement is the file, not a tuning recipe.
-- Out of scope: QuadPlane, autoland flare, a full harmonic-notch wizard, Autotune as a procedure.
-- Copter presets **Wool / Stock / Sharp** are feel on the stand, not a tuning protocol.
-- Do not bump `mavlink` in `src-tauri/Cargo.toml` (stay on **0.13.1**).
+**Options** in the header is the language (English or Ukrainian), the plot window, lab **Init**, a parameter **Export**, the assistant account, a `.tlog`, and the Cursor MCP config.

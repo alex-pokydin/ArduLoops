@@ -3,15 +3,15 @@ import Markdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import startEn from "../../docs/start.md?raw";
 import startUk from "../../docs/start.uk.md?raw";
-import cascadePng from "../../docs/cascade.png";
-import plotPng from "../../docs/plot.png";
+import copterPng from "../../docs/copter-loops.png";
+import planePng from "../../docs/plane-loops.png";
 import { useLang, useT } from "../i18n/i18n";
 
 const REMARK = [remarkGfm];
 
 const DOC_IMG: Record<string, string> = {
-  "plot.png": plotPng,
-  "cascade.png": cascadePng,
+  "copter-loops.png": copterPng,
+  "plane-loops.png": planePng,
 };
 
 function docUrl(url: string): string {

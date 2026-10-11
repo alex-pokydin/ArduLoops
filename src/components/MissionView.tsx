@@ -74,6 +74,177 @@ function dist(a: LatLon, b: LatLon): number {
   return Math.hypot(d.e, d.n);
 }
 
+const L1_INV_PI = 0.3183099;
+
+function wrap180(deg: number): number {
+  return ((deg + 180) % 360 + 360) % 360 - 180;
+}
+
+function posNum(v: number | undefined, fallback: number): number {
+  return v != null && Number.isFinite(v) && v > 0 ? v : fallback;
+}
+
+type L1Tune = { period: number; damp: number; wpRadius: number; cruise: number };
+
+function pickTune(s: Sample): L1Tune {
+  return {
+    period: posNum(s.params.NAVL1_PERIOD, 17),
+    damp: posNum(s.params.NAVL1_DAMPING, 0.75),
+    wpRadius: posNum(s.params.WP_RADIUS, 90),
+    cruise: posNum(s.params.AIRSPEED_CRUISE, 15),
+  };
+}
+
+function tuneEq(a: L1Tune, b: L1Tune): boolean {
+  return a.period === b.period && a.damp === b.damp && a.wpRadius === b.wpRadius && a.cruise === b.cruise;
+}
+
+type L1Picture = {
+  at: LatLon;
+  a: LatLon;
+  b: LatLon;
+  ref: LatLon;
+  foot: LatLon | null;
+  along: boolean;
+  l1m: number;
+  xtrack: number;
+  nuDeg: number;
+  courseDeg: number;
+  leadM: number | null;
+  preview: boolean;
+};
+
+function motionCourse(board: LatLon, yawDeg: number, hdg: number | null, moving: boolean): number {
+  for (let i = trail.length - 1; i >= 0; i--) {
+    const d = toEnu(board.lat, board.lon, trail[i]);
+    if (Math.hypot(d.e, d.n) >= 3) return Math.atan2(d.e, d.n);
+  }
+  if (moving && hdg != null && Number.isFinite(hdg)) return (hdg * Math.PI) / 180;
+  return (yawDeg * Math.PI) / 180;
+}
+
+// AP_L1_Control::update_waypoint, without the crosstrack integrator.
+// NE cross matches Vector2f (x = north, y = east): +xtrack is left of the track.
+function solveL1(
+  board: LatLon,
+  a: LatLon,
+  b: LatLon,
+  yawDeg: number,
+  hdg: number | null,
+  gspd: number | null,
+  tune: L1Tune,
+): L1Picture | null {
+  const ab = toEnu(b.lat, b.lon, a);
+  const len = Math.hypot(ab.e, ab.n);
+  if (len < 1) return null;
+  const abE = ab.e / len;
+  const abN = ab.n / len;
+  const rel = toEnu(board.lat, board.lon, a);
+  const along = rel.n * abN + rel.e * abE;
+  const xtrack = rel.n * abE - rel.e * abN;
+  const moving = (gspd ?? 0) >= 1;
+  const yaw = (yawDeg * Math.PI) / 180;
+  let speed: number;
+  let gsE: number;
+  let gsN: number;
+  let preview = false;
+  if (moving) {
+    const course = motionCourse(board, yawDeg, hdg, true);
+    speed = Math.max(gspd ?? 0, 0);
+    gsE = Math.sin(course) * speed;
+    gsN = Math.cos(course) * speed;
+    if (speed < 0.1 || gsE * Math.sin(yaw) + gsN * Math.cos(yaw) <= 0) {
+      speed = 0.1;
+      gsE = Math.sin(yaw) * speed;
+      gsN = Math.cos(yaw) * speed;
+    }
+  } else {
+    preview = true;
+    speed = tune.cruise;
+    gsE = Math.sin(yaw) * speed;
+    gsN = Math.cos(yaw) * speed;
+  }
+  const l1m = L1_INV_PI * tune.damp * tune.period * speed;
+  if (l1m < 1) return null;
+  const wpA = Math.hypot(rel.e, rel.n);
+  let ref: LatLon;
+  let foot: LatLon | null = null;
+  let onLine = false;
+  if (wpA > l1m && along / Math.max(wpA, 1) < -0.7071) {
+    ref = a;
+  } else if (along > len + speed * 3) {
+    ref = b;
+  } else {
+    onLine = true;
+    const track = Math.atan2(abE, abN);
+    const sine = Math.max(-0.7071, Math.min(0.7071, xtrack / Math.max(l1m, 0.1)));
+    const nav = track + Math.asin(sine);
+    ref = fromEnu(Math.sin(nav) * l1m, Math.cos(nav) * l1m, board);
+    if (Math.abs(xtrack) > 1) foot = fromEnu(along * abE, along * abN, a);
+  }
+  const courseDeg = (Math.atan2(gsE, gsN) * 180) / Math.PI;
+  const toRef = toEnu(ref.lat, ref.lon, board);
+  const refM = Math.hypot(toRef.e, toRef.n);
+  const nuDeg = refM < 0.5 ? 0 : wrap180((Math.atan2(toRef.e, toRef.n) * 180) / Math.PI - courseDeg);
+  const lead = Math.min(tune.wpRadius, l1m);
+  return {
+    at: board,
+    a,
+    b,
+    ref,
+    foot,
+    along: onLine,
+    l1m,
+    xtrack,
+    nuDeg,
+    courseDeg,
+    leadM: onLine && len > lead + 8 ? lead : null,
+    preview,
+  };
+}
+
+function segmentMiss(a: LatLon, b: LatLon, p: LatLon): number {
+  const ab = toEnu(b.lat, b.lon, a);
+  const len = Math.hypot(ab.e, ab.n);
+  if (len < 1) return Infinity;
+  const rel = toEnu(p.lat, p.lon, a);
+  const abE = ab.e / len;
+  const abN = ab.n / len;
+  const along = rel.n * abN + rel.e * abE;
+  if (along < 0) return Math.hypot(rel.e, rel.n);
+  if (along > len) {
+    const end = toEnu(p.lat, p.lon, b);
+    return Math.hypot(end.e, end.n);
+  }
+  return Math.abs(rel.n * abE - rel.e * abN);
+}
+
+function chooseLeg(
+  verts: LatLon[],
+  board: LatLon,
+  mode: string,
+  wpSeq: number | null,
+  rtlFrom: LatLon | null,
+  home: LatLon | null,
+): { a: LatLon; b: LatLon } | null {
+  if (mode === "RTL" && rtlFrom && home && dist(rtlFrom, home) > 5) return { a: rtlFrom, b: home };
+  if (verts.length < 2) return null;
+  if (mode === "AUTO" && wpSeq != null && wpSeq >= 1) {
+    const idx = wpSeq <= 1 ? 1 : wpSeq - 1;
+    if (idx >= 1 && idx < verts.length) return { a: verts[idx - 1], b: verts[idx] };
+  }
+  let bestI = 1;
+  let best = Infinity;
+  for (let i = 1; i < verts.length; i++) {
+    const err = segmentMiss(verts[i - 1], verts[i], board);
+    if (err < best) {
+      best = err;
+      bestI = i;
+    }
+  }
+  return { a: verts[bestI - 1], b: verts[bestI] };
+}
+
 function pair(lat: number | null | undefined, lon: number | null | undefined): LatLon | null {
   if (lat == null || lon == null || !Number.isFinite(lat) || !Number.isFinite(lon)) return null;
   if (lat === 0 && lon === 0) return null;
@@ -298,18 +469,28 @@ export function MissionView({
   const t = useT();
   const vehicle = useVehicle();
   const pose = usePicked(pickPose, poseEq);
+  const restart = usePicked((s) => s.params.MIS_RESTART);
+  const tune = usePicked(pickTune, tuneEq);
   const [plan, setPlan] = useState<Plan>(() => loadPlan(vehicle));
   const [view, setView] = useState<View | null>(null);
   const [size, setSize] = useState({ w: 0, h: 0 });
   const [busy, setBusy] = useState(false);
   const [note, setNote] = useState<string | null>(null);
   const [noteBad, setNoteBad] = useState(false);
+  const [showL1, setShowL1] = useState(() => {
+    try {
+      return localStorage.getItem("arduloops.mission.l1") === "1";
+    } catch {
+      return false;
+    }
+  });
   const mapRef = useRef<HTMLDivElement>(null);
   const svgRef = useRef<SVGSVGElement>(null);
   const viewRef = useRef(view);
   const sizeRef = useRef(size);
   const opened = useRef(false);
   const drag = useRef<{ x: number; y: number; moved: boolean; point: number | null } | null>(null);
+  const rtlEntry = useRef<LatLon | null>(null);
   const onWheelRef = useRef<(ev: WheelEvent) => void>(() => {});
   viewRef.current = view;
   sizeRef.current = size;
@@ -333,8 +514,13 @@ export function MissionView({
     setView(next);
   };
 
+  useEffect(() => {
+    if (!pose.ok || restart != null) return;
+    send({ op: "param_read", name: "MIS_RESTART" });
+  }, [pose.ok, restart]);
+
   const leg = vehicle === "plane" ? 250 : 80;
-  const side = vehicle === "plane" ? 200 : 60;
+  const side = vehicle === "plane" ? 1000 : 300;
   const origin = originOf(pose);
   const board = pair(pose.lat, pose.lon);
   const gps = pair(pose.gpsLat, pose.gpsLon);
@@ -348,6 +534,14 @@ export function MissionView({
       /* ignore */
     }
   }, [plan, vehicle]);
+
+  useEffect(() => {
+    try {
+      localStorage.setItem("arduloops.mission.l1", showL1 ? "1" : "0");
+    } catch {
+      /* ignore */
+    }
+  }, [showL1]);
 
   useEffect(() => {
     const el = mapRef.current;
@@ -479,6 +673,23 @@ export function MissionView({
     fitTo([origin, ...points]);
   }
 
+  function onClover() {
+    if (!origin) return;
+    const points: LatLon[] = [];
+    const n = 32;
+    const near = side * 0.12;
+    for (let i = 0; i < n; i++) {
+      const th = (i / n) * Math.PI * 2;
+      const radius = side * Math.cos(2 * th);
+      const east = radius * Math.sin(th);
+      const north = radius * Math.cos(th);
+      if (east * east + north * north < near * near) continue;
+      points.push(fromEnu(east, north, origin));
+    }
+    setPlan((p) => ({ ...p, points, finish: "rtl" }));
+    fitTo([origin, ...points]);
+  }
+
   function onLoiter() {
     if (!origin) return;
     setPlan((p) => ({ ...p, points: [], finish: "loiter" }));
@@ -507,6 +718,13 @@ export function MissionView({
     say(err ?? "Mission cleared", err != null);
   }
 
+  function onRestart(on: boolean) {
+    const value = on ? 1 : 0;
+    send({ op: "param", name: "MIS_RESTART", value });
+    noteUi([{ kind: "param", name: "MIS_RESTART", value, from: restart ?? null }]);
+    addLog(t(on ? "Restart in AUTO" : "Resume in AUTO"), "cmd");
+  }
+
   function onMode(mode: "AUTO" | "RTL") {
     send({ op: "mode", mode });
     noteUi([{ kind: "mode", from: pose.mode, mode }]);
@@ -520,6 +738,17 @@ export function MissionView({
   const hdg = pose.hdg == null ? null : ((Math.round(pose.hdg) % 360) + 360) % 360;
   const noteText = note ? (KNOWN.has(note) ? t(note) : note) : null;
   const route = [origin, ...plan.points, plan.finish === "rtl" ? origin : null].filter(isLat);
+  if (pose.mode !== "RTL") rtlEntry.current = null;
+  else if (!rtlEntry.current && board) rtlEntry.current = board;
+  const l1 =
+    vehicle === "plane" && showL1 && board
+      ? (() => {
+          const verts = origin ? [origin, ...plan.points] : [];
+          if (origin && plan.finish === "rtl" && plan.points.length) verts.push(origin);
+          const leg = chooseLeg(verts, board, pose.mode, pose.wpSeq, rtlEntry.current, home);
+          return leg ? solveL1(board, leg.a, leg.b, pose.yaw, pose.hdg, pose.gspd, tune) : null;
+        })()
+      : null;
 
   return (
     <section className="scope work mission">
@@ -564,6 +793,7 @@ export function MissionView({
                 truth={truth}
                 yaw={pose.yaw}
                 wpSeq={pose.mode === "AUTO" ? pose.wpSeq : null}
+                l1={l1}
               />
             ) : null}
           </svg>
@@ -632,6 +862,9 @@ export function MissionView({
             <button type="button" disabled={!origin} onClick={onSquare} title={t("{v} m", { v: side })}>
               {t("Square")}
             </button>
+            <button type="button" disabled={!origin} onClick={onClover} title={t("{v} m", { v: side })}>
+              {t("Clover")}
+            </button>
           </div>
           <label className="mission-rtl">
             <input
@@ -641,6 +874,31 @@ export function MissionView({
             />
             {t("End with RTL")}
           </label>
+          <label className="mission-rtl" title={t("Entering AUTO starts at the first waypoint. Clear it and AUTO continues where it left off.")}>
+            <input
+              type="checkbox"
+              checked={restart != null && restart >= 0.5}
+              disabled={!pose.ok || restart == null}
+              onChange={(ev) => onRestart(ev.target.checked)}
+            />
+            {t("Restart in AUTO")}
+          </label>
+          {vehicle === "plane" ? (
+            <label className="mission-rtl" title={t("Circle of radius L1, the look-ahead point, Nu, and the cross-track error.")}>
+              <input type="checkbox" checked={showL1} onChange={(ev) => setShowL1(ev.target.checked)} />
+              {t("Show L1 track")}
+            </label>
+          ) : null}
+          {l1 ? (
+            <p className="mission-hint">
+              {l1.preview ? `${t("cruise")} · ` : ""}
+              {t("L1 {n} m · Nu {nu}° · off {x} m", {
+                n: Math.round(l1.l1m),
+                nu: Math.round(l1.nuDeg),
+                x: Math.abs(l1.xtrack).toFixed(0),
+              })}
+            </p>
+          ) : null}
           <div className="mission-pts-head">
             <b>{t("Waypoints")}</b>
             <button type="button" disabled={!plan.points.length} onClick={() => setPlan((p) => ({ ...p, points: [] }))}>
@@ -674,6 +932,13 @@ export function MissionView({
             <li><i className="swatch gps" />{t("GPS fix")}</li>
             <li><i className="swatch truth" />{t("true position")}</li>
             <li><i className="swatch home" />{t("home")}</li>
+            {vehicle === "plane" && showL1 ? (
+              <>
+                <li><i className="swatch l1" />{t("L1 track")}</li>
+                <li><i className="swatch nu" />Nu</li>
+                <li><i className="swatch wp" />{t("turn start")}</li>
+              </>
+            ) : null}
           </ul>
           <button type="button" disabled={!pose.ok || busy} onClick={() => void onErase()}>
             {t("Erase mission")}
@@ -701,6 +966,7 @@ function MapArt({
   truth,
   yaw,
   wpSeq,
+  l1,
 }: {
   view: View;
   w: number;
@@ -714,6 +980,7 @@ function MapArt({
   truth: LatLon | null;
   yaw: number;
   wpSeq: number | null;
+  l1: L1Picture | null;
 }) {
   const step = gridStep(view.mpp);
   const anchor = home ?? board ?? view;
@@ -775,14 +1042,90 @@ function MapArt({
       })}
       {gpsAt ? <circle cx={gpsAt.x} cy={gpsAt.y} r="4" fill="#ffb74d" /> : null}
       {truthAt ? <circle cx={truthAt.x} cy={truthAt.y} r="6" fill="none" stroke="#81c784" strokeWidth="2" /> : null}
+      {l1 ? <L1Marks picture={l1} xy={xy} mpp={view.mpp} cue={false} /> : null}
       {boardAt ? (
         <g transform={`translate(${boardAt.x} ${boardAt.y}) rotate(${yaw})`}>
           <polygon points="0,-9 6,7 -6,7" fill="#4fc3f7" />
         </g>
       ) : null}
+      {l1 ? <L1Marks picture={l1} xy={xy} mpp={view.mpp} cue /> : null}
       <line x1={w - 12 - bar} y1={h - 16} x2={w - 12} y2={h - 16} stroke="#e8eef4" strokeWidth="2" />
       <text x={w - 12 - bar} y={h - 20} fill="#8b98a8" fontSize="11">{step >= 1000 ? `${step / 1000} km` : `${step} m`}</text>
     </>
+  );
+}
+
+function compassPt(at: { x: number; y: number }, deg: number, r: number): { x: number; y: number } {
+  const rad = (deg * Math.PI) / 180;
+  return { x: at.x + Math.sin(rad) * r, y: at.y - Math.cos(rad) * r };
+}
+
+function L1Marks({
+  picture,
+  xy,
+  mpp,
+  cue,
+}: {
+  picture: L1Picture;
+  xy: (p: LatLon) => { x: number; y: number };
+  mpp: number;
+  cue: boolean;
+}) {
+  const at = xy(picture.at);
+  const a = xy(picture.a);
+  const b = xy(picture.b);
+  const ref = xy(picture.ref);
+  const foot = picture.foot ? xy(picture.foot) : null;
+  const radius = picture.l1m / mpp;
+  const arcR = Math.max(10, Math.min(28, radius * 0.42));
+  const vel = Math.max(16, Math.min(46, radius * 0.55));
+  const nose = compassPt(at, picture.courseDeg, 11);
+  const tip = compassPt(at, picture.courseDeg, 11 + vel);
+  const head = 5;
+  const back = compassPt(tip, picture.courseDeg + 180, head * 2);
+  const left = compassPt(back, picture.courseDeg + 90, head);
+  const right = compassPt(back, picture.courseDeg - 90, head);
+  const showArc = Math.abs(picture.nuDeg) >= 4 && arcR >= 8;
+  const arc0 = compassPt(at, picture.courseDeg, arcR);
+  const arc1 = compassPt(at, picture.courseDeg + picture.nuDeg, arcR);
+  const mid = compassPt(at, picture.courseDeg + picture.nuDeg / 2, arcR + 11);
+  const leadR = picture.leadM != null ? picture.leadM / mpp : 0;
+  if (cue) {
+    return (
+      <g pointerEvents="none">
+        <line x1={nose.x} y1={nose.y} x2={tip.x} y2={tip.y} stroke="#4fc3f7" strokeWidth="1.6" strokeLinecap="round" />
+        <polygon points={`${tip.x},${tip.y} ${left.x},${left.y} ${right.x},${right.y}`} fill="#4fc3f7" />
+        {showArc ? (
+          <path
+            d={`M ${arc0.x.toFixed(1)} ${arc0.y.toFixed(1)} A ${arcR.toFixed(1)} ${arcR.toFixed(1)} 0 0 ${picture.nuDeg >= 0 ? 1 : 0} ${arc1.x.toFixed(1)} ${arc1.y.toFixed(1)}`}
+            fill="none"
+            stroke="#8b98a8"
+            strokeWidth="1.5"
+          />
+        ) : null}
+        {showArc ? (
+          <text x={mid.x} y={mid.y} fill="#8b98a8" fontSize="11" textAnchor="middle">
+            Nu
+          </text>
+        ) : null}
+      </g>
+    );
+  }
+  return (
+    <g pointerEvents="none">
+      {leadR >= 6 ? (
+        <circle cx={b.x} cy={b.y} r={leadR} fill="none" stroke="#8b98a8" strokeWidth="1" strokeDasharray="3 4" opacity="0.75" />
+      ) : null}
+      <line x1={a.x} y1={a.y} x2={b.x} y2={b.y} stroke="#ffb74d" strokeWidth="2.4" strokeLinecap="round" opacity="0.9" />
+      {foot ? (
+        <line x1={at.x} y1={at.y} x2={foot.x} y2={foot.y} stroke="#ffb74d" strokeWidth="1" strokeDasharray="3 3" />
+      ) : null}
+      {radius >= 3 ? (
+        <circle cx={at.x} cy={at.y} r={radius} fill="none" stroke="#ffb74d" strokeWidth="1.3" strokeDasharray="5 4" />
+      ) : null}
+      <line x1={at.x} y1={at.y} x2={ref.x} y2={ref.y} stroke="#ffb74d" strokeWidth="1.6" />
+      {picture.along ? <circle cx={ref.x} cy={ref.y} r="4.5" fill="#ffb74d" stroke="#101214" strokeWidth="1.2" /> : null}
+    </g>
   );
 }
 

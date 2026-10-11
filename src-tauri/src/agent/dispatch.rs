@@ -115,7 +115,8 @@ fn run_tool(
                 "params_saved_at": book.saved_at,
                 "controller_key": controller_key,
                 "vehicle_comment": vehicle_comment,
-                "note": "`linked: false` means a change cannot be sent. `detail` is the url while the link is up. `vehicle_comment` is the local note on this vehicle. Empty means none is stored. `controller_key` is the id for the `vehicle_comment` tool.",
+                "sitl": sample.is_simulator(),
+                "note": "`linked: false` means a change cannot be sent. `detail` is the url while the link is up. `vehicle_comment` is the local note on this vehicle. Empty means none is stored. `controller_key` is the id for the `vehicle_comment` tool. `sitl` is true when this link is a simulator. A null `controller_key` is not that signal.",
             })
         }
         "get_param" => {
@@ -165,6 +166,8 @@ fn run_tool(
         "log_query" => log_query_tool(args, file),
         "log_compute" => log_compute_tool(args, file),
         "show_chart" => crate::dflog::chart(file, args),
+        "show_spectrum" => crate::dflog::gyro_picture(file, "spectrum", args),
+        "show_spectrogram" => crate::dflog::gyro_picture(file, "spectrogram", args),
         "show_live" => show_live(args, sample),
         "live_fields" => live_fields(args),
         "live_buffer" => live_buffer(args),

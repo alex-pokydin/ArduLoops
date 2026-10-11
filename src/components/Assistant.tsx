@@ -10,7 +10,7 @@ import { Disconnected } from "./Disconnected";
 import { WizardHost, type WizardAsk } from "./WizardHost";
 import type { WizardClose } from "../wizards/close";
 import { ChartStrip, chartsFromTools } from "./FindingCharts";
-import { LiveView, liveSpecFromTools, type LiveSpec } from "./LivePlots";
+import { LiveHost, LiveView, liveSpecFromTools, type LiveSpec } from "./LivePlots";
 import { getLang, useT } from "../i18n/i18n";
 import { getLuaQuote, quoteLabel, setLuaQuote, subscribeLuaQuote } from "../luaQuote";
 import { subscribe } from "../mav/store";
@@ -799,7 +799,7 @@ export function Assistant({
   }
 
   return (
-    <>
+    <LiveHost chatId={chatId}>
       {wizardAsk ? <WizardHost ask={wizardAsk} onDone={(id, report) => void onWizardDone(id, report)} /> : null}
       {home && !configured ? <Disconnected /> : null}
       {home && configured ? (
@@ -1010,7 +1010,7 @@ export function Assistant({
           </form>
         </div>
       ) : null}
-    </>
+    </LiveHost>
   );
 }
 
@@ -1106,8 +1106,6 @@ function ChatPane({
   const held = holdReply(shownThread, live?.reply, replyBook.current);
   const hidden = thread.length - shownThread.length;
   const liveView = useMemo(() => latestLive(shownThread), [shownThread]);
-  const [liveOpen, setLiveOpen] = useState(false);
-  useEffect(() => { setLiveOpen(false); }, [chatId]);
   const [keptThoughts, setKeptThoughts] = useState<Record<string, string>>({});
   const liveTools = shownThread.reduce((found, block, index) => block.kind === "tools" ? index : found, -1);
   const lastProposal = shownThread.reduce((found, block, index) => block.kind === "proposal" ? index : found, -1);
@@ -1319,7 +1317,7 @@ function ChatPane({
                 ) : block.msg.role === "assistant" ? <AssistantMarkdown text={shownNotice(block.msg.body, t)} /> : block.msg.body}
                 {block.msg.role === "assistant" && block.msg.at !== -1 ? <ChartStrip charts={chartsUnder(held, index)} /> : null}
                 {block.msg.role === "assistant" && (block.msg.at !== -1 || block.docs?.length) ? <DocStrip docs={[...(block.docs ?? []), ...(block.msg.at === -1 ? [] : docsUnder(held, index))]} /> : null}
-                {block.msg.role === "assistant" && block.msg.at !== -1 && liveView?.index === index ? <LiveView spec={liveView.spec} open={liveOpen} onOpen={() => setLiveOpen(true)} onClose={() => setLiveOpen(false)} /> : null}
+                {block.msg.role === "assistant" && block.msg.at !== -1 && liveView?.index === index ? <LiveView spec={liveView.spec} /> : null}
               </article>
               )
             ))}
@@ -1731,9 +1729,31 @@ function spanOf(values: unknown): { count: number; min: number | null; max: numb
   return count ? { count, min, max } : { count: 0, min: null, max: null };
 }
 
+function matrixSpan(values: unknown): { count: number; min: number | null; max: number | null } {
+  if (!Array.isArray(values)) return { count: 0, min: null, max: null };
+  let min = Infinity;
+  let max = -Infinity;
+  let count = 0;
+  for (const row of values) {
+    if (!Array.isArray(row)) continue;
+    for (const value of row) {
+      if (typeof value !== "number" || !Number.isFinite(value)) continue;
+      count += 1;
+      if (value < min) min = value;
+      if (value > max) max = value;
+    }
+  }
+  return count ? { count, min, max } : { count: 0, min: null, max: null };
+}
+
 function chartBrief(output: string): string {
   try {
-    const value = JSON.parse(output) as { chart?: { axes?: Array<{ lines?: Array<Record<string, unknown>> }> } };
+    const value = JSON.parse(output) as {
+      chart?: {
+        axes?: Array<{ lines?: Array<Record<string, unknown>> }>;
+        heatmap?: Record<string, unknown>;
+      };
+    };
     for (const axis of value.chart?.axes ?? []) {
       for (const line of axis.lines ?? []) {
         const x = spanOf(line.x);
@@ -1747,6 +1767,24 @@ function chartBrief(output: string): string {
         line.y_max = y.max;
       }
     }
+    const heat = value.chart?.heatmap;
+    if (heat) {
+      const x = spanOf(heat.x);
+      const y = spanOf(heat.y);
+      const z = matrixSpan(heat.z);
+      delete heat.x;
+      delete heat.y;
+      delete heat.z;
+      heat.times = x.count;
+      heat.bins = y.count;
+      heat.cells = z.count;
+      heat.x_min = x.min;
+      heat.x_max = x.max;
+      heat.y_min = y.min;
+      heat.y_max = y.max;
+      heat.db_min = z.min;
+      heat.db_max = z.max;
+    }
     return JSON.stringify(value, null, 2);
   } catch {
     return formatTool(output);
@@ -1754,7 +1792,9 @@ function chartBrief(output: string): string {
 }
 
 function shownOutput(item: ToolItem): string {
-  return item.name === "show_chart" ? chartBrief(item.output) : formatTool(item.output);
+  return item.name === "show_chart" || item.name === "show_spectrum" || item.name === "show_spectrogram"
+    ? chartBrief(item.output)
+    : formatTool(item.output);
 }
 
 function formatTool(detail: string): string {

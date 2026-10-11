@@ -20,6 +20,7 @@ fn tool_schema() -> Value {
                 "Whether the link is up, and the live flight picture: frame, mode, armed, attitude, and altitude.",
                 "It also says whether the parameter set on the link is complete.",
                 "It returns `controller_key` and `vehicle_comment`, the local note stored for this vehicle.",
+                "It returns `sitl`, true when this link is a simulator.",
             ),
             "parameters": { "type": "object", "properties": {} }
         },
@@ -292,6 +293,45 @@ fn tool_schema() -> Value {
                     }
                 },
                 "required": []
+            }
+        },
+        {
+            "name": "show_spectrum",
+            "description": doc!(
+                "Draw the gyro spectrum under the reply.",
+                "`x` is Hz across the FFT bins.",
+                "`X`, `Y`, and `Z` are dB on each gyro axis against the loudest raw bin.",
+                "`X filtered`, `Y filtered`, and `Z filtered` are that scale on the filtered capture, and only when the log has one.",
+                "`notch` is the configured harmonic notch, and `notch 2` the second, drawn only when that filter is enabled in the log.",
+                "Slug, remove, and the five-chart limit work as on `show_chart`.",
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "file": { "type": "string", "description": "An id from `list_logs`, or `local.id` from `vehicle_logs`. Omit it for the log already selected." },
+                    "title": { "type": "string", "description": "The heading shown on the chart. Omit it for `spectrum`." },
+                    "slug": { "type": "string", "description": "A short name for this chart in the turn. The same slug replaces it." },
+                    "remove": { "type": "boolean", "description": "Remove the chart with this `slug`. `file` is not used." }
+                }
+            }
+        },
+        {
+            "name": "show_spectrogram",
+            "description": doc!(
+                "Draw the gyro spectrogram under the reply.",
+                "The map is time against frequency.",
+                "Color is dB against the loudest cell of the raw pre-filter capture.",
+                "`notch` is the notch frequency the log recorded, drawn on that map, and only when that column is present.",
+                "Slug, remove, and the five-chart limit work as on `show_chart`.",
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "file": { "type": "string", "description": "An id from `list_logs`, or `local.id` from `vehicle_logs`. Omit it for the log already selected." },
+                    "title": { "type": "string", "description": "The heading shown on the chart. Omit it for `spectrogram`." },
+                    "slug": { "type": "string", "description": "A short name for this chart in the turn. The same slug replaces it." },
+                    "remove": { "type": "boolean", "description": "Remove the chart with this `slug`. `file` is not used." }
+                }
             }
         },
         {

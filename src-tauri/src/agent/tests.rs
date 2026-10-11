@@ -3,10 +3,21 @@
 
 #[cfg(test)]
 mod link_wait_tests {
-        use super::{admit_chart, append_steer, attached_log_note, batch_token, begin_live, call_again, call_provider, change_detail, chat_tools, claim_steers_through, compact_prompt, connect_already_up, conversation_prompt, default_model, drain_steers, end_live, failure_body, fit_result, halt_turn, link_fresh, live_buffer, live_fields, live_reply, live_status, live_thinking, live_thought, load_secrets, log_download_wait_s, next_fold_turn, note_stopped_turns_on, note_tool, outcome_item, plan_context, provider_failure, provider_model, provider_turn, reasoning_effort, render_context, scrub_chart, show_live, stamp_live, tool_schema, tool_text, turn_halted, turn_is_live, turn_options, ui_notes, wizard_frame_ok, wizard_line, wizard_name_ok, wizard_vehicle, xml_block, ChartBook, ChartSlot, MsgRow, SKILL_ROOT};
+        use super::{admit_chart, append_steer, attached_log_note, batch_token, begin_live, call_again, call_provider, change_detail, chat_tools, claim_steers_through, compact_prompt, connect_already_up, conversation_prompt, default_model, drain_steers, end_live, failure_body, fit_result, halt_turn, link_fresh, live_buffer, live_fields, live_reply, live_status, live_thinking, live_thought, load_secrets, log_download_wait_s, next_fold_turn, note_stopped_turns_on, note_tool, outcome_item, plan_context, provider_failure, provider_model, provider_turn, reasoning_effort, render_context, scrub_chart, show_live, shown_reply, stamp_live, take_leaked_calls, tool_schema, tool_text, turn_halted, turn_is_live, turn_options, ui_notes, wizard_frame_ok, wizard_line, wizard_name_ok, wizard_vehicle, xml_block, ChartBook, ChartSlot, MsgRow, SKILL_ROOT};
     use crate::link::Sample;
     use rusqlite::Connection;
     use serde_json::json;
+
+    #[test]
+    fn gemini_text_tool_calls_are_not_shown() {
+        let (clean, calls) = take_leaked_calls("tool:default_api:recent_status{limit:10}");
+        assert_eq!(calls.len(), 1);
+        assert_eq!(calls[0].fn_name, "recent_status");
+        assert_eq!(calls[0].fn_arguments["limit"], 10);
+        assert!(clean.is_empty());
+        assert!(shown_reply("tool:default_api:recent_status{limit:10}").is_empty());
+        assert!(shown_reply("The vehicle is disarmed.").contains("disarmed"));
+    }
 
     #[test]
     fn save_document_is_not_a_client_tool() {

@@ -50,6 +50,11 @@ export function fmtGain(g: Gain, v: number, name = g.key): string {
     return v <= 0 ? "off" : `${Math.round(v)} Hz`;
   }
   if (name === "INS_HNTCH_ENABLE") return v >= 0.5 ? "on" : "off";
+  if (name === "INS_HNTCH_MODE") {
+    const modes = ["fixed", "throttle", "RPM", "ESC", "FFT", "RPM2"];
+    return modes[Math.round(v)] ?? String(Math.round(v));
+  }
+  if (name === "INS_HNTCH_ATT") return `${Math.round(v)} dB`;
   if (/_SMAX$/.test(name) || /_FF$/.test(name)) {
     if (v <= 0) return "off";
   }

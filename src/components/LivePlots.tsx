@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent } from "react";
+import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 import { useT } from "../i18n/i18n";
 import { customCatalog, customPane, liveFieldSig, resolveLine, type CatalogTrace, type Pane } from "../lib/traces";
@@ -52,36 +52,55 @@ function chartStamp(spec: LiveSpec): string {
   return spec.charts.map((chart) => `${chart.title}\n${chart.lines.map((line) => line.id).join(",")}`).join("\n");
 }
 
-export function LiveView({
-  spec,
-  open,
-  onOpen,
-  onClose,
-}: {
-  spec: LiveSpec;
-  open: boolean;
-  onOpen: () => void;
-  onClose: () => void;
-}) {
-  const stamp = chartStamp(spec);
-  const [state, setState] = useState(() => ({ stamp, on: spec.charts.map(() => true) }));
-  if (state.stamp !== stamp) setState({ stamp, on: spec.charts.map(() => true) });
-  const flags = state.stamp === stamp ? state.on : spec.charts.map(() => true);
-  function toggle(index: number, checked: boolean) {
-    setState((prev) => {
-      const base = prev.stamp === stamp ? prev.on : spec.charts.map(() => true);
-      const next = base.slice();
+type LiveDockApi = {
+  flags: boolean[];
+  setOpen: (open: boolean) => void;
+  setSpec: (spec: LiveSpec | null) => void;
+  toggle: (index: number, checked: boolean) => void;
+};
+
+const LiveDock = createContext<LiveDockApi | null>(null);
+
+export function LiveHost({ chatId, children }: { chatId: string; children: ReactNode }) {
+  const [spec, setSpecState] = useState<LiveSpec | null>(null);
+  const [open, setOpen] = useState(false);
+  const [flagState, setFlagState] = useState({ stamp: "", on: [] as boolean[] });
+  const stamp = spec ? chartStamp(spec) : "";
+  if (spec && flagState.stamp !== stamp) setFlagState({ stamp, on: spec.charts.map(() => true) });
+  const flags = spec && flagState.stamp === stamp ? flagState.on : (spec ? spec.charts.map(() => true) : []);
+  const seen = useRef(chatId);
+  useEffect(() => {
+    if (seen.current === chatId) return;
+    seen.current = chatId;
+    setOpen(false);
+  }, [chatId]);
+  const setSpec = useCallback((next: LiveSpec | null) => {
+    setSpecState((prev) => (prev === next ? prev : next));
+  }, []);
+  const toggle = useCallback((index: number, checked: boolean) => {
+    setFlagState((prev) => {
+      const next = prev.on.slice();
       next[index] = checked;
-      return { stamp, on: next };
+      return { stamp: prev.stamp, on: next };
     });
-  }
-  const shown: LiveSpec = { charts: spec.charts.filter((_, index) => flags[index]) };
+  }, []);
+  const api = useMemo<LiveDockApi>(() => ({ flags, setOpen, setSpec, toggle }), [flags, setSpec, toggle]);
+  const shown: LiveSpec | null = spec ? { charts: spec.charts.filter((_, index) => flags[index]) } : null;
   return (
-    <>
-      <LiveCard spec={spec} on={flags} onToggle={toggle} onOpen={onOpen} />
-      {open ? <LiveWindow spec={shown} onClose={onClose} /> : null}
-    </>
+    <LiveDock.Provider value={api}>
+      {children}
+      {open && shown ? <LiveWindow spec={shown} onClose={() => setOpen(false)} /> : null}
+    </LiveDock.Provider>
   );
+}
+
+export function LiveView({ spec }: { spec: LiveSpec }) {
+  const dock = useContext(LiveDock);
+  const setSpec = dock?.setSpec;
+  useEffect(() => { setSpec?.(spec); }, [spec, setSpec]);
+  if (!dock) return null;
+  const on = dock.flags.length === spec.charts.length ? dock.flags : spec.charts.map(() => true);
+  return <LiveCard spec={spec} on={on} onToggle={dock.toggle} onOpen={() => dock.setOpen(true)} />;
 }
 
 export function LiveCard({
@@ -183,14 +202,12 @@ export function LiveWindow({ spec, onClose }: { spec: LiveSpec; onClose: () => v
   }
 
   return createPortal(
-    <div className="ai-chart-back" onClick={onClose} role="presentation">
-      <div
-        className={full ? "ai-chart-window live full" : "ai-chart-window live"}
-        ref={frame}
-        role="dialog"
-        aria-label={t("Live lines")}
-        onClick={(ev) => ev.stopPropagation()}
-      >
+    <div
+      className={full ? "ai-chart-window live full" : "ai-chart-window live"}
+      ref={frame}
+      role="dialog"
+      aria-label={t("Live lines")}
+    >
         <header onPointerDown={onDrag} onPointerMove={onMove} onPointerUp={() => { drag.current = null; }}>
           <b>{t("Live lines")}</b>
           <button
@@ -221,7 +238,6 @@ export function LiveWindow({ spec, onClose }: { spec: LiveSpec; onClose: () => v
         ) : (
           <p className="ai-live-empty">{t("No live chart is on")}</p>
         )}
-      </div>
     </div>,
     document.body,
   );

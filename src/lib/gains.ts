@@ -89,6 +89,10 @@ export function hasKnobs(node: NodeDef): boolean {
 /** IMU harmonic notch. Loop extend, on the gyro return — not a PID extra. */
 export const GYRO_NOTCH: Gain[] = [
   { key: "INS_HNTCH_ENABLE", label: "EN", min: 0, max: 1, step: 1, digits: 0 },
+  { key: "INS_HNTCH_MODE", label: "MODE", min: 0, max: 5, step: 1, digits: 0 },
   { key: "INS_HNTCH_FREQ", label: "FREQ", min: 10, max: 495, step: 1, digits: 0 },
   { key: "INS_HNTCH_BW", label: "BW", min: 5, max: 250, step: 1, digits: 0 },
+  { key: "INS_HNTCH_REF", label: "REF", min: 0, max: 1, step: 0.01, digits: 2 },
+  { key: "INS_HNTCH_FM_RAT", label: "FM_RAT", min: 0.1, max: 1, step: 0.01, digits: 2 },
+  { key: "INS_HNTCH_ATT", label: "ATT", min: 5, max: 50, step: 1, digits: 0 },
 ];

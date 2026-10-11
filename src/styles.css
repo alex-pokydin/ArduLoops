@@ -1848,6 +1848,8 @@ button.hot { background: #6b2424; }
   border-radius: 14px; background: #14181d; box-shadow: 0 16px 48px rgba(0, 0, 0, 0.45), inset 0 0 0 1px #2a3140;
 }
 .ai-chart-window.live {
+  position: fixed;
+  z-index: 42;
   width: min(480px, calc(100vw - 24px));
   height: min(860px, calc(100dvh - 48px));
   left: max(16px, calc(50% - 240px));
@@ -2099,6 +2101,9 @@ main.agent-home { display: flex; padding: 0; gap: 0; overflow: hidden; backgroun
 .mission-legend .swatch.gps { background: var(--amber); border-radius: 50%; }
 .mission-legend .swatch.truth { box-shadow: inset 0 0 0 2px var(--ok); border-radius: 50%; }
 .mission-legend .swatch.home { background: var(--wool); transform: rotate(45deg); width: 7px; height: 7px; }
+.mission-legend .swatch.l1 { background: transparent; box-shadow: inset 0 0 0 1.5px var(--amber); border-radius: 50%; }
+.mission-legend .swatch.nu { background: var(--cyan); width: 10px; height: 2px; }
+.mission-legend .swatch.wp { background: transparent; box-shadow: inset 0 0 0 1.5px var(--wool); border-radius: 50%; }
 .mission-hint, .mission-msg { margin: 0; line-height: 1.35; }
 .mission-msg { color: var(--cyan); }
 .mission-msg.bad { color: var(--hot); }

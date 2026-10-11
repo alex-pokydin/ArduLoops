@@ -345,9 +345,28 @@ fn wire_message(message: &genai::chat::ChatMessage) -> Value {
     })
 }
 
+fn hosted_err(err: reqwest::Error) -> String {
+    if err.is_timeout() {
+        return "timed out".into();
+    }
+    let mut detail = err.to_string();
+    let mut source = std::error::Error::source(&err);
+    while let Some(next) = source {
+        let text = next.to_string();
+        if !detail.contains(&text) {
+            detail.push_str(": ");
+            detail.push_str(&text);
+        }
+        source = std::error::Error::source(next);
+    }
+    detail
+}
+
 fn hosted_client() -> reqwest::Client {
     install_tls();
-    let mut builder = reqwest::Client::builder().timeout(std::time::Duration::from_secs(100));
+    // One request carries the whole chat stream. Cloud Run allows 900s. A shorter
+    // deadline closes the body early, and reqwest reports that as a decode error.
+    let mut builder = reqwest::Client::builder().timeout(std::time::Duration::from_secs(900));
     // Same as the own-key client: Android has no platform verifier unless Kotlin wires it up.
     #[cfg(target_os = "android")]
     {
@@ -416,13 +435,14 @@ fn apply_sse(buf: &mut String, text: &mut String, thought: &mut String, calls: &
     Ok(())
 }
 
-fn hosted_request(provider: &str, model: &str, reasoning: &str, system: &str, messages: &[genai::chat::ChatMessage], quota: &str, chat_id: &str, turn_id: &Option<String>) -> Value {
+fn hosted_request(provider: &str, model: &str, reasoning: &str, system: &str, lang: &str, messages: &[genai::chat::ChatMessage], quota: &str, chat_id: &str, turn_id: &Option<String>) -> Value {
     let wire: Vec<Value> = messages.iter().map(wire_message).collect();
     json!({
         "provider": provider,
         "model": model,
         "reasoning": reasoning,
         "system": system,
+        "lang": lang,
         "quota": quota,
         "chat_id": chat_id,
         "turn_id": turn_id,
@@ -448,7 +468,7 @@ async fn read_hosted(resp: reqwest::Response, gen: u64, turn_slot: &mut Option<S
         if gen_halted(gen) {
             return Err("stopped".into());
         }
-        let chunk = item.map_err(|err| err.to_string())?;
+        let chunk = item.map_err(hosted_err)?;
         buf.push_str(&String::from_utf8_lossy(&chunk));
         apply_sse(&mut buf, &mut text, &mut thought, &mut calls, turn_slot)?;
     }
@@ -457,9 +477,9 @@ async fn read_hosted(resp: reqwest::Response, gen: u64, turn_slot: &mut Option<S
     Ok(ProviderTurn { text, calls, assistant })
 }
 
-fn hosted_turn(provider: &str, model: &str, reasoning: &str, system: &str, messages: &[genai::chat::ChatMessage], quota: &str, chat_id: &str, turn_slot: &mut Option<String>) -> Result<ProviderTurn, String> {
+fn hosted_turn(provider: &str, model: &str, reasoning: &str, system: &str, lang: &str, messages: &[genai::chat::ChatMessage], quota: &str, chat_id: &str, turn_slot: &mut Option<String>) -> Result<ProviderTurn, String> {
     let token = session_id_token()?;
-    let body = hosted_request(provider, model, reasoning, system, messages, quota, chat_id, turn_slot);
+    let body = hosted_request(provider, model, reasoning, system, lang, messages, quota, chat_id, turn_slot);
     let client = hosted_client();
     let url = format!("{}/v1/chat", api_base());
     let gen = turn_gen();
@@ -470,7 +490,7 @@ fn hosted_turn(provider: &str, model: &str, reasoning: &str, system: &str, messa
             .body(body.to_string())
             .send()
             .await
-            .map_err(|err| err.to_string())?;
+            .map_err(hosted_err)?;
         read_hosted(resp, gen, turn_slot).await
     })
 }
@@ -478,7 +498,7 @@ fn hosted_turn(provider: &str, model: &str, reasoning: &str, system: &str, messa
 fn hosted_complete(provider: &str, model: &str, prompt: &str) -> Result<String, String> {
     let mut slot = None;
     let messages = vec![genai::chat::ChatMessage::user(prompt)];
-    let turn = hosted_turn(provider, model, "", "", &messages, "fold", "", &mut slot)?;
+    let turn = hosted_turn(provider, model, "", "", "", &messages, "fold", "", &mut slot)?;
     if turn.text.trim().is_empty() {
         return Err("empty provider response".into());
     }

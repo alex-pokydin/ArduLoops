@@ -543,7 +543,7 @@ fn complete_turn(
     let reasoning = body["reasoning"].as_str().unwrap_or("");
     let system = system_prompt(lang, sample, bench_left(c).is_some(), log_id);
     let prompt = conversation_prompt(&history, log_id);
-    let reply = converse(&provider, &model, &key, reasoning, &system, &prompt, sample, c, tx, chat, log_id);
+    let reply = converse(&provider, &model, &key, reasoning, &system, lang, &prompt, sample, c, tx, chat, log_id);
     save_work(c, chat, now_ms().saturating_sub(started));
     schedule_compact(chat, &provider, &model, &key);
     let reply = match reply {
