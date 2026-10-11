@@ -6,6 +6,19 @@ Until a heartbeat arrives, you get the start page. After the heartbeat, the shel
 
 The assistant sits on the right. It reads this link, the parameters, and a log you have downloaded. A number in an answer is a number a tool returned. A change waits until you confirm it.
 
+<p align="center">
+  <a href="docs/assistant.md"><img src="docs/readme-assistant.png" alt="Assistant" width="32%"></a>
+  <a href="docs/loops.md"><img src="docs/readme-tecs.png" alt="TECS" width="32%"></a>
+  <a href="docs/missions.md"><img src="docs/readme-mission.png" alt="Mission" width="32%"></a>
+</p>
+<p align="center">
+  <a href="docs/assistant.md"><b>Assistant</b></a>
+  &nbsp;&nbsp;·&nbsp;&nbsp;
+  <a href="docs/loops.md"><b>TECS</b></a>
+  &nbsp;&nbsp;·&nbsp;&nbsp;
+  <a href="docs/missions.md"><b>Mission</b></a>
+</p>
+
 The start page itself is [`docs/start.md`](docs/start.md) (English) and [`docs/start.uk.md`](docs/start.uk.md). Home renders that markdown.
 
 ## Where to go next
