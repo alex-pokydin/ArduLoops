@@ -25,9 +25,12 @@ fn api_base() -> String {
     std::env::var("ARDULOOPS_HOSTED_API").unwrap_or_else(|_| "https://api-qm4zps6yqa-ew.a.run.app".into())
 }
 
-fn firebase_web_key() -> String {
+fn firebase_web_key() -> Result<String, String> {
     std::env::var("ARDULOOPS_FIREBASE_API_KEY")
-        .unwrap_or_else(|_| "AIzaSyBdm2Ih-WzEWJpWb4_CIERBX0rvf9gp0Wc".into())
+        .ok()
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
+        .ok_or_else(|| "ARDULOOPS_FIREBASE_API_KEY is not set.".to_string())
 }
 
 fn session_path() -> std::path::PathBuf {
@@ -75,7 +78,7 @@ fn session_id_token() -> Result<String, String> {
             return Ok(session.id_token);
         }
     }
-    let url = format!("https://securetoken.googleapis.com/v1/token?key={}", firebase_web_key());
+    let url = format!("https://securetoken.googleapis.com/v1/token?key={}", firebase_web_key()?);
     let body = format!(
         "grant_type=refresh_token&refresh_token={}",
         form_encode(&session.refresh_token)
