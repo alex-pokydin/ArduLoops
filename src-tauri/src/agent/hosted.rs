@@ -25,14 +25,6 @@ fn api_base() -> String {
     std::env::var("ARDULOOPS_HOSTED_API").unwrap_or_else(|_| "https://api-qm4zps6yqa-ew.a.run.app".into())
 }
 
-fn firebase_web_key() -> Result<String, String> {
-    std::env::var("ARDULOOPS_FIREBASE_API_KEY")
-        .ok()
-        .map(|value| value.trim().to_string())
-        .filter(|value| !value.is_empty())
-        .ok_or_else(|| "ARDULOOPS_FIREBASE_API_KEY is not set.".to_string())
-}
-
 fn session_path() -> std::path::PathBuf {
     data_dir().join("ai-session.json")
 }
@@ -78,20 +70,12 @@ fn session_id_token() -> Result<String, String> {
             return Ok(session.id_token);
         }
     }
-    let url = format!("https://securetoken.googleapis.com/v1/token?key={}", firebase_web_key()?);
-    let body = format!(
-        "grant_type=refresh_token&refresh_token={}",
-        form_encode(&session.refresh_token)
-    );
-    let refreshed = match http_agent()
-        .post(&url)
-        .set("content-type", "application/x-www-form-urlencoded")
-        .send_string(&body)
-    {
-        Ok(response) => {
-            let text = response.into_string().unwrap_or_default();
-            serde_json::from_str::<Value>(&text).map_err(|err| err.to_string())?
-        }
+    let refreshed = match post_json(
+        &format!("{}/v1/auth/refresh", api_base()),
+        None,
+        &json!({ "refresh_token": session.refresh_token }),
+    ) {
+        Ok(value) => value,
         Err(_) => {
             clear_session();
             return Err("Sign in required.".into());
@@ -113,6 +97,9 @@ fn session_id_token() -> Result<String, String> {
         if let Ok(prev) = serde_json::from_str::<Value>(&raw) {
             if prev["assistant"].is_string() {
                 stored["assistant"] = prev["assistant"].clone();
+            }
+            if prev["uid"].is_string() {
+                stored["uid"] = prev["uid"].clone();
             }
         }
     }
@@ -153,10 +140,6 @@ fn set_hosted_assistant(on: bool) {
     };
     stored["assistant"] = json!(if on { "on" } else { "off" });
     let _ = fs::write(session_path(), stored.to_string());
-}
-
-fn http_agent() -> ureq::Agent {
-    ureq::AgentBuilder::new().timeout(std::time::Duration::from_secs(30)).build()
 }
 
 fn html_page(body: &str) -> String {
@@ -202,23 +185,38 @@ mod auth_url {
     }
 }
 
+fn api_block_on<T>(fut: impl std::future::Future<Output = T>) -> T {
+    static RT: std::sync::OnceLock<tokio::runtime::Runtime> = std::sync::OnceLock::new();
+    let runtime = RT.get_or_init(|| {
+        tokio::runtime::Builder::new_multi_thread()
+            .worker_threads(1)
+            .enable_all()
+            .thread_name("arduloops-api")
+            .build()
+            .expect("api runtime")
+    });
+    runtime.block_on(fut)
+}
+
 fn post_json(url: &str, token: Option<&str>, body: &Value) -> Result<Value, String> {
-    let mut req = http_agent().post(url).set("content-type", "application/json");
-    if let Some(token) = token {
-        req = req.set("authorization", &format!("Bearer {token}"));
-    }
-    match req.send_string(&body.to_string()) {
-        Ok(response) => {
-            let text = response.into_string().unwrap_or_default();
-            serde_json::from_str(&text).map_err(|err| err.to_string())
+    let url = url.to_string();
+    let token = token.map(str::to_string);
+    let body = body.to_string();
+    api_block_on(async move {
+        let mut req = api_http(30).post(url).header("content-type", "application/json").body(body);
+        if let Some(token) = token {
+            req = req.header("authorization", format!("Bearer {token}"));
         }
-        Err(ureq::Error::Status(code, response)) => {
-            let text = response.into_string().unwrap_or_default();
-            let value: Value = serde_json::from_str(&text).unwrap_or(json!({}));
-            Err(value["message"].as_str().map(str::to_string).unwrap_or_else(|| format!("{code} {text}")))
+        let resp = req.send().await.map_err(hosted_err)?;
+        let status = resp.status();
+        let text = resp.text().await.unwrap_or_default();
+        let value: Value = serde_json::from_str(&text).unwrap_or(json!({}));
+        if status.is_success() {
+            Ok(value)
+        } else {
+            Err(value["message"].as_str().map(str::to_string).unwrap_or_else(|| format!("{status} {text}")))
         }
-        Err(err) => Err(err.to_string()),
-    }
+    })
 }
 
 fn claim_session(nonce: &str) -> Result<String, String> {
@@ -362,17 +360,19 @@ fn hosted_err(err: reqwest::Error) -> String {
     detail
 }
 
-fn hosted_client() -> reqwest::Client {
+fn api_http(timeout_s: u64) -> reqwest::Client {
     install_tls();
+    reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(timeout_s))
+        .use_preconfigured_tls(mozilla_tls())
+        .build()
+        .expect("subscription client")
+}
+
+fn hosted_client() -> reqwest::Client {
     // One request carries the whole chat stream. Cloud Run allows 900s. A shorter
     // deadline closes the body early, and reqwest reports that as a decode error.
-    let mut builder = reqwest::Client::builder().timeout(std::time::Duration::from_secs(900));
-    // Same as the own-key client: Android has no platform verifier unless Kotlin wires it up.
-    #[cfg(target_os = "android")]
-    {
-        builder = builder.use_preconfigured_tls(mozilla_tls());
-    }
-    builder.build().expect("subscription client")
+    api_http(900)
 }
 
 fn tool_from_event(value: &Value) -> ToolCall {
@@ -503,4 +503,44 @@ fn hosted_complete(provider: &str, model: &str, prompt: &str) -> Result<String, 
         return Err("empty provider response".into());
     }
     Ok(turn.text)
+}
+
+#[cfg(test)]
+mod cloud_and_own_key {
+    #[test]
+    fn hosted_body_sends_lang_and_no_provider_key() {
+        let messages = vec![genai::chat::ChatMessage::user("hi")];
+        let body = super::hosted_request("gemini", "gemini-2.5-flash", "", "sys", "uk", &messages, "turn", "c1", &None);
+        assert_eq!(body["lang"], "uk");
+        assert_eq!(body["provider"], "gemini");
+        assert!(body.get("key").is_none());
+        assert!(body.get("api_key").is_none());
+    }
+
+    #[test]
+    fn cloud_api_defaults_to_run_app() {
+        let base = super::api_base();
+        assert!(base.contains("run.app") || super::local_host(&base), "{base}");
+    }
+
+    #[test]
+    fn cloud_http_client_builds_with_mozilla_roots() {
+        let _client = super::api_http(5);
+        let _stream = super::hosted_client();
+    }
+
+    #[test]
+    fn cloud_tls_reaches_run_app() {
+        if super::local_host(&super::auth_origin()) {
+            return;
+        }
+        let client = super::api_http(20);
+        let url = format!("{}/health", super::api_base());
+        let ok = super::api_block_on(async move {
+            let resp = client.get(url).send().await.ok()?;
+            let value: serde_json::Value = resp.json().await.ok()?;
+            Some(value["ok"] == true)
+        });
+        assert_eq!(ok, Some(true));
+    }
 }

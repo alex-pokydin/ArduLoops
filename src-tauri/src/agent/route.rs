@@ -260,6 +260,8 @@ fn provider_failure(err: &str) -> &'static str {
         "The model rejected this turn because the request was too long."
     } else if lower.contains("timed out") || lower.contains("timeout") || lower.contains("deadline") {
         "The model did not answer in time."
+    } else if lower.contains("sign in required") || lower.contains("arduloops_firebase_api_key") {
+        "Sign in required."
     } else if code_of(&lower) == 401
         || code_of(&lower) == 403
         || lower.contains("api_key_invalid")
@@ -282,7 +284,7 @@ fn code_of(lower: &str) -> u16 {
 
 fn failure_body(err: &str, kind: &str) -> String {
     let detail: String = err.chars().take(300).collect();
-    if kind == "The model returned no text." || kind == "invalid key" || detail == kind || detail.is_empty() {
+    if kind == "The model returned no text." || kind == "invalid key" || kind == "Sign in required." || detail == kind || detail.is_empty() {
         return kind.to_string();
     }
     format!("{kind}\n{detail}")

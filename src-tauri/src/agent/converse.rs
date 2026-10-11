@@ -297,8 +297,9 @@ fn provider_client(key: &str, timeout_s: u64) -> genai::Client {
     install_tls();
     let key = key.to_string();
     let mut builder = genai::Client::builder();
-    // Desktop keeps the OS trust store. Android uses the Mozilla roots baked in above.
-    #[cfg(target_os = "android")]
+    // Desktop keeps the OS trust store (corporate proxies). Phone builds have no
+    // platform verifier unless Kotlin/Swift wires it up, so they use Mozilla roots.
+    #[cfg(any(target_os = "android", target_os = "ios"))]
     {
         let http = reqwest::Client::builder()
             .use_preconfigured_tls(mozilla_tls())
@@ -307,7 +308,7 @@ fn provider_client(key: &str, timeout_s: u64) -> genai::Client {
             .expect("model client");
         builder = builder.with_reqwest(http);
     }
-    #[cfg(not(target_os = "android"))]
+    #[cfg(not(any(target_os = "android", target_os = "ios")))]
     {
         builder = builder.with_web_config(
             genai::WebConfig::default().with_timeout(std::time::Duration::from_secs(timeout_s)),
