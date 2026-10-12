@@ -268,11 +268,17 @@ header .sub { color: var(--dim); font-size: 12px; flex: 1 1 12em; min-width: 0; 
   animation: lua-spin 0.7s linear infinite;
 }
 .lab-btn {
-  margin: 0; padding: 3px 6px; flex: none; line-height: 0;
+  position: relative; margin: 0; padding: 3px 6px; flex: none; line-height: 0;
   background: transparent; color: var(--dim);
 }
 .lab-btn:hover { background: #2a3140; color: var(--ink); }
 .lab-btn svg { display: block; }
+.lab-upd {
+  position: absolute; top: 2px; right: 2px;
+  width: 7px; height: 7px; border-radius: 50%;
+  background: var(--amber); box-shadow: 0 0 0 2px var(--bg);
+  pointer-events: none;
+}
 .modal-back {
   position: fixed; inset: 0; z-index: 50;
   grid-column: 1 / -1; grid-row: 1 / -1;
@@ -309,6 +315,9 @@ header .sub { color: var(--dim); font-size: 12px; flex: 1 1 12em; min-width: 0; 
 .opt-body b { display: block; font-size: 13px; font-weight: 650; }
 .opt-body span { display: block; margin-top: 2px; font-size: 12px; color: var(--dim); line-height: 1.35; }
 .opt-body a { color: var(--cyan); }
+.opt-val { flex: none; color: var(--dim); font-size: 13px; }
+.opt-val a { color: var(--cyan); font-weight: 650; text-decoration: none; }
+.opt-val a:hover { text-decoration: underline; }
 .init-meter {
   margin-top: 8px; height: 6px; border-radius: 99px; background: #0c0e11; overflow: hidden;
 }
@@ -2017,7 +2026,7 @@ main.agent-home { display: flex; padding: 0; gap: 0; overflow: hidden; backgroun
 .audit-changes i.warn { color: var(--amber); }
 .opt.ai-row { flex-direction: column; align-items: stretch; }
 .ai-opt { display: flex; flex-wrap: wrap; gap: 6px; justify-content: flex-start; align-items: center; }
-.cabinet-link { align-self: flex-start; margin-top: 8px; color: var(--cyan); font-size: 13px; font-weight: 650; text-decoration: none; }
+.cabinet-link { color: var(--cyan); font-size: 13px; font-weight: 650; text-decoration: none; white-space: nowrap; }
 .cabinet-link:hover { text-decoration: underline; }
 .own-key-toggle {
   display: flex; align-items: center; gap: 8px;
@@ -2038,7 +2047,9 @@ main.agent-home { display: flex; padding: 0; gap: 0; overflow: hidden; backgroun
 .own-key[hidden] { display: none; }
 .own-key-note { flex-basis: 100%; margin: 0; font-size: 12px; color: var(--dim); line-height: 1.35; }
 .ai-title { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
-.ai-title b { min-width: 0; }
+.ai-heading { display: inline-flex; align-items: baseline; gap: 8px; min-width: 0; }
+.ai-heading b { display: inline; }
+.ai-heading .cabinet-link { margin: 0; }
 .ai-title .google-signin {
   display: inline-flex; align-items: center; gap: 6px;
   margin: 0; min-width: 0; height: 28px; padding: 0 8px 0 6px;

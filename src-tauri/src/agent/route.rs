@@ -141,13 +141,16 @@ fn status(c: &Connection) -> Value {
     let active = rows.iter().find(|r| r["active"] == true).cloned();
     let hosted = active.as_ref().map(|r| r["storage"] == "hosted").unwrap_or(false);
     let ready = active.as_ref().map(|r| r["status"] == "ready").unwrap_or(false);
+    let secrets = load_secrets();
     let own_key = active.as_ref()
         .and_then(|r| r["provider"].as_str())
-        .and_then(|provider| load_secrets().get(provider).cloned())
+        .and_then(|provider| secrets.get(provider).cloned())
         .is_some_and(|key| !key.is_empty());
+    let saved_key = secrets.values().any(|key| !key.is_empty());
     let bench = bench_left(c);
     json!({
         "configured": ready && ((hosted && signed_in()) || own_key),
+        "own_key": saved_key,
         "active": active,
         "providers": rows,
         "storage": "Local storage (reduced protection)",

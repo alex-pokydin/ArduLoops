@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState, type FormEvent } from "react";
 import { type LogRow } from "./components/Aside";
 import { Assistant } from "./components/Assistant";
-import { LabDialog } from "./components/LabDialog";
+import { LabDialog, type AppRelease } from "./components/LabDialog";
 import { SimRail } from "./components/SimRail";
 import { CopterApp } from "./copter/App";
 import { tDetail, useT } from "./i18n/i18n";
@@ -107,6 +107,14 @@ function homeHref(): string {
 
 function isAndroid(): boolean {
   return typeof navigator !== "undefined" && /Android/i.test(navigator.userAgent);
+}
+
+function fetchAppRelease(refresh: boolean): Promise<AppRelease | null> {
+  const q = refresh ? "?refresh=1" : "";
+  return fetch(`${APP_HTTP}/app${q}`, { cache: "no-store" })
+    .then((r) => (r.ok ? r.json() : Promise.reject()))
+    .then((body: AppRelease) => (body?.current ? body : null))
+    .catch(() => null);
 }
 
 type SerialPort = { name: string; label: string };
@@ -219,6 +227,7 @@ export function App() {
   const [portOpen, setPortOpen] = useState(false);
   const [labOpen, setLabOpen] = useState(false);
   const [sitlOpen, setSitlOpen] = useState(false);
+  const [release, setRelease] = useState<AppRelease | null>(null);
   const [pick, setPick] = useState<Shell | null>(() => frameFromUrl());
   const linkCombo = useRef<HTMLDivElement | null>(null);
   const refreshSerialPorts = useRef<() => void>(() => {});
@@ -255,6 +264,39 @@ export function App() {
     window.addEventListener("popstate", onPop);
     return () => window.removeEventListener("popstate", onPop);
   }, []);
+
+  useEffect(() => {
+    let stopped = false;
+    const load = (refresh: boolean) => {
+      void fetchAppRelease(refresh).then((body) => {
+        if (!stopped && body) setRelease(body);
+      });
+    };
+    load(false);
+    const timer = window.setInterval(() => {
+      if (document.visibilityState === "visible") load(false);
+    }, 6 * 60 * 60 * 1000);
+    return () => {
+      stopped = true;
+      window.clearInterval(timer);
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!labOpen) return;
+    let stopped = false;
+    const load = (refresh: boolean) => {
+      void fetchAppRelease(refresh).then((body) => {
+        if (!stopped && body) setRelease(body);
+      });
+    };
+    load(true);
+    const timer = window.setInterval(() => load(false), 2000);
+    return () => {
+      stopped = true;
+      window.clearInterval(timer);
+    };
+  }, [labOpen]);
 
   useEffect(() => {
     if (linkKind !== "serial" || isAndroid()) return;
@@ -655,9 +697,10 @@ export function App() {
             type="button"
             className="lab-btn"
             onClick={() => setLabOpen(true)}
-            title={t("Options")}
-            aria-label={t("Options")}
+            title={release?.newer ? t("Options, update available") : t("Options")}
+            aria-label={release?.newer ? t("Options, update available") : t("Options")}
           >
+            {release?.newer ? <i className="lab-upd" aria-hidden="true" /> : null}
             <svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true">
               <path
                 fill="currentColor"
@@ -678,6 +721,7 @@ export function App() {
         frame={face.frame === "plane" || face.frame === "copter" ? face.frame : ""}
         initDone={initDone}
         initTotal={initTotal}
+        release={release}
         onClose={() => setLabOpen(false)}
         onInit={onLabInit}
         onSave={onLabSave}

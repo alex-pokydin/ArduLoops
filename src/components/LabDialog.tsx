@@ -11,12 +11,20 @@ const KEY_PAGES: Record<string, string> = {
   xai: "https://console.x.ai/team/default/api-keys",
 };
 
+export type AppRelease = {
+  current: string;
+  latest: string;
+  newer: boolean;
+  url: string;
+};
+
 export function LabDialog({
   open,
   linked,
   frame,
   initDone,
   initTotal,
+  release,
   onClose,
   onInit,
   onSave,
@@ -26,6 +34,7 @@ export function LabDialog({
   frame: "copter" | "plane" | "";
   initDone: number;
   initTotal: number;
+  release: AppRelease | null;
   onClose: () => void;
   onInit: () => void;
   onSave: () => void;
@@ -118,7 +127,7 @@ export function LabDialog({
       .catch(() => {});
     void ai.status().then((s) => {
       applyAi(s);
-      if (s.configured && s.active?.provider && s.active.provider !== "disabled") setOwnKey(true);
+      setOwnKey(!!s.own_key);
       setAiKey("");
     }).catch(() => {});
     const timer = window.setInterval(() => {
@@ -163,6 +172,30 @@ export function LabDialog({
           </button>
         </div>
         <ul className="opt-list">
+          <li className="opt">
+            <div className="opt-body">
+              <b>{t("Version")}</b>
+            </div>
+            <span className="opt-val">
+              {release?.current ?? ""}
+              {release?.newer ? (
+                <>
+                  {" ("}
+                  <a
+                    href={release.url}
+                    title={t("Open the latest GitHub release")}
+                    onClick={(ev) => {
+                      ev.preventDefault();
+                      openExternal(release.url);
+                    }}
+                  >
+                    {release.latest}
+                  </a>
+                  {")"}
+                </>
+              ) : null}
+            </span>
+          </li>
           <li className="opt">
             <div className="opt-body">
               <b>{t("Language")}</b>
@@ -242,7 +275,24 @@ export function LabDialog({
           <li className="opt ai-row">
             <div className="opt-body">
               <div className="ai-title">
-                <b>{t("AI assistant")}</b>
+                <span className="ai-heading">
+                  <b>{t("AI assistant")}</b>
+                  {account?.signed_in ? " " : null}
+                  {account?.signed_in ? (
+                    <a
+                      className="cabinet-link"
+                      href="https://arduloops-api.firebaseapp.com/account"
+                      onClick={(ev) => {
+                        ev.preventDefault();
+                        void ai.cabinet()
+                          .then((res) => openExternal(res.url))
+                          .catch(() => openExternal("https://arduloops-api.firebaseapp.com/account"));
+                      }}
+                    >
+                      {t("ArduLoops Cloud")}
+                    </a>
+                  ) : null}
+                </span>
                 {account?.signed_in ? (
                   <button type="button" onClick={() => void ai.logout().then(applyAi).catch((err: Error) => setAiState(err.message))}>
                     {t("Sign out")}
@@ -277,20 +327,6 @@ export function LabDialog({
                 ) : null}
               </span>
             </div>
-            {account?.signed_in ? (
-              <a
-                className="cabinet-link"
-                href="https://arduloops-api.firebaseapp.com/account"
-                onClick={(ev) => {
-                  ev.preventDefault();
-                  void ai.cabinet()
-                    .then((res) => openExternal(res.url))
-                    .catch(() => openExternal("https://arduloops-api.firebaseapp.com/account"));
-                }}
-              >
-                {t("ArduLoops Cloud")}
-              </a>
-            ) : null}
             <button
               type="button"
               className={ownKey ? "own-key-toggle on" : "own-key-toggle"}

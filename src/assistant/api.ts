@@ -12,6 +12,7 @@ export type AiAccount = {
 
 export type AiStatus = {
   configured: boolean;
+  own_key?: boolean;
   storage: string;
   active: { provider: string; model: string; status: string; storage?: string } | null;
   bench: { until_ms: number; left_s: number } | null;

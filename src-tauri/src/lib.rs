@@ -1,6 +1,7 @@
 #![recursion_limit = "256"]
 
 mod agent;
+mod app;
 mod cli;
 mod db;
 mod dflog;
@@ -57,6 +58,7 @@ fn spawn_backend(rx: std::sync::mpsc::Receiver<Cmd>, tx_http: Sender<Cmd>, on_sa
     let sitl_loop = sitl.clone();
     std::thread::spawn(move || http::serve(HTTP_ADDR, latest_http, tx_http));
     std::thread::spawn(move || link::run_loop(on_sample, rx, latest, url, sitl_loop));
+    crate::app::kick_refresh();
 }
 
 pub fn run_bridge() {

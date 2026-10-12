@@ -599,6 +599,15 @@ fn handle(stream: TcpStream, latest: Arc<Mutex<Sample>>, tx: Sender<Cmd>) -> std
     }
 
     let mut socket = reader.into_inner();
+    if method == "GET" && path == "/app" {
+        let refresh = query
+            .get("refresh")
+            .map(|value| value == "1" || value.eq_ignore_ascii_case("true"))
+            .unwrap_or(false);
+        let json = serde_json::to_vec(&crate::app::status(refresh)).unwrap_or_else(|_| b"{}".to_vec());
+        reply(&mut socket, 200, "application/json", &json)?;
+        return Ok(());
+    }
     if method == "GET" && (path == "/" || path == "/health") {
         reply(&mut socket, 200, "text/plain", b"ArduLoops\n")?;
         return Ok(());

@@ -893,6 +893,9 @@ export const uk: Record<string, string> = {
   on: "on",
 
   Options: "Опції",
+  "Options, update available": "Опції, є оновлення",
+  Version: "Версія",
+  "Open the latest GitHub release": "Відкрити останній реліз на GitHub",
   Language: "Мова",
   "Plot window": "вікно графіка",
   "Telemetry log": "Запис tlog",
