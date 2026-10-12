@@ -1,6 +1,6 @@
 // The model loop and provider requests.
 
-const TOOL_BUDGET: u32 = 80;
+const TOOL_BUDGET: u32 = 100;
 
 fn converse(
     provider: &str,
@@ -24,6 +24,7 @@ fn converse(
     let mut used = 0u32;
     let mut charts = ChartBook::default();
     let mut live_on = false;
+    let hosted = key.is_empty();
     for _ in 0..TOOL_BUDGET {
         if turn_halted() {
             return Err("stopped".into());
@@ -36,8 +37,12 @@ fn converse(
         }
         live_thinking();
         let quota = if turn_id.is_some() { "continue" } else { "turn" };
-        let mut turn = if key.is_empty() {
-            hosted_turn(provider, model, reasoning, system, lang, &messages, quota, chat, &mut turn_id)?
+        let mut turn = if hosted {
+            match hosted_turn(provider, model, reasoning, system, lang, &messages, quota, chat, &mut turn_id) {
+                Ok(turn) => turn,
+                Err(err) if err.to_ascii_lowercase().contains("too many tools") => return Err("paused_limit".into()),
+                Err(err) => return Err(err),
+            }
         } else {
             provider_turn(provider, model, key, reasoning, system, &messages)?
         };
@@ -656,5 +661,10 @@ mod tests {
     #[test]
     fn mozilla_roots_build_a_rustls_client() {
         let _config = super::mozilla_tls();
+    }
+
+    #[test]
+    fn a_turn_stops_at_one_hundred_tools() {
+        assert_eq!(super::TOOL_BUDGET, 100);
     }
 }

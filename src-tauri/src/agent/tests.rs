@@ -388,6 +388,7 @@ mod link_wait_tests {
     fn a_stopped_turn_is_named_and_a_waiting_card_is_not() {
         assert_eq!(provider_failure("empty provider response"), "The model returned no text.");
         assert_eq!(provider_failure("ARDULOOPS_FIREBASE_API_KEY is not set."), "Sign in required.");
+        assert_eq!(provider_failure("429 Too many tools in this request."), "paused_limit");
         assert_eq!(failure_body("ARDULOOPS_FIREBASE_API_KEY is not set.", "Sign in required."), "Sign in required.");
         assert_eq!(
             provider_failure("400 the input token count exceeds the maximum number of input tokens"),

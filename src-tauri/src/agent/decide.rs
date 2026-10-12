@@ -108,10 +108,11 @@ fn finish_and_continue(
     if let Some(id) = body["id"].as_str() {
         fold_identical_pending(c, id, status);
     }
-    if finish_holds(c, chat) {
-        return complete_turn(c, body, sample, tx, chat, lang, log_id);
+    let continued = finish_holds(c, chat);
+    if continued {
+        start_turn(body, sample, tx, chat, lang, log_id);
     }
-    Ok(json!({"ok": true, "status": status}))
+    Ok(json!({"ok": true, "status": status, "continued": continued}))
 }
 
 fn latest_message_id(c: &Connection, chat: &str) -> i64 {
@@ -650,6 +651,7 @@ fn hold_change(c: &Connection, chat: &str, kind: &str, title: &str, old: Option<
         "INSERT INTO ai_proposal (id, chat_id, status, param, old_value, new_value, reason, created_at, kind, payload) VALUES (?1,?2,'pending',?3,?4,?5,?6,?7,?8,?9)",
         params![id, chat, title, old, new_value, reason, now(), kind, payload],
     ).ok();
+    note_hold();
     json!({
         "hold": true,
         "id": id,

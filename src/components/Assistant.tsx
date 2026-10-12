@@ -12,7 +12,7 @@ import type { WizardClose } from "../wizards/close";
 import { ChartStrip, chartsFromTools } from "./FindingCharts";
 import { LiveHost, LiveView, liveSpecFromTools, type LiveSpec } from "./LivePlots";
 import { getLang, useT } from "../i18n/i18n";
-import { getLuaQuote, quoteLabel, setLuaQuote, subscribeLuaQuote } from "../luaQuote";
+import { getLuaQuote, quoteLabel, setLuaQuote, subscribeLuaQuote, type LuaQuote } from "../luaQuote";
 import { subscribe } from "../mav/store";
 import { useVehicle, viewSample } from "../mav/view";
 import type { Sample } from "../mav/types";
@@ -49,6 +49,41 @@ type LinkFace = {
 
 let linkFaceCache: LinkFace = { ok: false, frame: "", mode: "", armed: false, boot_uid: "", board_name: "" };
 let linkFaceVehicle = "";
+
+type PendingOut = { role: "user" | "steer"; body: string; at: number; attach: string; quote: string };
+
+function quotePayload(quoted: LuaQuote): string {
+  return JSON.stringify({
+    name: quoted.name,
+    start: quoted.startLine,
+    end: quoted.endLine,
+    selection: quoted.selection,
+    body: quoted.body,
+    dirty: quoted.dirty,
+  });
+}
+
+function outgoingLanded(list: Msg[], pending: PendingOut): boolean {
+  for (let i = list.length - 1; i >= 0; i--) {
+    const msg = list[i];
+    if (msg.role === pending.role) return msg.body === pending.body;
+    if (msg.role === "user" || msg.role === "steer") return false;
+  }
+  return false;
+}
+
+function mergeOutgoing(list: Msg[], pendingRef: { current: PendingOut | null }): Msg[] {
+  const pending = pendingRef.current;
+  if (!pending) return list;
+  if (outgoingLanded(list, pending)) {
+    pendingRef.current = null;
+    return list;
+  }
+  const extra: Msg[] = [{ role: pending.role, body: pending.body, at: pending.at }];
+  if (pending.attach) extra.push({ role: "attach", body: pending.attach, at: pending.at });
+  if (pending.quote) extra.push({ role: "quote", body: pending.quote, at: pending.at });
+  return [...list, ...extra];
+}
 
 function sameLive(a: LiveTurn | null, b: LiveTurn | null): boolean {
   if (a === b) return true;
@@ -435,25 +470,42 @@ export function Assistant({
   const threadGen = useRef(0);
   const messagesRef = useRef(messages);
   messagesRef.current = messages;
+  const pendingOut = useRef<PendingOut | null>(null);
   function openThread() {
     threadGen.current += 1;
     return threadGen.current;
   }
   function adoptThread(gen: number, thread: { messages: Msg[]; proposals: Proposal[] }) {
     if (gen !== threadGen.current) return false;
-    messagesRef.current = thread.messages;
+    const messages = mergeOutgoing(thread.messages, pendingOut);
+    messagesRef.current = messages;
     proposalJson.current = JSON.stringify(thread.proposals);
-    setMessages(thread.messages);
+    setMessages(messages);
     setProposals(thread.proposals);
     return true;
   }
+  function paintOutgoing(role: "user" | "steer", text: string, attached: string, quoted: LuaQuote | null) {
+    pendingOut.current = {
+      role,
+      body: text,
+      at: Math.floor(Date.now() / 1000),
+      attach: attached,
+      quote: quoted ? quotePayload(quoted) : "",
+    };
+    setMessages((prev) => {
+      const next = mergeOutgoing(prev, pendingOut);
+      messagesRef.current = next;
+      return next;
+    });
+  }
   function releaseLive() {
+    if (sending.current) return;
     setLive((prev) => {
       const reply = prev?.reply ?? "";
       if (reply.trim() && !replyLanded(messagesRef.current, reply)) return prev;
       return null;
     });
-    if (!sending.current) setBusy(false);
+    setBusy(false);
   }
   const narrow = useNarrow();
 
@@ -517,7 +569,7 @@ export function Assistant({
           settling = false;
           setBusy(true);
           setLive((prev) => (sameLive(prev, row) ? prev : row));
-          const mark = `${row.tool ?? ""}\n${row.input ?? ""}\n${row.note ?? ""}\n${(row.docs ?? []).map((doc) => doc.url).join("\n")}`;
+          const mark = `${row.tool ?? ""}\n${row.input ?? ""}\n${row.note ?? ""}\n${row.holds ?? 0}\n${(row.docs ?? []).map((doc) => doc.url).join("\n")}`;
           if (pulled.current !== mark) {
             pulled.current = mark;
             const gen = openThread();
@@ -545,6 +597,7 @@ export function Assistant({
           });
           return;
         }
+        if (sending.current) return;
         releaseLive();
         const now = Date.now();
         if (now - proposalWatch.current > 2000) {
@@ -580,6 +633,7 @@ export function Assistant({
       setDraft("");
       setLogId("");
       setLuaQuote(null);
+      paintOutgoing("steer", text, "", quoted);
       try {
         const res = await ai.send(chatId, text, getLang(), model, reasoning, attached, quoted);
         if (!res.ok) setNote(res.status || "network unavailable");
@@ -587,6 +641,7 @@ export function Assistant({
         const thread = await ai.thread(chatId);
         adoptThread(gen, thread);
       } catch (err) {
+        pendingOut.current = null;
         setDraft(text);
         setLogId(attached);
         if (quoted) setLuaQuote(quoted);
@@ -599,10 +654,13 @@ export function Assistant({
     }
     setFollowUser(true);
     setBusy(true);
+    setLive({ active: true });
+    pulled.current = "";
     setNote("");
     setDraft("");
     setLogId("");
     setLuaQuote(null);
+    paintOutgoing("user", text, attached, quoted);
     const ctrl = new AbortController();
     sendAbort.current = ctrl;
     sending.current = true;
@@ -622,6 +680,7 @@ export function Assistant({
       setChats(list.chats);
     } catch (err) {
       if (ctrl.signal.aborted) return;
+      pendingOut.current = null;
       if (!preset) setDraft(text);
       setLogId(attached);
       if (quoted) setLuaQuote(quoted);
@@ -634,7 +693,22 @@ export function Assistant({
     } finally {
       sending.current = false;
       if (sendAbort.current === ctrl) sendAbort.current = null;
-      if (!ctrl.signal.aborted) setBusy(false);
+      if (ctrl.signal.aborted) {
+        pendingOut.current = null;
+        setBusy(false);
+        setLive(null);
+      } else if (id) {
+        void ai.live(id).then((row) => {
+          if (row.active) {
+            setBusy(true);
+            setLive((prev) => (sameLive(prev, row) ? prev : row));
+          } else {
+            setBusy(false);
+          }
+        }).catch(() => setBusy(false));
+      } else {
+        setBusy(false);
+      }
       void refreshStatus();
     }
   }
@@ -647,9 +721,15 @@ export function Assistant({
   async function onDecision(decision: "approve" | "reject", ids?: string[], comment?: string) {
     const pending = proposals.filter((p) => p.status === "pending" && (!ids || ids.includes(p.id)));
     if (!pending.length) return;
+    const idSet = new Set(pending.map((item) => item.id));
+    const nextStatus = decision === "approve" ? "applied" : pending.some((item) => item.kind === "wizard") ? "cancelled" : "rejected_by_user";
+    setProposals((prev) => prev.map((item) => idSet.has(item.id) ? { ...item, status: nextStatus } : item));
     setNote("");
-    setFollowUser(false);
+    setFollowUser(true);
     setBusy(true);
+    setLive({ active: true });
+    pulled.current = "";
+    sending.current = true;
     try {
       const batch = pending.length > 1 ? crypto.randomUUID() : "";
       for (const item of pending) {
@@ -658,16 +738,21 @@ export function Assistant({
     } catch (err) {
       setNote(err instanceof Error ? err.message : t("Could not apply the change"));
     } finally {
+      sending.current = false;
       if (chatId) {
-        try {
-          const gen = openThread();
-          const thread = await ai.thread(chatId);
-          adoptThread(gen, thread);
-        } catch {
-          /* the decision error stays on screen */
-        }
+        const gen = openThread();
+        void ai.thread(chatId).then((thread) => adoptThread(gen, thread)).catch(() => {});
+        void ai.live(chatId).then((row) => {
+          if (row.active) {
+            setBusy(true);
+            setLive((prev) => (sameLive(prev, row) ? prev : row));
+          } else {
+            setBusy(false);
+          }
+        }).catch(() => setBusy(false));
+      } else {
+        setBusy(false);
       }
-      setBusy(false);
     }
   }
 
@@ -761,9 +846,8 @@ export function Assistant({
   const thinking = busy;
   const needs = proposals.some((p) => p.status === "pending");
   const showFloat = open && !(home && configured);
-  const linkLine = configured
-    ? `${provider.toUpperCase()} · ${vehicle.ok ? `${vehicle.frame || "—"} ${vehicle.mode} ${vehicle.armed ? "ARMED" : "DISARMED"}` : t("Disconnected")}`
-    : t("Not configured");
+  const source = status?.active?.storage === "hosted" ? t("Cloud") : (provider.toUpperCase() || "—");
+  const linkLine = configured ? source : t("Not configured");
 
   function takeLog(id: string) {
     setLogId(id);
@@ -778,23 +862,33 @@ export function Assistant({
 
   async function onWizardDone(id: string, report: WizardClose) {
     setWizardAsk(null);
-    setBusy(true);
+    setProposals((prev) => prev.map((item) => item.id === id ? { ...item, status: report.outcome } : item));
     setNote("");
+    setFollowUser(true);
+    setBusy(true);
+    setLive({ active: true });
+    pulled.current = "";
+    sending.current = true;
     try {
       await ai.wizard(id, report, getLang(), model, reasoning, logId);
     } catch (err) {
       setNote(err instanceof Error ? err.message : t("Could not apply the change"));
     } finally {
+      sending.current = false;
       if (chatId) {
-        try {
-          const gen = openThread();
-          const thread = await ai.thread(chatId);
-          adoptThread(gen, thread);
-        } catch {
-          /* the decision error stays on screen */
-        }
+        const gen = openThread();
+        void ai.thread(chatId).then((thread) => adoptThread(gen, thread)).catch(() => {});
+        void ai.live(chatId).then((row) => {
+          if (row.active) {
+            setBusy(true);
+            setLive((prev) => (sameLive(prev, row) ? prev : row));
+          } else {
+            setBusy(false);
+          }
+        }).catch(() => setBusy(false));
+      } else {
+        setBusy(false);
       }
-      setBusy(false);
     }
   }
 
@@ -826,7 +920,7 @@ export function Assistant({
             onCancelWait={onCancelWait}
             onOpenWizard={(id, wizard) => setWizardAsk({ id, wizard })}
             wizardOpenId={wizardAsk?.id ?? ""}
-            onNew={() => { threadGen.current += 1; setChatId(""); setMessages([]); setProposals([]); }}
+            onNew={() => { threadGen.current += 1; pendingOut.current = null; setChatId(""); setMessages([]); setProposals([]); }}
             onBench={openBench}
             onStop={() => void ai.benchStop().then(() => refreshStatus())}
             query={query}
@@ -945,7 +1039,7 @@ export function Assistant({
               onCancelWait={onCancelWait}
               onOpenWizard={(id, wizard) => setWizardAsk({ id, wizard })}
               wizardOpenId={wizardAsk?.id ?? ""}
-              onNew={() => { threadGen.current += 1; setChatId(""); setMessages([]); setProposals([]); }}
+              onNew={() => { threadGen.current += 1; pendingOut.current = null; setChatId(""); setMessages([]); setProposals([]); }}
               onBench={openBench}
               onStop={() => void ai.benchStop().then(() => refreshStatus())}
               query={query}
@@ -1109,7 +1203,10 @@ function ChatPane({
   const [keptThoughts, setKeptThoughts] = useState<Record<string, string>>({});
   const liveTools = shownThread.reduce((found, block, index) => block.kind === "tools" ? index : found, -1);
   const lastProposal = shownThread.reduce((found, block, index) => block.kind === "proposal" ? index : found, -1);
-  const liveOnTools = liveTools > lastProposal;
+  const lastUser = shownThread.reduce((found, block, index) => (
+    block.kind === "msg" && (block.msg.role === "user" || block.msg.role === "steer") ? index : found
+  ), -1);
+  const liveOnTools = liveTools > lastProposal && liveTools > lastUser;
   const seenChat = useRef(chatId);
   useEffect(() => { setKeptThoughts({}); }, [chatId]);
   useEffect(() => {
@@ -1323,7 +1420,10 @@ function ChatPane({
             ))}
             {busy && !live?.reply && !liveOnTools ? (
               <div className="ai-tools-live" role="status">
-                <p className="ai-tools ai-tools-status"><span className="ai-tools-names">{live?.tool ? liveTitle(live, flow) : t("Thinking…")}</span></p>
+                <p className="ai-tools ai-tools-status ai-thinking">
+                  <span className="ai-think-spin" aria-hidden />
+                  <span className="ai-tools-names">{live?.tool ? liveTitle(live, flow) : t("Thinking…")}</span>
+                </p>
                 {live?.thought ? <ThoughtText text={live.thought} /> : null}
               </div>
             ) : null}
@@ -2283,6 +2383,7 @@ const ToolGroup = memo(function ToolGroup({
     <div className="ai-tools-live">
     <details className={failed.some(Boolean) ? "ai-tools ai-has-fail" : "ai-tools"}>
       <summary>
+        {live && !live.tool ? <span className="ai-think-spin" aria-hidden /> : null}
         <span className="ai-tools-names">{live ? running : workedMs != null ? workedLabel(t, workedMs) : t("Tools")}</span>
         {heavyCount > 0 ? <SizeWarn title={t("Large results in this turn: {n}. They are kept whole.", { n: heavyCount })} /> : null}
       </summary>

@@ -6,6 +6,11 @@ thread_local! {
 }
 
 static TURN_SEQ: AtomicU64 = AtomicU64::new(1);
+static HOLD_SEQ: AtomicU64 = AtomicU64::new(0);
+
+fn note_hold() {
+    HOLD_SEQ.fetch_add(1, Ordering::Relaxed);
+}
 /// Generation of the turn the user stopped. A later turn has a different generation.
 static HALT: AtomicU64 = AtomicU64::new(0);
 
@@ -24,9 +29,13 @@ struct LiveTurn {
 
 static LIVE: Mutex<Option<LiveTurn>> = Mutex::new(None);
 
+fn adopt_live(gen: u64) {
+    THIS_TURN.with(|cell| cell.set(gen));
+}
+
 fn begin_live(chat: &str) -> u64 {
     let gen = TURN_SEQ.fetch_add(1, Ordering::Relaxed);
-    THIS_TURN.with(|cell| cell.set(gen));
+    adopt_live(gen);
     if let Ok(mut guard) = LIVE.lock() {
         *guard = Some(LiveTurn {
             gen,
@@ -255,5 +264,5 @@ fn live_status(chat: &str) -> Value {
         return json!({ "active": false });
     }
     let docs: Vec<Value> = live.docs.iter().map(|(title, format, url)| json!({ "title": title, "format": format, "url": url })).collect();
-    json!({ "active": true, "tool": live.tool, "input": live.input, "thought": thought_text(live), "reply": live.reply, "note": live.note, "docs": docs })
+    json!({ "active": true, "tool": live.tool, "input": live.input, "thought": thought_text(live), "reply": live.reply, "note": live.note, "docs": docs, "holds": HOLD_SEQ.load(Ordering::Relaxed) })
 }

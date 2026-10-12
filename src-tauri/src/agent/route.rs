@@ -7,7 +7,7 @@ pub fn migrate(conn: &Connection) -> Result<(), String> {
 
 fn conn() -> Result<Connection, String> {
     let c = Connection::open(data_dir().join("catalog.sqlite3")).map_err(|e| e.to_string())?;
-    c.execute_batch("PRAGMA foreign_keys=ON;").ok();
+    c.execute_batch("PRAGMA foreign_keys=ON; PRAGMA busy_timeout=5000;").ok();
     migrate(&c)?;
     Ok(c)
 }
@@ -271,6 +271,8 @@ fn provider_failure(err: &str) -> &'static str {
         "invalid key"
     } else if code_of(&lower) == 404 || lower.contains("no longer available") || lower.contains("not_found") {
         "model unavailable"
+    } else if lower.contains("too many tools") {
+        "paused_limit"
     } else if code_of(&lower) == 429 || lower.contains("resource_exhausted") || lower.contains("quota") {
         "quota exceeded"
     } else {
@@ -334,6 +336,8 @@ fn classify(err: &str) -> String {
         "invalid key".into()
     } else if code == 404 || lower.contains("no longer available") || lower.contains("not_found") {
         "model unavailable".into()
+    } else if lower.contains("too many tools") {
+        "paused_limit".into()
     } else if code == 429 || lower.contains("resource_exhausted") || lower.contains("quota") {
         "quota exceeded".into()
     } else {
@@ -493,7 +497,6 @@ fn send(c: &Connection, body: &Value, sample: &Sample, tx: &Sender<Cmd>) -> Resu
     if chat.is_empty() || text.is_empty() {
         return Err((400, "Message required".into()));
     }
-    let lang = body["lang"].as_str().unwrap_or("en");
     active_key(c, body["model"].as_str())?;
     let t = now();
     // An open card, or a turn that is still running, must not start a second
@@ -524,7 +527,28 @@ fn send(c: &Connection, body: &Value, sample: &Sample, tx: &Sender<Cmd>) -> Resu
     } else {
         c.execute("UPDATE ai_chat SET updated_at=?1 WHERE id=?2", params![t, chat]).ok();
     }
-    complete_turn(c, body, sample, tx, chat, lang, log_id)
+    let lang = body["lang"].as_str().unwrap_or("en");
+    start_turn(body, sample, tx, chat, lang, log_id);
+    Ok(json!({"ok": true, "status": "started", "message": text}))
+}
+
+fn start_turn(body: &Value, sample: &Sample, tx: &Sender<Cmd>, chat: &str, lang: &str, log_id: &str) {
+    let gen = begin_live(chat);
+    let job = body.clone();
+    let sample = sample.clone();
+    let tx = tx.clone();
+    let chat = chat.to_string();
+    let lang = lang.to_string();
+    let log_id = log_id.to_string();
+    std::thread::spawn(move || {
+        let Ok(c) = conn() else {
+            end_live(gen);
+            return;
+        };
+        if complete_turn(&c, &job, &sample, &tx, &chat, &lang, &log_id, Some(gen)).is_err() {
+            end_live(gen);
+        }
+    });
 }
 
 fn complete_turn(
@@ -535,10 +559,17 @@ fn complete_turn(
     chat: &str,
     lang: &str,
     log_id: &str,
+    started_gen: Option<u64>,
 ) -> Result<Value, (u16, String)> {
     let (provider, model, key) = active_key(c, body["model"].as_str())?;
     let started = now_ms();
-    let gen = begin_live(chat);
+    let gen = match started_gen {
+        Some(gen) => {
+            adopt_live(gen);
+            gen
+        }
+        None => begin_live(chat),
+    };
     // Notes written while the previous step was still open are part of this turn.
     claim_steers_through(c, chat, latest_message_id(c, chat));
     let history = prepare_context(c, chat);

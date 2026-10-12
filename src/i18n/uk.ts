@@ -1068,6 +1068,7 @@ export const uk: Record<string, string> = {
     "Контур тангаж→серво (PTCH_RATE). Wiki: TECS рівно такий, як цей контур. Налаштуйте в FBWA через AUTOTUNE або крутилки pitch-rate, перш ніж чіпати TECS_TIME_CONST.",
 
   "No link": "Немає лінку",
+  Cloud: "Клауд",
   Disconnected: "Відключено",
   "Link dropped": "Лінк обірвався",
   "Rebooting…": "Ребут…",

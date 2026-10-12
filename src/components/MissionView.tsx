@@ -616,11 +616,18 @@ export function MissionView({
     return best;
   }
 
+  function lockSelect(on: boolean) {
+    document.body.classList.toggle("mission-drag", on);
+    if (on) window.getSelection()?.removeAllRanges();
+  }
+
   function onPointerDown(ev: ReactPointerEvent<SVGSVGElement>) {
     if (!viewRef.current) return;
     const at = localXY(ev);
     if (!at) return;
+    ev.preventDefault();
     drag.current = { x: ev.clientX, y: ev.clientY, moved: false, point: hitPoint(at.x, at.y) };
+    lockSelect(true);
     ev.currentTarget.setPointerCapture(ev.pointerId);
   }
 
@@ -648,6 +655,7 @@ export function MissionView({
   }
 
   function onPointerUp(ev: ReactPointerEvent<SVGSVGElement>) {
+    lockSelect(false);
     const d = drag.current;
     drag.current = null;
     const current = viewRef.current;
@@ -778,6 +786,8 @@ export function MissionView({
             onPointerDown={onPointerDown}
             onPointerMove={onPointerMove}
             onPointerUp={onPointerUp}
+            onPointerCancel={() => { drag.current = null; lockSelect(false); }}
+            onLostPointerCapture={() => lockSelect(false)}
           >
             {view && size.w > 40 ? (
               <MapArt

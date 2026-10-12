@@ -20,7 +20,7 @@ export type AiStatus = {
 
 export type Chat = { id: string; title: string; updated_at: number; vehicle_key?: string };
 export type Msg = { role: string; body: string; at: number };
-export type LiveTurn = { active: boolean; tool?: string; input?: string; thought?: string; reply?: string; note?: string; docs?: { title: string; format: string; url: string }[] };
+export type LiveTurn = { active: boolean; tool?: string; input?: string; thought?: string; reply?: string; note?: string; holds?: number; docs?: { title: string; format: string; url: string }[] };
 export type Proposal = {
   id: string;
   status: string;
@@ -68,9 +68,9 @@ export const ai = {
     }),
   stop: () => json("/ai/stop", { method: "POST", body: "{}" }),
   proposal: (id: string, decision: "approve" | "reject", lang: string, model: string, reasoning: string, log = "", batch = "", comment?: string) =>
-    json("/ai/proposal", { method: "POST", body: JSON.stringify({ id, decision, lang, model, reasoning, log, batch, ...(comment != null ? { comment } : {}) }) }),
+    json<{ ok: boolean; status?: string; continued?: boolean }>("/ai/proposal", { method: "POST", body: JSON.stringify({ id, decision, lang, model, reasoning, log, batch, ...(comment != null ? { comment } : {}) }) }),
   wizard: (id: string, report: { outcome: string; measures: Record<string, number | string | null> }, lang: string, model: string, reasoning: string, log = "") =>
-    json("/ai/wizard", {
+    json<{ ok: boolean; status?: string; continued?: boolean }>("/ai/wizard", {
       method: "POST",
       body: JSON.stringify({ id, outcome: report.outcome, report, lang, model, reasoning, log }),
     }),
