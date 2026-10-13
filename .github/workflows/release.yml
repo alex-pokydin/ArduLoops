@@ -19,7 +19,30 @@ permissions:
   contents: write
 
 jobs:
+  github-release:
+    runs-on: ubuntu-22.04
+    outputs:
+      release-id: ${{ steps.ensure.outputs.id }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Ensure GitHub release
+        id: ensure
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          tag="${{ github.event.inputs.tag || github.ref_name }}"
+          title="ArduLoops ${tag}"
+          if gh release view "$tag" >/dev/null 2>&1; then
+            gh release edit "$tag" --title "$title" --notes-file .release-notes.md
+          else
+            gh release create "$tag" --title "$title" --notes-file .release-notes.md
+          fi
+          id="$(gh api "repos/${GITHUB_REPOSITORY}/releases/tags/${tag}" --jq .id)"
+          echo "id=$id" >> "$GITHUB_OUTPUT"
+
   linux:
+    needs: github-release
     if: github.event_name != 'workflow_dispatch' || inputs.only == '' || inputs.only == 'linux'
     runs-on: ubuntu-22.04
     steps:
@@ -38,28 +61,17 @@ jobs:
           sudo apt-get install -y libwebkit2gtk-4.1-dev libayatana-appindicator3-dev \
             librsvg2-dev patchelf libfuse2 xdg-utils pkg-config libudev-dev
       - run: npm ci
-      - name: Release notes
-        id: notes
-        shell: bash
-        run: |
-          {
-            echo 'body<<ENDNOTES'
-            cat .release-notes.md
-            echo 'ENDNOTES'
-          } >> "$GITHUB_OUTPUT"
       - uses: tauri-apps/tauri-action@v1
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
-          tagName: ${{ github.event.inputs.tag || github.ref_name }}
-          releaseName: ArduLoops ${{ github.event.inputs.tag || github.ref_name }}
-          releaseBody: ${{ steps.notes.outputs.body }}
-          releaseDraft: false
+          releaseId: ${{ needs.github-release.outputs.release-id }}
           uploadUpdaterJson: false
           tauriScript: node scripts/with-cargo.mjs tauri
           args: --bundles deb,rpm,appimage
 
   windows:
+    needs: github-release
     if: github.event_name != 'workflow_dispatch' || inputs.only == '' || inputs.only == 'windows'
     runs-on: windows-latest
     steps:
@@ -73,28 +85,17 @@ jobs:
         with:
           workspaces: src-tauri
       - run: npm ci
-      - name: Release notes
-        id: notes
-        shell: bash
-        run: |
-          {
-            echo 'body<<ENDNOTES'
-            cat .release-notes.md
-            echo 'ENDNOTES'
-          } >> "$GITHUB_OUTPUT"
       - uses: tauri-apps/tauri-action@v1
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
-          tagName: ${{ github.event.inputs.tag || github.ref_name }}
-          releaseName: ArduLoops ${{ github.event.inputs.tag || github.ref_name }}
-          releaseBody: ${{ steps.notes.outputs.body }}
-          releaseDraft: false
+          releaseId: ${{ needs.github-release.outputs.release-id }}
           uploadUpdaterJson: false
           tauriScript: node scripts/with-cargo.mjs tauri
           args: --bundles nsis,msi
 
   macos:
+    needs: github-release
     if: github.event_name != 'workflow_dispatch' || inputs.only == '' || inputs.only == 'macos'
     runs-on: macos-latest
     strategy:
@@ -119,28 +120,17 @@ jobs:
       - run: npm ci
       - name: Build macOS SITL
         run: bash scripts/build-sitl-macos.sh ${{ matrix.target }}
-      - name: Release notes
-        id: notes
-        shell: bash
-        run: |
-          {
-            echo 'body<<ENDNOTES'
-            cat .release-notes.md
-            echo 'ENDNOTES'
-          } >> "$GITHUB_OUTPUT"
       - uses: tauri-apps/tauri-action@v1
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
-          tagName: ${{ github.event.inputs.tag || github.ref_name }}
-          releaseName: ArduLoops ${{ github.event.inputs.tag || github.ref_name }}
-          releaseBody: ${{ steps.notes.outputs.body }}
-          releaseDraft: false
+          releaseId: ${{ needs.github-release.outputs.release-id }}
           uploadUpdaterJson: false
           tauriScript: node scripts/with-cargo.mjs tauri
           args: --target ${{ matrix.target }} --bundles dmg --no-sign
 
   android:
+    needs: github-release
     if: github.event_name != 'workflow_dispatch' || inputs.only == '' || inputs.only == 'android'
     permissions:
       contents: write

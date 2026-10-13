@@ -316,11 +316,12 @@ export function LabDialog({
               <span>
                 {account?.signed_in
                   ? t("Signed in as {email}.", { email: account.email || "" })
-                  : aiState
-                    ? t(aiState)
-                    : t("Sign in to activate the ArduLoops assistant. Your own key still works.")}
+                  : t("Sign in to activate the ArduLoops assistant. Your own key still works.")}
                 {account?.signed_in && account.limit != null
                   ? ` ${t("{left} of {limit} requests left today.", { left: Math.max(0, account.limit - (account.used || 0)), limit: account.limit })}`
+                  : ""}
+                {!account?.signed_in && aiState && aiState !== "ready" && aiState !== "checking"
+                  ? ` ${t(aiState)}`
                   : ""}
                 {aiConfigured && savedProvider && aiProvider !== savedProvider && aiProvider !== "disabled" ? (
                   <> {t("Chats stay on this computer. The next message sends their selected context to this provider.")}</>

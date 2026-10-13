@@ -1,0 +1,24 @@
+---
+description: GitHub release notes in .release-notes.md — template, key changes only, ASD-STE100.
+globs: .release-notes.md
+alwaysApply: false
+---
+
+# Release notes
+
+`.release-notes.md` is the GitHub release body. Write only key changes for this version. 
+
+Use this shape:
+
+```
+### What's in <version>
+
+<short summary>
+
+- **<feature>**  - <description>
+- **<feature>**  - <description>
+
+Questions, feedback, and suggestions: [open an issue](https://github.com/alex-pokydin/ArduLoops/issues/new).
+```
+
+The summary is one or two short sentences. Each bullet is one feature. The description uses ASD-STE100: short sentences, one idea each, simple verbs, no marketing, no extra detail.
