@@ -743,6 +743,7 @@ export const uk: Record<string, string> = {
   "System": "система",
   "Other": "інше",
   "Parameters received: {count}": "отримано параметрів: {count}",
+  "Parameters {received} of {total}": "параметри {received} з {total}",
   "Refresh parameters": "оновити параметри",
   "Parameter refresh requested": "запитано оновлення параметрів",
   "Search parameters": "пошук параметрів",
@@ -1264,6 +1265,7 @@ export const uk: Record<string, string> = {
   "Roll−": "крен−",
   "Roll+": "крен+",
   Log: "журнал",
+  "Resize side panel": "ширина бічної панелі",
   Controls: "керування",
   "No gains. Pick a regulator — sliders stay here and on the plot.":
     "Немає гейнів. Виберіть регулятор — слайдери залишаться тут і на графіку.",

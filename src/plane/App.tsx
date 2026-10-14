@@ -1,5 +1,6 @@
 import { lazy, Suspense, useMemo, useState } from "react";
 import { Aside, type LogRow } from "../components/Aside";
+import { MainSplit } from "../components/MainSplit";
 import { AuditLibrary } from "../components/AuditLibrary";
 import { ControllerView } from "../components/ControllerView";
 import { PLANE_WORKSPACES, WorkspaceTabs, type WorkspaceId } from "../components/WorkspaceTabs";
@@ -48,7 +49,7 @@ export function PlaneApp({
 
   if (workspace === "mission") {
     return (
-      <main>
+      <MainSplit>
         <MissionView current="mission" ids={PLANE_WORKSPACES} onWorkspace={setWorkspace} />
         <Aside
           log={log}
@@ -61,13 +62,13 @@ export function PlaneApp({
           vehicle="plane"
           inspect={<PlaneInspect sel={sel} onSel={onPick} showAll={showAll} />}
         />
-      </main>
+      </MainSplit>
     );
   }
 
   if (workspace === "firmware") {
     return (
-      <main>
+      <MainSplit>
         <ControllerView ids={PLANE_WORKSPACES} onWorkspace={setWorkspace} />
         <Aside
           log={log}
@@ -80,13 +81,13 @@ export function PlaneApp({
           vehicle="plane"
           inspect={<PlaneInspect sel={sel} onSel={onPick} showAll={showAll} />}
         />
-      </main>
+      </MainSplit>
     );
   }
 
   if (workspace === "scripts") {
     return (
-      <main>
+      <MainSplit>
         <Suspense fallback={<section className="scope work"><p className="work-empty">…</p></section>}>
           <ScriptsLibrary current="scripts" ids={PLANE_WORKSPACES} onWorkspace={setWorkspace} />
         </Suspense>
@@ -101,13 +102,13 @@ export function PlaneApp({
           vehicle="plane"
           inspect={<PlaneInspect sel={sel} onSel={onPick} showAll={showAll} />}
         />
-      </main>
+      </MainSplit>
     );
   }
 
   if (workspace === "audit") {
     return (
-      <main>
+      <MainSplit>
         <AuditLibrary current="audit" ids={PLANE_WORKSPACES} onWorkspace={setWorkspace} />
         <Aside
           log={log}
@@ -120,12 +121,12 @@ export function PlaneApp({
           vehicle="plane"
           inspect={<PlaneInspect sel={sel} onSel={onPick} showAll={showAll} />}
         />
-      </main>
+      </MainSplit>
     );
   }
 
   return (
-    <main>
+    <MainSplit>
       <section className="scope">
         <Studio
           frame="plane"
@@ -150,6 +151,6 @@ export function PlaneApp({
         vehicle="plane"
         inspect={<PlaneInspect sel={sel} onSel={onPick} showAll={showAll} />}
       />
-    </main>
+    </MainSplit>
   );
 }

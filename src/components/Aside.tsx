@@ -808,7 +808,7 @@ export function Aside({
         {log.map((row, idx) => (
           <div className="row" key={idx}>
             <span className="t">{row.t}</span>
-            <span className={row.kind}>{row.msg}</span>
+            <span className={row.kind} title={row.msg}>{row.msg}</span>
           </div>
         ))}
       </div>

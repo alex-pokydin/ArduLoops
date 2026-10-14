@@ -381,6 +381,22 @@ mod storage_wipe_tests {
 }
 
 #[cfg(test)]
+mod connect_fill_tests {
+    use super::PRIORITY_PARAMS;
+    use std::collections::HashSet;
+
+    #[test]
+    fn live_screen_params_are_named_once() {
+        let mut seen = HashSet::new();
+        for name in PRIORITY_PARAMS {
+            assert!(seen.insert(*name), "{name}");
+        }
+        assert!(seen.contains("SCR_ENABLE"));
+        assert!(seen.contains("ATC_RAT_RLL_P"));
+    }
+}
+
+#[cfg(test)]
 mod param_file_tests {
     use super::parse_param_file;
 

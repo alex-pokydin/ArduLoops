@@ -162,43 +162,87 @@ fn store_received_param(st: &mut LinkState, name: &str, value: f64) {
     remember_vehicle_params(st);
 }
 
-fn fill_missing_params(conn: &dyn MavConnection<MavMessage>, st: &mut LinkState, now: Instant) {
-    if st.sample.heartbeat_at <= 0.0 {
+/// Live-screen names first. Full `PARAM_REQUEST_LIST` is only for an explicit refresh.
+const PRIORITY_PARAMS: &[&str] = &[
+    "SCR_ENABLE",
+    "SCR_HEAP_SIZE",
+    "FRAME_CLASS",
+    "FRAME_TYPE",
+    "Q_ENABLE",
+    "ATC_RAT_RLL_P",
+    "ATC_RAT_RLL_I",
+    "ATC_RAT_RLL_D",
+    "ATC_ANG_RLL_P",
+    "ATC_INPUT_TC",
+    "ATC_ACC_R_MAX",
+    "ATC_RATE_R_MAX",
+    "ANGLE_MAX",
+    "ATC_ANGLE_MAX",
+    "RCMAP_ROLL",
+    "RCMAP_PITCH",
+    "RCMAP_THROTTLE",
+    "RCMAP_YAW",
+    "THR_DZ",
+];
+
+const INDEX_BATCH: usize = 16;
+const INDEX_GAP: Duration = Duration::from_millis(200);
+
+fn fill_missing_params(
+    conn: &dyn MavConnection<MavMessage>,
+    st: &mut LinkState,
+    now: Instant,
+    streams_ok: bool,
+) {
+    if st.sample.heartbeat_at <= 0.0 || !streams_ok {
         return;
     }
     let full = st.sample.param_count > 0 && st.sample.param_indices.len() >= st.sample.param_count as usize;
     if full {
         return;
     }
-    if st.sample.param_count == 0 {
-        if now.duration_since(st.params_fill_at) < Duration::from_secs(2) {
+    if st.params_priority_tries < 8 {
+        if now.duration_since(st.params_fill_at) < Duration::from_millis(400) {
             return;
         }
         st.params_fill_at = now;
-        if st.params_list_tries < 6 {
-            request_param_list(conn, st);
-            st.params_list_tries = st.params_list_tries.saturating_add(1);
+        let names: Vec<&str> = PRIORITY_PARAMS
+            .iter()
+            .copied()
+            .filter(|name| !st.sample.params.contains_key(*name))
+            .take(4)
+            .collect();
+        if names.is_empty() {
+            st.params_priority_tries = 8;
+        } else {
+            for name in names {
+                request_param_read(conn, st, name);
+            }
+            if st.sample.param_count == 0 {
+                request_param_index(conn, st, 0);
+            }
+            st.params_priority_tries = st.params_priority_tries.saturating_add(1);
+            return;
         }
+    }
+    if st.sample.param_count == 0 {
+        if now.duration_since(st.params_fill_at) < INDEX_GAP {
+            return;
+        }
+        st.params_fill_at = now;
+        request_param_index(conn, st, 0);
         return;
     }
-    if now.duration_since(st.params_fill_at) < Duration::from_millis(500) {
+    if now.duration_since(st.params_fill_at) < INDEX_GAP {
         return;
     }
     st.params_fill_at = now;
     let missing: Vec<u16> = (0..st.sample.param_count)
         .filter(|index| !st.sample.param_indices.contains(index))
-        .take(24)
+        .take(INDEX_BATCH)
         .collect();
     for index in missing {
-        send_msg(
-            conn,
-            &MavMessage::PARAM_REQUEST_READ(PARAM_REQUEST_READ_DATA {
-                param_index: index as i16,
-                target_system: st.target_system,
-                target_component: st.target_component,
-                param_id: [0; 16],
-            }),
-        );
+        request_param_index(conn, st, index);
     }
 }
 
@@ -437,6 +481,8 @@ pub fn run_loop(
         // UDP has no learned peer until a heartbeat arrives. Initial broadcast
         // parameter requests used to be lost, leaving an almost empty cache.
         let mut requested_initial = false;
+        let mut stream_followup = false;
+        let mut first_hb_at: Option<Instant> = None;
 
         let mut last_rc = Instant::now() - Duration::from_millis(50);
         let mut last_stream = Instant::now();
@@ -482,27 +528,35 @@ pub fn run_loop(
                 && now.duration_since(last_stream) > Duration::from_secs(3)
                 && st.sample.att_hz == 0
             {
-                request_streams(&*conn, &st);
+                request_attitude_stream(&*conn, &st);
                 last_stream = now;
             }
             // Log bytes can crowd ATTITUDE off a slow serial link. That is not a dead port.
             if st.active_log_download.is_some() {
                 last_att = Some(now);
+            }
+            let att_gone = if st.active_log_download.is_some() {
+                false
             } else if let Some(t) = last_att {
-                if now.duration_since(t) > Duration::from_secs(12) {
-                    st.sample.ok = false;
-                    let serial = url.lock().ok().is_some_and(|g| serial_url(&g));
-                    st.sample.detail = if serial {
-                        "немає ATTITUDE".into()
-                    } else {
-                        "немає ATTITUDE, reconnect".into()
-                    };
-                    emit_sample(&on_sample, &latest, &st, &sitl);
-                    if serial {
-                        give_up_serial(&url);
-                    }
-                    break;
+                now.duration_since(t) > Duration::from_secs(12)
+            } else if let Some(hb) = first_hb_at {
+                now.duration_since(hb) > Duration::from_secs(20)
+            } else {
+                false
+            };
+            if att_gone {
+                st.sample.ok = false;
+                let serial = url.lock().ok().is_some_and(|g| serial_url(&g));
+                st.sample.detail = if serial {
+                    "немає ATTITUDE".into()
+                } else {
+                    "немає ATTITUDE, reconnect".into()
+                };
+                emit_sample(&on_sample, &latest, &st, &sitl);
+                if serial {
+                    give_up_serial(&url);
                 }
+                break;
             }
             if now.duration_since(last_rc) > Duration::from_millis(50) {
                 send_rc(&*conn, &st);
@@ -515,7 +569,10 @@ pub fn run_loop(
             drive_log_download(&*conn, &mut st);
             if requested_initial {
                 note_param_identity(&mut st);
-                fill_missing_params(&*conn, &mut st, now);
+                let streams_ok = last_att
+                    .map(|t| now.duration_since(t) < Duration::from_millis(800))
+                    .unwrap_or(false);
+                fill_missing_params(&*conn, &mut st, now, streams_ok);
             }
 
             match conn.recv() {
@@ -523,10 +580,9 @@ pub fn run_loop(
                     let is_att = matches!(msg, MavMessage::ATTITUDE(_));
                     handle_msg(&mut st, &hdr, msg);
                     if !requested_initial && st.sample.heartbeat_at > 0.0 {
-                        request_streams(&*conn, &st);
-                        request_param_list(&*conn, &st);
-                        request_diagnostics(&*conn, &st);
+                        request_attitude_stream(&*conn, &st);
                         requested_initial = true;
+                        first_hb_at = Some(Instant::now());
                     }
                     if st.sample.ok && st.sample.detail.starts_with("чекаємо HEARTBEAT") {
                         st.sample.detail = target.clone();
@@ -534,8 +590,12 @@ pub fn run_loop(
                     if is_att {
                         att_n += 1;
                         last_att = Some(Instant::now());
-                    } else if last_att.is_none() && st.sample.frame != "" {
-                        last_att = Some(Instant::now());
+                        if !stream_followup {
+                            request_streams(&*conn, &st);
+                            apply_stream_rates(&*conn, &st);
+                            request_diagnostics(&*conn, &st);
+                            stream_followup = true;
+                        }
                     }
                 }
                 Err(mavlink::error::MessageReadError::Io(err))

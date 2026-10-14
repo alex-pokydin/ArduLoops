@@ -215,6 +215,18 @@ fn request_param_read(conn: &dyn MavConnection<MavMessage>, st: &LinkState, name
     );
 }
 
+fn request_param_index(conn: &dyn MavConnection<MavMessage>, st: &LinkState, index: u16) {
+    send_msg(
+        conn,
+        &MavMessage::PARAM_REQUEST_READ(PARAM_REQUEST_READ_DATA {
+            param_index: index as i16,
+            target_system: st.target_system,
+            target_component: st.target_component,
+            param_id: [0; 16],
+        }),
+    );
+}
+
 fn param_close(a: f64, b: f64) -> bool {
     (a - b).abs() < 0.51
 }
@@ -507,63 +519,72 @@ fn set_input_shape(
     st.sample.rate_max = Some(rmax);
 }
 
+const STREAM_INTERVALS: &[(f32, f32)] = &[
+    (MSG_PID_TUNING, 20_000.0),
+    (MSG_ATTITUDE_TARGET, 20_000.0),
+    (MSG_NAV_CONTROLLER_OUTPUT, 50_000.0),
+    (MSG_RC_CHANNELS, 40_000.0),
+    (MSG_GPS_RAW_INT, 200_000.0),
+    (MSG_GLOBAL_POSITION_INT, 100_000.0),
+    (MSG_MISSION_CURRENT, 500_000.0),
+    (MSG_VFR_HUD, 100_000.0),
+    (MSG_SIM_STATE, 200_000.0),
+    (MSG_SIMSTATE, 200_000.0),
+    (MSG_HOME_POSITION, 1_000_000.0),
+    (MSG_SCALED_IMU, 200_000.0),
+    (MSG_SCALED_IMU2, 200_000.0),
+    (MSG_SCALED_IMU3, 200_000.0),
+    (MSG_MAG_CAL_PROGRESS, 250_000.0),
+    (MSG_MAG_CAL_REPORT, 500_000.0),
+    (MSG_EKF_STATUS_REPORT, 500_000.0),
+    (MSG_SYS_STATUS, 1_000_000.0),
+    (MSG_BATTERY_STATUS, 1_000_000.0),
+];
+
+/// ATTITUDE only. A full stream/param dump on first HEARTBEAT starves the TCP
+/// session; Cygwin SITL then exits when this client reconnects.
+fn request_attitude_stream(conn: &dyn MavConnection<MavMessage>, st: &LinkState) {
+    let sys = st.target_system;
+    let comp = st.target_component;
+    send_msg(
+        conn,
+        &MavMessage::REQUEST_DATA_STREAM(REQUEST_DATA_STREAM_DATA {
+            target_system: sys,
+            target_component: comp,
+            req_stream_id: 10,
+            req_message_rate: 50,
+            start_stop: 1,
+        }),
+    );
+    command_long(
+        conn,
+        sys,
+        comp,
+        MavCmd::MAV_CMD_SET_MESSAGE_INTERVAL,
+        MSG_ATTITUDE,
+        20_000.0,
+    );
+}
+
 fn request_streams(conn: &dyn MavConnection<MavMessage>, st: &LinkState) {
     let sys = st.target_system;
-    let comps = [st.target_component, 1, 0];
-    for comp in comps {
-        send_msg(
+    let comp = st.target_component;
+    for &(mid, us) in STREAM_INTERVALS {
+        command_long(
             conn,
-            &MavMessage::REQUEST_DATA_STREAM(REQUEST_DATA_STREAM_DATA {
-                target_system: sys,
-                target_component: comp,
-                req_stream_id: 0,
-                req_message_rate: 25,
-                start_stop: 1,
-            }),
+            sys,
+            comp,
+            MavCmd::MAV_CMD_SET_MESSAGE_INTERVAL,
+            mid,
+            us,
         );
-        send_msg(
-            conn,
-            &MavMessage::REQUEST_DATA_STREAM(REQUEST_DATA_STREAM_DATA {
-                target_system: sys,
-                target_component: comp,
-                req_stream_id: 10,
-                req_message_rate: 50,
-                start_stop: 1,
-            }),
-        );
-        for (mid, us) in [
-            (MSG_ATTITUDE, 20_000.0),
-            (MSG_PID_TUNING, 20_000.0),
-            (MSG_ATTITUDE_TARGET, 20_000.0),
-            (MSG_NAV_CONTROLLER_OUTPUT, 50_000.0),
-            (MSG_RC_CHANNELS, 40_000.0),
-            (MSG_GPS_RAW_INT, 200_000.0),
-            (MSG_GLOBAL_POSITION_INT, 100_000.0),
-            (MSG_MISSION_CURRENT, 500_000.0),
-            (MSG_VFR_HUD, 100_000.0),
-            (MSG_SIM_STATE, 200_000.0),
-            (MSG_SIMSTATE, 200_000.0),
-            (MSG_HOME_POSITION, 1_000_000.0),
-            (MSG_SCALED_IMU, 200_000.0),
-            (MSG_SCALED_IMU2, 200_000.0),
-            (MSG_SCALED_IMU3, 200_000.0),
-            (MSG_MAG_CAL_PROGRESS, 250_000.0),
-            (MSG_MAG_CAL_REPORT, 500_000.0),
-            (MSG_EKF_STATUS_REPORT, 500_000.0),
-            (MSG_SYS_STATUS, 1_000_000.0),
-            (MSG_BATTERY_STATUS, 1_000_000.0),
-        ] {
-            command_long(
-                conn,
-                sys,
-                comp,
-                MavCmd::MAV_CMD_SET_MESSAGE_INTERVAL,
-                mid,
-                us,
-            );
-            command_long(conn, sys, comp, MavCmd::MAV_CMD_REQUEST_MESSAGE, mid, 0.0);
-        }
     }
+}
+
+/// SR_* PARAM_SET after ATTITUDE is flowing — writing them on HEARTBEAT
+/// competes with the interval that keeps the TCP session up.
+fn apply_stream_rates(conn: &dyn MavConnection<MavMessage>, st: &LinkState) {
+    let sys = st.target_system;
     for (name, val) in [
         ("SR0_EXTRA1", 50.0),
         ("SR1_EXTRA1", 50.0),

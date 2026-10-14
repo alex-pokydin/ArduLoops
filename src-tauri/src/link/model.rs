@@ -568,7 +568,7 @@ struct LinkState {
     params_cache_full: bool,
     params_cache_key: String,
     params_fill_at: Instant,
-    params_list_tries: u8,
+    params_priority_tries: u8,
 }
 
 impl LinkState {
@@ -604,7 +604,7 @@ impl LinkState {
             params_cache_full: false,
             params_cache_key: String::new(),
             params_fill_at: Instant::now(),
-            params_list_tries: 0,
+            params_priority_tries: 0,
         }
     }
 }

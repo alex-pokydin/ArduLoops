@@ -1,5 +1,6 @@
 import { lazy, Suspense, useMemo, useState } from "react";
 import { Aside, type LogRow } from "../components/Aside";
+import { MainSplit } from "../components/MainSplit";
 import { AxisSwitch } from "../components/AxisSwitch";
 import { Cascade } from "../components/Cascade";
 import { CopterInspect } from "../components/CopterInspect";
@@ -55,7 +56,7 @@ export function CopterApp({
 
   if (workspace === "mission") {
     return (
-      <main>
+      <MainSplit>
         <MissionView current="mission" ids={COPTER_WORKSPACES} onWorkspace={setWorkspace} />
         <Aside
           log={log}
@@ -64,13 +65,13 @@ export function CopterApp({
           axis={axis}
           inspect={<CopterInspect sel={sel} onSel={onPick} axis={axis} showAll={showAll} />}
         />
-      </main>
+      </MainSplit>
     );
   }
 
   if (workspace === "firmware") {
     return (
-      <main>
+      <MainSplit>
         <ControllerView ids={COPTER_WORKSPACES} onWorkspace={setWorkspace} />
         <Aside
           log={log}
@@ -79,13 +80,13 @@ export function CopterApp({
           axis={axis}
           inspect={<CopterInspect sel={sel} onSel={onPick} axis={axis} showAll={showAll} />}
         />
-      </main>
+      </MainSplit>
     );
   }
 
   if (workspace === "scripts") {
     return (
-      <main>
+      <MainSplit>
         <Suspense fallback={<section className="scope work"><p className="work-empty">…</p></section>}>
           <ScriptsLibrary current="scripts" ids={COPTER_WORKSPACES} onWorkspace={setWorkspace} />
         </Suspense>
@@ -96,13 +97,13 @@ export function CopterApp({
           axis={axis}
           inspect={<CopterInspect sel={sel} onSel={onPick} axis={axis} showAll={showAll} />}
         />
-      </main>
+      </MainSplit>
     );
   }
 
   if (workspace === "audit") {
     return (
-      <main>
+      <MainSplit>
         <AuditLibrary current="audit" ids={COPTER_WORKSPACES} onWorkspace={setWorkspace} />
         <Aside
           log={log}
@@ -111,12 +112,12 @@ export function CopterApp({
           axis={axis}
           inspect={<CopterInspect sel={sel} onSel={onPick} axis={axis} showAll={showAll} />}
         />
-      </main>
+      </MainSplit>
     );
   }
 
   return (
-    <main>
+    <MainSplit>
       <section className="scope">
         <Studio
           frame="copter"
@@ -137,6 +138,6 @@ export function CopterApp({
         axis={axis}
         inspect={<CopterInspect sel={sel} onSel={onPick} axis={axis} showAll={showAll} />}
       />
-    </main>
+    </MainSplit>
   );
 }

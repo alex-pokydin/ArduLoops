@@ -202,9 +202,6 @@ function WatchPicker({
     <details
       ref={box}
       className="watch-sel"
-      onKeyDown={(ev) => {
-        if (ev.code === "Space") ev.stopPropagation();
-      }}
     >
       <summary title={t("Blocks this mode closes")}>{label}</summary>
       <div className="watch-menu" role="group" aria-label={t("Blocks this mode closes")}>
@@ -327,9 +324,6 @@ function LinePicker({
           setPlace(menuPlace(ev.currentTarget));
           queueMicrotask(() => qRef.current?.focus());
         } else setQ("");
-      }}
-      onKeyDown={(ev) => {
-        if (ev.code === "Space") ev.stopPropagation();
       }}
     >
       <summary title={t("Live lines on this sample")}>

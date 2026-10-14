@@ -25,8 +25,6 @@ import { PlaneApp } from "./plane/App";
 function stamp(): string {
   const d = new Date();
   return (
-    String(d.getHours()).padStart(2, "0") +
-    ":" +
     String(d.getMinutes()).padStart(2, "0") +
     ":" +
     String(d.getSeconds()).padStart(2, "0")
@@ -79,9 +77,38 @@ function AttRate() {
     const live = s.frame === "plane" || s.frame === "copter";
     const sitl = isSitl(s.params) || !!s.sitl_running;
     const known = sitl || Object.keys(s.params || {}).length > 0;
-    return `${live || known ? " · " : ""}ATT ${s.att_hz} Hz`;
+    return `${live || known ? " · " : ""}${s.att_hz} Hz`;
   });
   return text ? <>{text}</> : null;
+}
+
+function ParamFill() {
+  const t = useT();
+  const fill = useStorePicked(
+    (s) => {
+      if (!s.ok) return null;
+      const total = s.param_count || 0;
+      const received = Object.keys(s.params || {}).length;
+      if (total <= 0 || received >= total) return null;
+      return { received, total };
+    },
+    (a, b) => a === b || (a != null && b != null && a.received === b.received && a.total === b.total),
+  );
+  if (!fill) return null;
+  const pct = Math.min(100, (100 * fill.received) / fill.total);
+  return (
+    <span
+      className="link-params"
+      role="progressbar"
+      aria-valuemin={0}
+      aria-valuemax={fill.total}
+      aria-valuenow={fill.received}
+      aria-label={t("Parameters {received} of {total}", fill)}
+      title={`${fill.received} / ${fill.total}`}
+    >
+      <span style={{ width: `${pct}%` }} />
+    </span>
+  );
 }
 const SHELLS: Shell[] = ["home", "copter", "plane"];
 
@@ -187,9 +214,6 @@ function ShellPicker({
     <details
       ref={box}
       className={idle ? "hdr-shell idle" : "hdr-shell"}
-      onKeyDown={(ev) => {
-        if (ev.code === "Space") ev.stopPropagation();
-      }}
     >
       <summary aria-label={t("View")} title={title}>
         {value === "home" ? t("Home") : t(value)}
@@ -246,18 +270,6 @@ export function App() {
     });
     return startStream();
   }, []);
-
-  useEffect(() => {
-    const onKey = (ev: KeyboardEvent) => {
-      if (ev.code !== "Space") return;
-      const tag = (ev.target as HTMLElement | null)?.tagName;
-      if (tag && /INPUT|TEXTAREA|BUTTON|SELECT|SUMMARY/.test(tag)) return;
-      ev.preventDefault();
-      togglePause();
-    };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, [paused]);
 
   useEffect(() => {
     const onPop = () => setPick(frameFromUrl());
@@ -519,7 +531,7 @@ export function App() {
             className={paused ? "pause-btn on" : "pause-btn"}
             aria-pressed={paused}
             onClick={togglePause}
-            title={t("Space")}
+            title={paused ? t("Resume") : t("Pause")}
           >
             {paused ? t("Resume") : t("Pause")}
           </button>
@@ -538,39 +550,42 @@ export function App() {
         <div className="hdr-right">
           {linked ? (
             <div className="link on">
-              <span
-                className="status"
-                title={
-                  [
-                    face.detail,
-                    live ? `HEARTBEAT ${live}` : null,
-                    sourceKnown ? (sitl ? t("SITL") : t("board")) : null,
-                  ]
-                    .filter(Boolean)
-                    .join(" · ") || undefined
-                }
-              >
-                {live ? (
-                  <button
-                    type="button"
-                    className={shell === live ? "frame-go on" : "frame-go"}
-                    aria-current={shell === live ? "page" : undefined}
-                    title={t("Show {frame}", { frame: t(live) })}
-                    onClick={() => {
-                      if (shell !== live) onShell(live);
-                    }}
-                  >
-                    {t(live)}
-                  </button>
-                ) : null}
-                {sourceKnown ? (
-                  <span className="src-bit">
-                    {live ? " · " : ""}
-                    <span className={sitl ? "src sitl" : "src board"}>{sitl ? t("SITL") : t("board")}</span>
-                  </span>
-                ) : null}
-                <AttRate />
-              </span>
+              <div className="link-face">
+                <span
+                  className="status"
+                  title={
+                    [
+                      face.detail,
+                      live ? `HEARTBEAT ${live}` : null,
+                      sourceKnown ? (sitl ? t("SITL") : t("board")) : null,
+                    ]
+                      .filter(Boolean)
+                      .join(" · ") || undefined
+                  }
+                >
+                  {live ? (
+                    <button
+                      type="button"
+                      className={shell === live ? "frame-go on" : "frame-go"}
+                      aria-current={shell === live ? "page" : undefined}
+                      title={t("Show {frame}", { frame: t(live) })}
+                      onClick={() => {
+                        if (shell !== live) onShell(live);
+                      }}
+                    >
+                      {t(live)}
+                    </button>
+                  ) : null}
+                  {sourceKnown ? (
+                    <span className="src-bit">
+                      {live ? " · " : ""}
+                      <span className={sitl ? "src sitl" : "src board"}>{sitl ? t("SITL") : t("board")}</span>
+                    </span>
+                  ) : null}
+                  <AttRate />
+                </span>
+                <ParamFill />
+              </div>
               <button type="button" onClick={onDisconnect} title={t("Disconnect")}>
                 {t("Stop")}
               </button>
