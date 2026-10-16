@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { useT } from "../i18n/i18n";
 import { addLog } from "../log";
+import { runtimeLabParams } from "../mav/labInit";
 import { send } from "../mav/cmd";
 import { SITL_LINK } from "../mav/link";
 import {
@@ -129,6 +130,49 @@ function saveSitlPrefs(p: SitlPrefs): void {
   } catch {
     /* ignore */
   }
+}
+
+function SecIcon({ id }: { id: string }) {
+  return (
+    <svg className="sim-ico" viewBox="0 0 12 12" aria-hidden="true">
+      {id === "init" ? <path d="M6 1.5v5.2M3.6 4.5 6 7.1l2.4-2.6M2 10.3h8" /> : null}
+      {id === "home" ? (
+        <>
+          <path d="M6 1.7a2.7 2.7 0 0 0-2.7 2.7c0 2.1 2.7 5.8 2.7 5.8s2.7-3.7 2.7-5.8A2.7 2.7 0 0 0 6 1.7z" />
+          <circle cx="6" cy="4.4" r=".9" fill="currentColor" stroke="none" />
+        </>
+      ) : null}
+      {id === "speed" ? <path d="M1.8 3.2 5 6 1.8 8.8M6.2 3.2 9.4 6 6.2 8.8" /> : null}
+      {id === "wind" ? <path d="M1.4 3.2c1.6-1.5 3.2-1.5 4.8 0s3.2 1.5 4.4 0M1.4 6c1.6-1.5 3.2-1.5 4.8 0s3.2 1.5 4.4 0M1.4 8.8c1.6-1.5 3.2-1.5 4.8 0" /> : null}
+      {id === "gps" ? (
+        <>
+          <circle cx="6" cy="6" r="2.3" />
+          <path d="M6 1.4v1.7M6 8.9v1.7M1.4 6h1.7M8.9 6h1.7" />
+        </>
+      ) : null}
+      {id === "rc" ? (
+        <>
+          <circle cx="6" cy="3.2" r="1.5" />
+          <path d="M6 4.7v5.2M3.2 10.2h5.6" />
+        </>
+      ) : null}
+      {id === "motors" ? (
+        <>
+          <circle cx="6" cy="6" r="1.15" />
+          <path d="M6 1.8v2.5M6 7.7v2.5M1.8 6h2.5M7.7 6h2.5" />
+        </>
+      ) : null}
+      {id === "imu" ? <path d="M2.4 9.6V3.1M2.4 9.6H9M2.4 9.6 8.2 3.8" /> : null}
+      {id === "mag" ? (
+        <>
+          <circle cx="6" cy="6" r="4" />
+          <path d="M6 2.6 7.3 6.6 6 5.7 4.7 6.6Z" fill="currentColor" stroke="none" />
+        </>
+      ) : null}
+      {id === "baro" ? <path d="M2 8.6a4.2 4.2 0 0 1 8 0M6 8.4 8 4.6" /> : null}
+      {id === "batt" ? <path d="M2 3.4h6.2v5.4H2zM8.2 4.8h1.4v2.4H8.2M3.2 4.8h2.4" /> : null}
+    </svg>
+  );
 }
 
 function SitlThumb({ kind }: { kind: "copter" | "plane" }) {
@@ -281,6 +325,29 @@ function SitlLaunch({
 
   const liveVehicle = sample.sitl_vehicle === "plane" ? "plane" : sample.sitl_vehicle === "copter" ? "copter" : "";
   const live = running || isSitl(sample.params);
+  const initTotal = sample.init_total || 0;
+  const initDone = sample.init_done || 0;
+  const initing = initTotal > 0;
+  const initPct = initing ? Math.min(100, Math.round((100 * initDone) / initTotal)) : 0;
+  const sitlLink = sample.ok && isSitl(sample.params);
+
+  function onInit() {
+    if (!sitlLink || initing) return;
+    if (sample.armed) {
+      addLog(t("Init · disarm first"), "bad");
+      return;
+    }
+    const vehicle = sample.frame === "plane" ? "plane" : "copter";
+    const params = runtimeLabParams(vehicle);
+    send({ op: "init", params });
+    addLog(
+      t("Init · {n} parameters · {vehicle}", {
+        n: Object.keys(params).length,
+        vehicle: t(vehicle),
+      }),
+      "cmd",
+    );
+  }
 
   return (
     <>
@@ -315,6 +382,15 @@ function SitlLaunch({
         {busy || running ? t("Stop") : t("Start")}
       </button>
       <p className="sim-status">{sitlLine(sample, t)}</p>
+      {phase === "run" ? (
+        <ul className="sim-links">
+          <li>{t("udp {host}:14550 — Mission Planner", { host: "127.0.0.1" })}</li>
+          <li>{t("tcp {host}:5760 — Mission Planner", { host: "127.0.0.1" })}</li>
+          {(sample.sitl_lan || "").trim() && sample.sitl_lan !== "127.0.0.1" ? (
+            <li>{t("tcp {host}:5760 — Mission Planner", { host: sample.sitl_lan || "" })}</li>
+          ) : null}
+        </ul>
+      ) : null}
       <button
         type="button"
         className={`map-sw sim-tog${prefs.wipe ? " on hot" : ""}`}
@@ -327,7 +403,34 @@ function SitlLaunch({
       </button>
     </div>
     <details className="sim-sec more" open>
-      <summary>{t("home")}</summary>
+      <summary>
+        <SecIcon id="init" />
+        {initing ? t("Init · {done}/{total}", { done: initDone, total: initTotal }) : t("Init")}
+      </summary>
+      <p className="sim-note">{t("Writes parameters that are just alive enough, not an ideal tune.")}</p>
+      <button
+        type="button"
+        className="sim-init"
+        disabled={!sitlLink || initing}
+        title={t("Write the lab stand dump so a blank board can arm.")}
+        onClick={onInit}
+      >
+        {initing ? `${initPct}%` : t("Init")}
+      </button>
+      {initing ? (
+        <div
+          className="init-meter"
+          role="progressbar"
+          aria-valuemin={0}
+          aria-valuemax={initTotal}
+          aria-valuenow={initDone}
+        >
+          <i style={{ width: `${initPct}%` }} />
+        </div>
+      ) : null}
+    </details>
+    <details className="sim-sec more" open>
+      <summary><SecIcon id="home" />{t("home")}</summary>
       <input
         className="sim-home"
         value={prefs.home}
@@ -338,7 +441,11 @@ function SitlLaunch({
       />
     </details>
     <details className="sim-sec more" open>
-      <summary>{t("speedup")}{simPaused ? " · " + t("Pause") : ""}</summary>
+      <summary>
+        <SecIcon id="speed" />
+        {t("speedup")}
+        <span className="sim-sum">{simPaused ? t("Pause") : `${speed}×`}</span>
+      </summary>
       <div className="srow wide">
         <input
           type="range"
@@ -378,6 +485,43 @@ function SitlLaunch({
   );
 }
 
+function sectionFaults(
+  group: SimGroup,
+  params: Record<string, number>,
+  t: (key: string, vars?: Record<string, string | number>) => string,
+): string[] {
+  const faults: string[] = [];
+  if (group.motors) {
+    const mask = Math.round(params[SIM_ENGINE_FAIL] ?? 0);
+    for (const bit of MOTOR_BITS) {
+      if ((mask & (1 << bit)) !== 0) faults.push(t("motor {n}", { n: bit + 1 }));
+    }
+  }
+  for (const knob of group.knobs) {
+    if ((!knob.hot && !knob.alert) || (knob.hideIf && params[knob.hideIf] != null)) continue;
+    const name = resolveSimKey(knob, params);
+    if (!name || params[name] == null) continue;
+    const value = params[name];
+    if (knob.kind === "choice") {
+      const picked = Math.round(value);
+      if (picked <= 0) continue;
+      const choice = knob.choices?.find((item) => item.v === picked);
+      faults.push(choice ? t(choice.label) : t(knob.label));
+      continue;
+    }
+    if (knob.alert === "off") {
+      if (value < 0.5) faults.push(t("GPS off"));
+      continue;
+    }
+    if (knob.alert === "nonzero") {
+      if (Math.abs(value) > 1e-6) faults.push(t(knob.label));
+      continue;
+    }
+    if (value >= 0.5) faults.push(t(knob.label));
+  }
+  return faults;
+}
+
 function SimSection({ group, sample }: { group: SimGroup; sample: Sample }) {
   const t = useT();
   const params = sample.params || {};
@@ -386,11 +530,16 @@ function SimSection({ group, sample }: { group: SimGroup; sample: Sample }) {
     return resolveSimKey(k, params);
   });
   const motors = group.motors && params[SIM_ENGINE_FAIL] != null;
+  const faults = sectionFaults(group, params, t);
   if (!knobs.length && !motors) return null;
 
   return (
     <details className="sim-sec more" open={group.open}>
-      <summary>{t(group.title)}</summary>
+      <summary className={faults.length ? "sim-alert" : undefined} title={faults.length ? faults.join(" · ") : undefined}>
+        <SecIcon id={group.id} />
+        {t(group.title)}
+        {faults.length ? <i className="sim-pip" aria-hidden="true">{faults.length > 1 ? faults.length : ""}</i> : null}
+      </summary>
       {motors ? <MotorBits sample={sample} /> : null}
       {knobs.map((k) => (
         <SimKnobRow key={k.key} knob={k} sample={sample} />
@@ -468,10 +617,11 @@ function SimKnobRow({ knob, sample }: { knob: SimKnob; sample: Sample }) {
 
   if (knob.kind === "toggle") {
     const on = shown >= 0.5;
+    const bad = knob.alert === "off" ? !on : on && !!knob.hot;
     return (
       <button
         type="button"
-        className={`map-sw sim-tog${on ? " on" : ""}${on && knob.hot ? " hot" : ""}`}
+        className={`map-sw sim-tog${on ? " on" : ""}${bad ? " hot" : ""}`}
         aria-pressed={on}
         title={name}
         onClick={() => push(on ? 0 : 1, true)}
@@ -503,7 +653,7 @@ function SimKnobRow({ knob, sample }: { knob: SimKnob; sample: Sample }) {
   }
 
   return (
-    <div className="srow wide">
+    <div className={`srow wide${knob.alert === "nonzero" && Math.abs(shown) > 1e-6 ? " hot" : ""}`}>
       <span>{t(knob.label)}</span>
       <input
         type="range"

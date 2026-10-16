@@ -453,7 +453,7 @@ function missionItems(origin: LatLon, points: LatLon[], alt: number, finish: Fin
   if (finish === "loiter" && points.length === 0) {
     items.push({ kind: "loiter", lat: origin.lat, lon: origin.lon, alt });
   }
-  if (finish === "rtl") items.push({ kind: "rtl", lat: 0, lon: 0, alt: 0 });
+  if (finish === "rtl") items.push({ kind: "rtl", lat: origin.lat, lon: origin.lon, alt: 0 });
   return items;
 }
 

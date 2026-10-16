@@ -1252,11 +1252,22 @@ fn tlog_reply(
     }
 }
 
-/// Open an https page in the system browser. The desktop webview ignores a plain link.
+/// Open an https page in the system browser. The webview ignores a plain link.
 fn open_https(url: &str) -> Result<(), String> {
     if !https_page(url) {
         return Err("only an https page".into());
     }
+    let opener = crate::open_system_url(url);
+    if opener.is_ok() {
+        return Ok(());
+    }
+    match shell_open(url) {
+        Ok(()) => Ok(()),
+        Err(_) => opener,
+    }
+}
+
+fn shell_open(url: &str) -> Result<(), String> {
     #[cfg(windows)]
     {
         return std::process::Command::new("rundll32.exe")
@@ -1283,7 +1294,8 @@ fn open_https(url: &str) -> Result<(), String> {
     }
     #[cfg(any(target_os = "android", target_os = "ios"))]
     {
-        return crate::open_system_url(url);
+        let _ = url;
+        return Err("open the link in the browser".into());
     }
 }
 

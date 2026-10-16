@@ -81,6 +81,7 @@ function overlayWhilePaused(frozen: Sample, live: Sample): Sample {
     frozen.sitl_running === live.sitl_running &&
     frozen.sitl_cpu === live.sitl_cpu &&
     frozen.sitl_rss_mb === live.sitl_rss_mb &&
+    frozen.sitl_lan === live.sitl_lan &&
     frozen.init_done === live.init_done &&
     frozen.init_total === live.init_total &&
     frozen.texts === live.texts
@@ -98,6 +99,7 @@ function overlayWhilePaused(frozen: Sample, live: Sample): Sample {
     sitl_running: live.sitl_running,
     sitl_cpu: live.sitl_cpu,
     sitl_rss_mb: live.sitl_rss_mb,
+    sitl_lan: live.sitl_lan,
     init_done: live.init_done,
     init_total: live.init_total,
   };

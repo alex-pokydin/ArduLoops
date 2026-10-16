@@ -5,6 +5,7 @@ import { LabDialog, type AppRelease } from "./components/LabDialog";
 import { SimRail } from "./components/SimRail";
 import { CopterApp } from "./copter/App";
 import { tDetail, useT } from "./i18n/i18n";
+import { externalPage, openExternal } from "./lib/open";
 import { addLog, setLogHandler } from "./log";
 import { send } from "./mav/cmd";
 import { APP_HTTP, formatLink, linkLabel, loadLink, loadLinkHistory, parseLink, rememberLink, saveLink, type LinkKind } from "./mav/link";
@@ -13,7 +14,6 @@ import {
   LAB_KEYS,
   loadLabSnapshot,
   pickLiveLab,
-  runtimeLabParams,
   saveLabSnapshot,
 } from "./mav/labInit";
 import { isSitl } from "./mav/sim";
@@ -278,6 +278,21 @@ export function App() {
   }, []);
 
   useEffect(() => {
+    const onClick = (ev: MouseEvent) => {
+      if (ev.defaultPrevented || ev.button !== 0 || ev.metaKey || ev.ctrlKey || ev.shiftKey || ev.altKey) return;
+      const node = ev.target;
+      if (!(node instanceof Element)) return;
+      const link = node.closest("a");
+      const href = link?.href || "";
+      if (!link || !externalPage(href)) return;
+      ev.preventDefault();
+      openExternal(href);
+    };
+    document.addEventListener("click", onClick);
+    return () => document.removeEventListener("click", onClick);
+  }, []);
+
+  useEffect(() => {
     let stopped = false;
     const load = (refresh: boolean) => {
       void fetchAppRelease(refresh).then((body) => {
@@ -416,26 +431,6 @@ export function App() {
   function onDisconnect() {
     send({ op: "disconnect" });
     addLog(t("Link off"), "cmd");
-  }
-
-  function onLabInit() {
-    const now = getLatest();
-    if (!now.ok) return;
-    if ((now.init_total || 0) > 0) return;
-    if (now.armed) {
-      addLog(t("Init · disarm first"), "bad");
-      return;
-    }
-    const vehicle = now.frame === "plane" ? "plane" : "copter";
-    const params = runtimeLabParams(vehicle);
-    send({ op: "init", params });
-    addLog(
-      t("Init · {n} parameters · {vehicle}", {
-        n: Object.keys(params).length,
-        vehicle: t(vehicle),
-      }),
-      "cmd",
-    );
   }
 
   function onLabSave() {
@@ -733,12 +728,8 @@ export function App() {
       <LabDialog
         open={labOpen}
         linked={linked}
-        frame={face.frame === "plane" || face.frame === "copter" ? face.frame : ""}
-        initDone={initDone}
-        initTotal={initTotal}
         release={release}
         onClose={() => setLabOpen(false)}
-        onInit={onLabInit}
         onSave={onLabSave}
       />
           {shell === "home" ? null : plane ? (

@@ -1,6 +1,8 @@
 //! In-app SITL: Mission Planner Cygwin binaries on Windows, firmware
 //! `SITL_x86_64_linux_gnu` ELFs on Linux, and the macOS release bundle
-//! (`resources/sitl`). Spawn `--serial0 tcp:5770`.
+//! (`resources/sitl`). Spawn `--serial0 tcp:5770` for this app, `--serial1 tcp:5760`
+//! for another ground station, and `--serial2 udpclient:127.0.0.1:14550`.
+//! A broadcast target drops the GCS reply, so Mission Planner never gets MISSION_COUNT.
 use std::fs::{self, File};
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
@@ -12,6 +14,20 @@ use crate::link::Sample;
 
 pub const LINK: &str = "tcpout:127.0.0.1:5770";
 pub const DEFAULT_HOME: &str = "-35.363261,149.165230,584,353";
+
+/// Address another computer should use for TCP 5760. No packet is sent.
+fn lan_ipv4() -> String {
+    let Ok(sock) = std::net::UdpSocket::bind("0.0.0.0:0") else {
+        return String::new();
+    };
+    if sock.connect("1.1.1.1:80").is_err() {
+        return String::new();
+    }
+    match sock.local_addr() {
+        Ok(addr) if !addr.ip().is_loopback() => addr.ip().to_string(),
+        _ => String::new(),
+    }
+}
 
 #[cfg(windows)]
 const MP_SITL: &str = "https://firmware.ardupilot.org/Tools/MissionPlanner/sitl/";
@@ -50,6 +66,7 @@ struct Inner {
     want_connect: Option<String>,
     cpu_pct: f32,
     rss_mb: f32,
+    lan: String,
     cpu_mark: Option<(Instant, u64)>,
     stats_pid: Option<u32>,
 }
@@ -78,6 +95,7 @@ impl SitlCtl {
                 want_connect: None,
                 cpu_pct: 0.0,
                 rss_mb: 0.0,
+                lan: String::new(),
                 cpu_mark: None,
                 stats_pid: None,
             }),
@@ -92,6 +110,7 @@ impl SitlCtl {
             s.sitl_running = g.running;
             s.sitl_cpu = g.cpu_pct;
             s.sitl_rss_mb = g.rss_mb;
+            s.sitl_lan = g.lan.clone();
         }
     }
 
@@ -209,6 +228,9 @@ impl SitlCtl {
         g.phase = phase.into();
         g.detail = detail.into();
         g.running = running;
+        if running {
+            g.lan = lan_ipv4();
+        }
         if let Some(url) = connect {
             g.want_connect = Some(url.into());
         }
@@ -287,9 +309,9 @@ fn run_job(
         .arg("--serial0")
         .arg("tcp:5770")
         .arg("--serial1")
-        .arg("none")
+        .arg("tcp:5760")
         .arg("--serial2")
-        .arg("none")
+        .arg("udpclient:127.0.0.1:14550")
         .current_dir(&run_dir)
         .env("HOME", &run_dir)
         .stdin(Stdio::null());
@@ -314,7 +336,7 @@ fn run_job(
     }
 
     log::info!(
-        "sitl spawn {} -M{model} -O{home} -s{speedup} --serial0 tcp:5770{}",
+        "sitl spawn {} -M{model} -O{home} -s{speedup} --serial0 tcp:5770 --serial1 tcp:5760 --serial2 udpclient:127.0.0.1:14550{}",
         exe.display(),
         if opts.wipe { " --wipe" } else { "" }
     );

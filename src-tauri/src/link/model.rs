@@ -192,6 +192,9 @@ pub struct Sample {
     pub home_lat: Option<f64>,
     #[serde(default)]
     pub home_lon: Option<f64>,
+    /// HOME_POSITION altitude, metres AMSL. Mission item 0 needs this absolute value.
+    #[serde(default)]
+    pub home_alt_m: Option<f64>,
     /// MISSION_CURRENT sequence, including the home item at 0.
     #[serde(default)]
     pub wp_seq: Option<u16>,
@@ -252,6 +255,9 @@ pub struct Sample {
     pub sitl_cpu: f32,
     #[serde(default)]
     pub sitl_rss_mb: f32,
+    /// Outbound IPv4 of this computer, so another GCS can open TCP 5760.
+    #[serde(default)]
+    pub sitl_lan: String,
     pub logs: Vec<OnboardLog>,
     pub log_list_expected: Option<u16>,
     pub log_list_at: f64,
@@ -316,6 +322,7 @@ impl Sample {
             truth_lon: None,
             home_lat: None,
             home_lon: None,
+            home_alt_m: None,
             wp_seq: None,
             thr_out: None,
             rng_m: None,
@@ -348,6 +355,7 @@ impl Sample {
             sitl_running: false,
             sitl_cpu: 0.0,
             sitl_rss_mb: 0.0,
+            sitl_lan: String::new(),
             logs: Vec::new(),
             log_list_expected: None,
             log_list_at: 0.0,
@@ -365,7 +373,7 @@ impl Sample {
     }
 }
 
-/// One item in a mission upload. `rtl` ignores lat/lon.
+/// One item in a mission upload. Item 0 is home and is written as absolute altitude.
 #[derive(Debug, Clone, Deserialize)]
 pub struct MissionItem {
     pub kind: String,

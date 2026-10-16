@@ -20,6 +20,8 @@ export type SimKnob = {
   kind?: SimKind;
   choices?: SimChoice[];
   hot?: boolean;
+  /** `off`: a toggle is a fault when disabled. `nonzero`: a slider is live when it leaves 0. */
+  alert?: "off" | "nonzero";
   /** Skip this knob when another name is already live (old vs GPS1). */
   hideIf?: string;
   /**
@@ -55,11 +57,10 @@ export const SIM_GROUPS: SimGroup[] = [
   {
     id: "wind",
     title: "Wind",
-    open: true,
     knobs: [
-      { key: "SIM_WIND_SPD", label: "speed", unit: "m/s", min: 0, max: 20, step: 0.1, digits: 1, def: 0 },
+      { key: "SIM_WIND_SPD", label: "speed", unit: "m/s", min: 0, max: 20, step: 0.1, digits: 1, def: 0, alert: "nonzero" },
       { key: "SIM_WIND_DIR", label: "direction", unit: "°", min: 0, max: 360, step: 1, digits: 0, def: 180 },
-      { key: "SIM_WIND_TURB", label: "turbulence", unit: "m/s", min: 0, max: 8, step: 0.1, digits: 1, def: 0 },
+      { key: "SIM_WIND_TURB", label: "turbulence", unit: "m/s", min: 0, max: 8, step: 0.1, digits: 1, def: 0, alert: "nonzero" },
       { key: "SIM_WIND_DIR_Z", label: "vertical", unit: "°", min: -90, max: 90, step: 1, digits: 0, def: 0 },
       { key: "SIM_WIND_TC", label: "settle", unit: "s", min: 0, max: 20, step: 0.5, digits: 1, def: 5 },
     ],
@@ -68,7 +69,7 @@ export const SIM_GROUPS: SimGroup[] = [
     id: "gps",
     title: "GPS",
     knobs: [
-      { key: "SIM_GPS1_ENABLE", label: "GPS on", min: 0, max: 1, step: 1, digits: 0, def: 1, kind: "toggle" },
+      { key: "SIM_GPS1_ENABLE", label: "GPS on", min: 0, max: 1, step: 1, digits: 0, def: 1, kind: "toggle", alert: "off" },
       {
         key: "SIM_GPS_DISABLE",
         label: "GPS fail",

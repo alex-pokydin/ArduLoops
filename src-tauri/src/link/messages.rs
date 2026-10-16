@@ -11,14 +11,6 @@ fn sim_deg(v: f32) -> f64 {
     if n.abs() > 180.0 { n / 1e7 } else { n }
 }
 
-fn nav_frame(int_item: bool) -> MavFrame {
-    if int_item {
-        MavFrame::MAV_FRAME_GLOBAL_RELATIVE_ALT_INT
-    } else {
-        MavFrame::MAV_FRAME_GLOBAL_RELATIVE_ALT
-    }
-}
-
 fn mission_shape(item: &MissionItem) -> (MavCmd, bool, i32, i32, f32) {
     match item.kind.as_str() {
         "takeoff" => (
@@ -35,7 +27,13 @@ fn mission_shape(item: &MissionItem) -> (MavCmd, bool, i32, i32, f32) {
             deg_e7(item.lon),
             item.alt as f32,
         ),
-        "rtl" => (MavCmd::MAV_CMD_NAV_RETURN_TO_LAUNCH, true, 0, 0, 0.0),
+        "rtl" => (
+            MavCmd::MAV_CMD_NAV_RETURN_TO_LAUNCH,
+            true,
+            deg_e7(item.lat),
+            deg_e7(item.lon),
+            0.0,
+        ),
         _ => (
             MavCmd::MAV_CMD_NAV_WAYPOINT,
             false,
@@ -46,44 +44,33 @@ fn mission_shape(item: &MissionItem) -> (MavCmd, bool, i32, i32, f32) {
     }
 }
 
-fn send_mission_item(conn: &dyn MavConnection<MavMessage>, st: &LinkState, item: &MissionItem, seq: u16, int_item: bool) {
-    let (command, mission_frame, x, y, z) = mission_shape(item);
+/// ArduPilot still asks with MISSION_REQUEST, then warns and drops a MISSION_ITEM.
+/// Always answer with MISSION_ITEM_INT. Item 0 is home, so its altitude is AMSL;
+/// a relative home is what makes Mission Planner refuse the plan.
+fn send_mission_item(conn: &dyn MavConnection<MavMessage>, st: &LinkState, item: &MissionItem, seq: u16) {
+    let (command, mission_frame, x, y, mut z) = mission_shape(item);
+    let home = seq == 0 && command == MavCmd::MAV_CMD_NAV_WAYPOINT;
     let frame = if mission_frame {
         MavFrame::MAV_FRAME_MISSION
+    } else if home {
+        MavFrame::MAV_FRAME_GLOBAL_INT
     } else {
-        nav_frame(int_item)
+        MavFrame::MAV_FRAME_GLOBAL_RELATIVE_ALT_INT
     };
-    if int_item {
-        send_msg(
-            conn,
-            &MavMessage::MISSION_ITEM_INT(MISSION_ITEM_INT_DATA {
-                param1: 0.0,
-                param2: 0.0,
-                param3: 0.0,
-                param4: 0.0,
-                x,
-                y,
-                z,
-                seq,
-                command,
-                target_system: st.target_system,
-                target_component: st.target_component,
-                frame,
-                current: 0,
-                autocontinue: 1,
-            }),
-        );
-        return;
+    if home && z.abs() < 0.05 {
+        if let Some(alt) = st.sample.home_alt_m {
+            z = alt as f32;
+        }
     }
     send_msg(
         conn,
-        &MavMessage::MISSION_ITEM(MISSION_ITEM_DATA {
+        &MavMessage::MISSION_ITEM_INT(MISSION_ITEM_INT_DATA {
             param1: 0.0,
             param2: 0.0,
             param3: 0.0,
             param4: 0.0,
-            x: x as f32 / 1e7,
-            y: y as f32 / 1e7,
+            x,
+            y,
             z,
             seq,
             command,
@@ -127,8 +114,8 @@ fn upload_mission(
         match conn.recv() {
             Ok((hdr, msg)) => {
                 let request = match &msg {
-                    MavMessage::MISSION_REQUEST_INT(v) => Some((v.seq, true)),
-                    MavMessage::MISSION_REQUEST(v) => Some((v.seq, false)),
+                    MavMessage::MISSION_REQUEST_INT(v) => Some(v.seq),
+                    MavMessage::MISSION_REQUEST(v) => Some(v.seq),
                     _ => None,
                 };
                 let ack = match &msg {
@@ -137,11 +124,11 @@ fn upload_mission(
                 };
                 handle_msg(st, &hdr, msg);
                 emit_sample(on_sample, latest, st, sitl);
-                if let Some((seq, int_item)) = request {
+                if let Some(seq) = request {
                     let Some(item) = items.get(seq as usize) else {
                         return "Mission rejected".into();
                     };
-                    send_mission_item(conn, st, item, seq, int_item);
+                    send_mission_item(conn, st, item, seq);
                 }
                 if let Some(result) = ack {
                     if result == MavMissionResult::MAV_MISSION_ACCEPTED {
@@ -1180,11 +1167,15 @@ fn handle_msg(st: &mut LinkState, header: &MavHeader, msg: MavMessage) {
             }
         }
         MavMessage::HOME_POSITION(HOME_POSITION_DATA {
-            latitude, longitude, ..
+            latitude, longitude, altitude, ..
         }) => {
             if latitude != 0 || longitude != 0 {
                 st.sample.home_lat = Some(latitude as f64 / 1e7);
                 st.sample.home_lon = Some(longitude as f64 / 1e7);
+            }
+            // Wire altitude is millimetres AMSL.
+            if altitude != 0 {
+                st.sample.home_alt_m = Some(altitude as f64 / 1000.0);
             }
         }
         MavMessage::MISSION_CURRENT(MISSION_CURRENT_DATA { seq }) => {

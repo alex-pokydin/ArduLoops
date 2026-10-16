@@ -1,6 +1,6 @@
 [package]
 name = "arduloops"
-version = "2.2.3"
+version = "2.2.4"
 description = "ArduLoops"
 authors = ["IAMPM"]
 edition = "2021"

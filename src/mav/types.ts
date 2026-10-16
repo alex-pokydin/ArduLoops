@@ -121,6 +121,7 @@ export type Sample = {
   sitl_running?: boolean;
   sitl_cpu?: number;
   sitl_rss_mb?: number;
+  sitl_lan?: string;
 };
 
 export const EMPTY: Sample = {

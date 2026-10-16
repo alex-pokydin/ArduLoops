@@ -83,9 +83,21 @@ mod desktop {
 
     pub fn open_system_url(url: &str) -> Result<(), String> {
         let app = APP.get().ok_or_else(|| "open the link in the browser".to_string())?;
-        app.opener()
-            .open_url(url, None::<&str>)
-            .map_err(|err| err.to_string())
+        let (tx, rx) = mpsc::channel();
+        let url = url.to_string();
+        app.run_on_main_thread(move || {
+            let result = match APP.get() {
+                Some(app) => app
+                    .opener()
+                    .open_url(url, None::<&str>)
+                    .map_err(|err| err.to_string()),
+                None => Err("open the link in the browser".into()),
+            };
+            let _ = tx.send(result);
+        })
+        .map_err(|err| err.to_string())?;
+        rx.recv_timeout(std::time::Duration::from_secs(2))
+            .map_err(|_| "open the link in the browser".to_string())?
     }
 
     pub fn run() {

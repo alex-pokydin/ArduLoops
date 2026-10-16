@@ -203,7 +203,14 @@ export const uk: Record<string, string> = {
   "Plus · 100 a day": "Розширена · 100 на день",
   "Manage subscription": "Керувати підпискою",
   "Use my own key": "Свій ключ",
-  "Create a key": "Створити ключ",
+  "Sign out of Cloud to use your own key.": "Вийдіть з Cloud, щоб використати свій ключ.",
+  "Create a {provider} key": "Створити ключ {provider}",
+  "Assistant is on. Provider {provider}.": "Асистента увімкнено. Провайдер {provider}.",
+  "Remove key": "Прибрати ключ",
+  "This key was rejected.": "Цей ключ відхилено.",
+  "This key has no quota left.": "У цього ключа закінчилась квота.",
+  "This model is not available for this key.": "Ця модель недоступна для цього ключа.",
+  "The provider did not answer.": "Провайдер не відповів.",
   "Sign in from Options to start the assistant. Your own key still works.": "Увійдіть в Options, щоб увімкнути асистента. Власний ключ теж працює.",
   "Disabled": "Вимкнено",
   "API key": "Ключ API",
@@ -844,6 +851,8 @@ export const uk: Record<string, string> = {
   "Downloading {file}": "завантаження {file}",
   "Starting {vehicle}…": "запуск {vehicle}…",
   "Running {vehicle} · tcp 5770": "працює {vehicle} · tcp 5770",
+  "udp {host}:14550 — Mission Planner": "udp {host}:14550 — Mission Planner",
+  "tcp {host}:5760 — Mission Planner": "tcp {host}:5760 — Mission Planner",
   "Waiting for HEARTBEAT on 5770": "чекаємо HEARTBEAT на 5770",
   "{cpu}% · {ram} MB": "{cpu}% · {ram} МБ",
   "SITL error: {err}": "помилка SITL: {err}",
@@ -864,6 +873,7 @@ export const uk: Record<string, string> = {
   settle: "інерція",
   speedup: "прискорення",
   "GPS on": "GPS увімк",
+  "GPS off": "GPS вимк",
   "GPS fail": "відмова GPS",
   satellites: "супутники",
   lag: "лаг",
@@ -912,8 +922,8 @@ export const uk: Record<string, string> = {
   Init: "Ініт",
   Export: "Експорт",
   "Init · {vehicle}": "Ініт · {vehicle}",
-  "Stock dump + lab. Writes the stand — arm-ready.":
-    "Сток-дамп + лаба. Запис стенда — готовий до arm.",
+  "Writes parameters that are just alive enough, not an ideal tune.":
+    "Записує мінімально живі параметри, не ідеальний тюнінг.",
   "Write live parameters to a .parm file.":
     "Записати живі параметри у файл .parm.",
   "Write the lab stand dump so a blank board can arm.":
