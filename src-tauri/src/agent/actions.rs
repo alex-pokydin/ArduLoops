@@ -476,11 +476,16 @@ fn note_doc(c: &Connection, chat: &str, doc: &Value) {
     if url.is_empty() {
         return;
     }
-    let body = json!({
+    let mut row = json!({
         "title": doc["title"].as_str().unwrap_or("Document").trim(),
         "format": doc["format"].as_str().unwrap_or("").trim(),
         "url": url,
-    }).to_string();
+    });
+    let id = doc["id"].as_str().unwrap_or("").trim();
+    if !id.is_empty() {
+        row["id"] = json!(id);
+    }
+    let body = row.to_string();
     c.execute(
         "INSERT INTO ai_message (chat_id, role, body, created_at) VALUES (?1, 'doc', ?2, ?3)",
         params![chat, body, now()],

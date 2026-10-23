@@ -1,11 +1,12 @@
 import { lazy, memo, Suspense, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore, type FormEvent, type PointerEvent as ReactPointerEvent } from "react";
+import { createPortal } from "react-dom";
 import type { Components } from "react-markdown";
 import Markdown from "react-markdown";
 import rehypeKatex from "rehype-katex";
 import remarkGfm from "remark-gfm";
 import remarkMath from "remark-math";
 import "katex/dist/katex.min.css";
-import { ai, type AiStatus, type Chat, type LiveTurn, type LocalLog, type Msg, type Proposal } from "../assistant/api";
+import { ai, type AiStatus, type Chat, type CloudDoc, type LiveTurn, type LocalLog, type Msg, type Proposal } from "../assistant/api";
 import { Disconnected } from "./Disconnected";
 import { WizardHost, type WizardAsk } from "./WizardHost";
 import type { WizardClose } from "../wizards/close";
@@ -446,6 +447,13 @@ export function Assistant({
   const [messages, setMessages] = useState<Msg[]>([]);
   const [proposals, setProposals] = useState<Proposal[]>([]);
   const [wizardAsk, setWizardAsk] = useState<WizardAsk | null>(null);
+  const [docOpen, setDocOpen] = useState<SavedDoc | null>(null);
+  useEffect(() => {
+    activeDocOpener = setDocOpen;
+    return () => {
+      if (activeDocOpener === setDocOpen) activeDocOpener = null;
+    };
+  }, []);
   const [draft, setDraft] = useState("");
   const [busy, setBusy] = useState(false);
   const [followUser, setFollowUser] = useState(false);
@@ -895,6 +903,7 @@ export function Assistant({
   return (
     <LiveHost chatId={chatId}>
       {wizardAsk ? <WizardHost ask={wizardAsk} onDone={(id, report) => void onWizardDone(id, report)} /> : null}
+      {docOpen ? <DocWindow doc={docOpen} onClose={() => setDocOpen(null)} /> : null}
       {home && !configured ? <Disconnected /> : null}
       {home && configured ? (
         <main className="agent-home">
@@ -1571,8 +1580,18 @@ const REHYPE = [[rehypeKatex, { strict: "ignore" }]] as const;
 const CHAT_MD: Components = {
   a({ href, children }) {
     const ext = !!href && /^https?:/i.test(href);
+    const doc = href ? cloudDocFromHref(href, typeof children === "string" ? children : "") : null;
     return (
-      <a href={href} {...(ext ? { target: "_blank", rel: "noreferrer" } : {})}>
+      <a
+        href={href}
+        {...(ext ? { target: "_blank", rel: "noreferrer" } : {})}
+        onClick={(ev) => {
+          if (!doc) return;
+          if (ev.metaKey || ev.ctrlKey || ev.shiftKey || ev.altKey || ev.button !== 0) return;
+          ev.preventDefault();
+          openDocPreview(doc);
+        }}
+      >
         {children}
       </a>
     );
@@ -1943,13 +1962,47 @@ function chartsUnder(blocks: ThreadBlock[], index: number) {
   return prev?.kind === "tools" ? chartsFromTools(prev.items) : [];
 }
 
-type SavedDoc = { title: string; format: string; url: string };
+type SavedDoc = { id?: string; title: string; format: string; url: string };
+
+let activeDocOpener: ((doc: SavedDoc) => void) | null = null;
+
+function openDocPreview(doc: SavedDoc) {
+  activeDocOpener?.(doc);
+}
+
+function cloudDocFromHref(href: string, label: string): SavedDoc | null {
+  try {
+    const url = new URL(href);
+    const match = /^\/(d|s)\/([A-Za-z0-9_-]+)\/?$/.exec(url.pathname);
+    if (!match) return null;
+    if (
+      !url.hostname.includes("arduloops-api")
+      && url.hostname !== "127.0.0.1"
+      && url.hostname !== "localhost"
+    ) {
+      return null;
+    }
+    return {
+      ...(match[1] === "d" ? { id: match[2] } : {}),
+      title: label.trim() || "Document",
+      format: "",
+      url: href,
+    };
+  } catch {
+    return null;
+  }
+}
 
 function parseDoc(body: string): SavedDoc | null {
   try {
-    const value = JSON.parse(body) as { title?: string; format?: string; url?: string };
-    if (!value?.url) return null;
-    return { title: value.title || "Document", format: value.format || "", url: value.url };
+    const value = JSON.parse(body) as { id?: string; title?: string; format?: string; url?: string };
+    if (!value?.url && !value?.id) return null;
+    return {
+      ...(value.id ? { id: value.id } : {}),
+      title: value.title || "Document",
+      format: value.format || "",
+      url: value.url || "",
+    };
   } catch {
     return null;
   }
@@ -1960,12 +2013,13 @@ function docsFromTools(items: { name: string; output: string }[]): SavedDoc[] {
   for (const item of items) {
     if (item.name !== "save_document") continue;
     try {
-      const value = JSON.parse(item.output) as { ok?: boolean; title?: string; format?: string; url?: string };
-      if (!value || value.ok === false || !value.url) continue;
+      const value = JSON.parse(item.output) as { ok?: boolean; id?: string; title?: string; format?: string; url?: string };
+      if (!value || value.ok === false || (!value.url && !value.id)) continue;
       docs.push({
+        ...(value.id ? { id: value.id } : {}),
         title: value.title || "Document",
         format: value.format || "html",
-        url: value.url,
+        url: value.url || "",
       });
     } catch {
       /* skip */
@@ -1979,17 +2033,233 @@ function docsUnder(blocks: ThreadBlock[], index: number) {
   return prev?.kind === "tools" ? docsFromTools(prev.items) : [];
 }
 
+function uniqueDocs(docs: SavedDoc[]): SavedDoc[] {
+  const seen = new Set<string>();
+  return docs.filter((doc) => {
+    const key = doc.id || doc.url;
+    if (!key || seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+}
+
 function DocStrip({ docs }: { docs: SavedDoc[] }) {
-  if (!docs.length) return null;
+  const t = useT();
+  const list = uniqueDocs(docs);
+  if (!list.length) return null;
   return (
     <div className="ai-docs">
-      {docs.map((doc) => (
-        <a key={doc.url} className="ai-doc-card" href={doc.url} target="_blank" rel="noreferrer">
-          <b>{doc.title}</b>
-          <span>{doc.format}</span>
-        </a>
+      {list.map((doc) => (
+        <div key={doc.id || doc.url} className="ai-doc-card">
+          <button type="button" className="ai-doc-open" onClick={() => openDocPreview(doc)}>
+            <b>{doc.title}</b>
+            <span>{doc.format ? `${doc.format} · ${t("Preview")}` : t("Preview")}</span>
+          </button>
+          {doc.url ? (
+            <a
+              className="ai-doc-ext"
+              href={doc.url}
+              target="_blank"
+              rel="noreferrer"
+              aria-label={t("Open in browser")}
+              title={t("Open in browser")}
+            >
+              <OpenPageIcon />
+            </a>
+          ) : null}
+        </div>
       ))}
     </div>
+  );
+}
+
+function DocWindow({ doc, onClose }: { doc: SavedDoc; onClose: () => void }) {
+  const t = useT();
+  const frame = useRef<HTMLDivElement>(null);
+  const drag = useRef<{ x: number; y: number; left: number; top: number } | null>(null);
+  const placed = useRef<{ left: string; top: string; width: string; height: string } | null>(null);
+  const [full, setFull] = useState(false);
+  const [loaded, setLoaded] = useState<CloudDoc | null>(null);
+  const [err, setErr] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [shareUrl, setShareUrl] = useState("");
+
+  useEffect(() => {
+    let stop = false;
+    setLoaded(null);
+    setErr("");
+    setShareUrl("");
+    ai.doc({ id: doc.id, url: doc.url }).then((res) => {
+      if (stop) return;
+      setLoaded(res);
+      if (res.url) setShareUrl(res.url);
+    }).catch((error: unknown) => {
+      if (stop) return;
+      setErr(error instanceof Error ? error.message : t("Document not found."));
+    });
+    return () => { stop = true; };
+  }, [doc.id, doc.url]);
+
+  function placeFull(on: boolean) {
+    const node = frame.current;
+    if (!node) return;
+    drag.current = null;
+    if (on) {
+      placed.current = { left: node.style.left, top: node.style.top, width: node.style.width, height: node.style.height };
+      node.style.left = "0";
+      node.style.top = "0";
+      node.style.width = "100%";
+      node.style.height = "100%";
+      setFull(true);
+      return;
+    }
+    const prev = placed.current;
+    node.style.left = prev?.left ?? "";
+    node.style.top = prev?.top ?? "";
+    node.style.width = prev?.width ?? "";
+    node.style.height = prev?.height ?? "";
+    setFull(false);
+  }
+
+  useEffect(() => {
+    const onKey = (ev: KeyboardEvent) => {
+      if (ev.key !== "Escape") return;
+      if (full) placeFull(false);
+      else onClose();
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [full, onClose]);
+
+  function onDrag(ev: ReactPointerEvent<HTMLElement>) {
+    if (full) return;
+    if ((ev.target as HTMLElement).closest("button, a")) return;
+    const node = frame.current;
+    if (!node) return;
+    const rect = node.getBoundingClientRect();
+    drag.current = { x: ev.clientX, y: ev.clientY, left: rect.left, top: rect.top };
+    ev.currentTarget.setPointerCapture(ev.pointerId);
+  }
+
+  function onMove(ev: ReactPointerEvent<HTMLElement>) {
+    const start = drag.current;
+    const node = frame.current;
+    if (!start || !node) return;
+    node.style.left = `${Math.max(8, start.left + ev.clientX - start.x)}px`;
+    node.style.top = `${Math.max(8, start.top + ev.clientY - start.y)}px`;
+  }
+
+  const ownerDocId = loaded?.id || doc.id || (doc.url.includes("/d/") ? doc.url.split("/d/")[1]?.split(/[/?#]/)[0] : "");
+  const format = loaded?.format || doc.format || "html";
+  const title = loaded?.title || doc.title || t("Document");
+  const views = loaded?.views;
+  const isShared = Boolean(loaded?.shared || shareUrl);
+  const browserUrl = shareUrl || doc.url;
+
+  async function onToggleShare() {
+    if (!ownerDocId) return;
+    setBusy(true);
+    try {
+      if (isShared) {
+        const res = await ai.unshareDoc({ id: ownerDocId, url: doc.url });
+        setShareUrl("");
+        setLoaded((prev) => prev ? { ...prev, shared: res.shared, views: res.views ?? prev.views } : prev);
+      } else {
+        const res = await ai.shareDoc({ id: ownerDocId, url: doc.url });
+        if (res.url) {
+          setShareUrl(res.url);
+          try { await navigator.clipboard.writeText(res.url); } catch { /* clipboard optional */ }
+        }
+        setLoaded((prev) => prev ? { ...prev, shared: res.shared, views: res.views ?? prev.views } : prev);
+      }
+    } catch (error) {
+      setErr(error instanceof Error ? error.message : t("The request failed."));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return createPortal(
+    <div className="ai-chart-back" onClick={onClose} role="presentation">
+      <div
+        className={full ? "ai-chart-window ai-doc-window full" : "ai-chart-window ai-doc-window"}
+        ref={frame}
+        role="dialog"
+        aria-label={title}
+        onClick={(ev) => ev.stopPropagation()}
+      >
+        <header onPointerDown={onDrag} onPointerMove={onMove} onPointerUp={() => { drag.current = null; }}>
+          <b>{title}</b>
+          <span className="ai-doc-meta">
+            {format}
+            {views != null ? ` · ${t("{n} views", { n: views })}` : ""}
+          </span>
+          {ownerDocId ? (
+            <button
+              type="button"
+              className={isShared ? "ai-doc-action" : "ai-doc-action cyan"}
+              disabled={busy || !loaded}
+              onClick={() => void onToggleShare()}
+            >
+              {isShared ? t("Stop sharing") : t("Share")}
+            </button>
+          ) : null}
+          {browserUrl ? (
+            <a
+              className="ai-doc-link"
+              href={browserUrl}
+              target="_blank"
+              rel="noreferrer"
+              aria-label={t("Open in browser")}
+              title={t("Open in browser")}
+            >
+              <OpenPageIcon />
+            </a>
+          ) : null}
+          <button
+            type="button"
+            aria-pressed={full}
+            aria-label={full ? t("Exit full screen") : t("Full screen")}
+            title={full ? t("Exit full screen") : t("Full screen")}
+            onClick={() => placeFull(!full)}
+          >
+            <svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true">
+              {full ? (
+                <path d="M2 6h4V2M14 6h-4V2M2 10h4v4M14 10h-4v4" fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round" />
+              ) : (
+                <path d="M6 2H2v4M10 2h4v4M6 14H2v-4M10 14h4v-4" fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round" />
+              )}
+            </svg>
+          </button>
+          <button type="button" aria-label={t("Close")} title={t("Close")} onClick={onClose}>
+            <svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true">
+              <path d="M3.2 3.2 12.8 12.8M12.8 3.2 3.2 12.8" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" />
+            </svg>
+          </button>
+        </header>
+        {shareUrl ? (
+          <div className="ai-doc-share-bar">
+            <a href={shareUrl} target="_blank" rel="noreferrer">{shareUrl}</a>
+          </div>
+        ) : null}
+        <div className="ai-doc-body">
+          {err ? (
+            <p className="ai-live-empty">{t(err)}</p>
+          ) : !loaded ? (
+            <p className="ai-live-empty">{t("Loading…")}</p>
+          ) : format === "html" || format === "svg" ? (
+            <iframe sandbox="allow-scripts allow-forms" srcDoc={loaded.body} title={title} />
+          ) : format === "md" ? (
+            <div className="ai-doc-md">
+              <AssistantMarkdown text={loaded.body} />
+            </div>
+          ) : (
+            <pre>{loaded.body}</pre>
+          )}
+        </div>
+      </div>
+    </div>,
+    document.body,
   );
 }
 

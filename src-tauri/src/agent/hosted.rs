@@ -317,6 +317,58 @@ pub fn portal_url() -> Result<String, String> {
     value["url"].as_str().map(str::to_string).ok_or_else(|| "The subscription page did not return a link.".into())
 }
 
+fn doc_slug(raw: &str, prefix: &str) -> Option<String> {
+    let path = raw.split(['?', '#']).next().unwrap_or(raw).trim_end_matches('/');
+    let idx = path.find(prefix)?;
+    let slug = &path[idx + prefix.len()..];
+    if slug.is_empty() || slug.contains('/') {
+        return None;
+    }
+    Some(slug.to_string())
+}
+
+pub fn fetch_doc(body: &Value) -> Result<Value, String> {
+    let id = body["id"].as_str().unwrap_or("").trim().to_string();
+    let url = body["url"].as_str().unwrap_or("").trim().to_string();
+    if !id.is_empty() {
+        return api_post("/v1/docs/get", &json!({ "id": id }));
+    }
+    if let Some(doc_id) = doc_slug(&url, "/d/") {
+        return api_post("/v1/docs/get", &json!({ "id": doc_id }));
+    }
+    if let Some(token) = doc_slug(&url, "/s/") {
+        let endpoint = format!("{}/v1/docs/get", api_base());
+        return post_json(&endpoint, None, &json!({ "token": token }));
+    }
+    Err("Document not found.".into())
+}
+
+pub fn share_doc(body: &Value) -> Result<Value, String> {
+    let id = body["id"].as_str().unwrap_or("").trim().to_string();
+    let url = body["url"].as_str().unwrap_or("").trim().to_string();
+    let doc_id = if !id.is_empty() {
+        id
+    } else if let Some(parsed) = doc_slug(&url, "/d/") {
+        parsed
+    } else {
+        return Err("Document not found.".into());
+    };
+    api_post("/v1/docs/share", &json!({ "id": doc_id }))
+}
+
+pub fn unshare_doc(body: &Value) -> Result<Value, String> {
+    let id = body["id"].as_str().unwrap_or("").trim().to_string();
+    let url = body["url"].as_str().unwrap_or("").trim().to_string();
+    let doc_id = if !id.is_empty() {
+        id
+    } else if let Some(parsed) = doc_slug(&url, "/d/") {
+        parsed
+    } else {
+        return Err("Document not found.".into());
+    };
+    api_post("/v1/docs/unshare", &json!({ "id": doc_id }))
+}
+
 fn wire_message(message: &genai::chat::ChatMessage) -> Value {
     let role = match message.role {
         genai::chat::ChatRole::System => "system",

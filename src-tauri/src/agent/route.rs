@@ -80,6 +80,9 @@ pub fn route(
             let url = portal_url().map_err(|e| (502, e))?;
             Ok(json!({"url": url}))
         }
+        ("POST", "/ai/doc") => fetch_doc(body).map_err(|e| (502, e)),
+        ("POST", "/ai/doc/share") => share_doc(body).map_err(|e| (502, e)),
+        ("POST", "/ai/doc/unshare") => unshare_doc(body).map_err(|e| (502, e)),
         ("GET", "/ai/chats") => Ok(list_chats(&c)),
         ("POST", "/ai/chats") => Ok(create_chat(&c, body)),
         ("POST", "/ai/chats/rename") => rename_chat(&c, body),

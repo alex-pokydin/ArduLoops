@@ -1939,4 +1939,14 @@ export const uk: Record<string, string> = {
     "L1 дивиться на трек на землі й просить у контуру roll крен.",
   "Damper on the rudder. DAMP on gyro z; RLL from measured bank. YAW_RATE is ACRO-only.":
     "Демпфер на рулі напряму. DAMP на gyro z; RLL з виміряного крену. YAW_RATE лише ACRO.",
+  "Preview": "Перегляд",
+  "Open in browser": "Відкрити в браузері",
+  "Document": "Документ",
+  "Document not found.": "Документ не знайдено.",
+  "This document was not found.": "Документ не знайдено.",
+  "Share": "Поділитися",
+  "Stop sharing": "Закрити доступ",
+  "{n} views": "{n} переглядів",
+  "Loading…": "Завантаження…",
+  "The request failed.": "Запит не вдався.",
 };

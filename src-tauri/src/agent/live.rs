@@ -24,7 +24,7 @@ struct LiveTurn {
     step: String,
     reply: String,
     note: String,
-    docs: Vec<(String, String, String)>,
+    docs: Vec<Value>,
 }
 
 static LIVE: Mutex<Option<LiveTurn>> = Mutex::new(None);
@@ -235,23 +235,28 @@ fn live_document(doc: &Value) {
     if url.is_empty() {
         return;
     }
+    let id = doc["id"].as_str().unwrap_or("").trim().to_string();
     let title = doc["title"].as_str().unwrap_or("Document").trim().to_string();
     let format = doc["format"].as_str().unwrap_or("").trim().to_string();
+    let mut entry = json!({ "title": title, "format": format, "url": url });
+    if !id.is_empty() {
+        entry["id"] = json!(id);
+    }
     let mut chat = String::new();
     let mut fresh = false;
     live_mut(|live| {
         chat = live.chat.clone();
-        if live.docs.iter().any(|item| item.2 == url) {
+        if live.docs.iter().any(|item| item["url"].as_str() == Some(url.as_str())) {
             return;
         }
-        live.docs.push((title.clone(), format.clone(), url.clone()));
+        live.docs.push(entry.clone());
         fresh = true;
     });
     if !fresh || chat.is_empty() {
         return;
     }
     if let Ok(c) = conn() {
-        note_doc(&c, &chat, &json!({ "title": title, "format": format, "url": url }));
+        note_doc(&c, &chat, &entry);
     }
 }
 
@@ -262,7 +267,6 @@ fn live_status(chat: &str) -> Value {
     };
     if live.chat != chat {
         return json!({ "active": false });
-    }
-    let docs: Vec<Value> = live.docs.iter().map(|(title, format, url)| json!({ "title": title, "format": format, "url": url })).collect();
-    json!({ "active": true, "tool": live.tool, "input": live.input, "thought": thought_text(live), "reply": live.reply, "note": live.note, "docs": docs, "holds": HOLD_SEQ.load(Ordering::Relaxed) })
+    };
+    json!({ "active": true, "tool": live.tool, "input": live.input, "thought": thought_text(live), "reply": live.reply, "note": live.note, "docs": live.docs, "holds": HOLD_SEQ.load(Ordering::Relaxed) })
 }

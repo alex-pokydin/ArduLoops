@@ -21,7 +21,9 @@ export type AiStatus = {
 
 export type Chat = { id: string; title: string; updated_at: number; vehicle_key?: string };
 export type Msg = { role: string; body: string; at: number };
-export type LiveTurn = { active: boolean; tool?: string; input?: string; thought?: string; reply?: string; note?: string; holds?: number; docs?: { title: string; format: string; url: string }[] };
+export type SavedDocItem = { id?: string; title: string; format: string; url: string };
+export type CloudDoc = { id?: string; title: string; format: string; body: string; shared?: boolean; views?: number; url?: string; updatedAt?: number };
+export type LiveTurn = { active: boolean; tool?: string; input?: string; thought?: string; reply?: string; note?: string; holds?: number; docs?: SavedDocItem[] };
 export type Proposal = {
   id: string;
   status: string;
@@ -102,6 +104,9 @@ export const ai = {
   logout: () => json<AiStatus>("/ai/logout", { method: "POST", body: "{}" }),
   checkout: (plan: "start" | "plus") => json<{ url: string }>("/ai/checkout", { method: "POST", body: JSON.stringify({ plan }) }),
   portal: () => json<{ url: string }>("/ai/portal", { method: "POST", body: "{}" }),
+  doc: (doc: { id?: string; url?: string }) => json<CloudDoc>("/ai/doc", { method: "POST", body: JSON.stringify(doc) }),
+  shareDoc: (doc: { id?: string; url?: string }) => json<{ id: string; shared: boolean; views?: number; url?: string }>("/ai/doc/share", { method: "POST", body: JSON.stringify(doc) }),
+  unshareDoc: (doc: { id?: string; url?: string }) => json<{ id: string; shared: boolean; views?: number }>("/ai/doc/unshare", { method: "POST", body: JSON.stringify(doc) }),
   bench: (minutes: number) =>
     json("/ai/bench", {
       method: "POST",
