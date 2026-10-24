@@ -1,0 +1,108 @@
+---
+description: Visual identity, real UI screenshot capture, multi-reference vehicle generation (gemini-omni-1.1-flash), and voiceover parameters (gemini-3.8-flash-tts) for ArduLoops demo videos.
+globs: 
+alwaysApply: false
+---
+
+# Video design system
+
+Use this rule when creating or updating product demo videos, feature overviews, or visual walkthroughs for ArduLoops.
+
+## 1. Real interface screenshots only
+
+- Capture all UI scenes from the live ArduLoops application (`http://127.0.0.1:5173/` with the Rust MAVLink bridge on `http://127.0.0.1:8767`).
+- Never fabricate stand-in HTML/CSS mockups of the ArduLoops interface.
+- Set `localStorage.setItem("arduloops.lang", "<lang>")` (`"uk"` or `"en"`) before capturing.
+- Use the built-in SITL simulator (`SimRail` on `tcpout:127.0.0.1:5770`), real workspace tabs (`loops`, `firmware` / `controller`, `mission`, `scripts` / `lua`, `audit`), and the real `Assistant` widget (`ProposalCard`, `ChartStrip` / `ChartWindow`, `WizardHost`, `LuaSource`, `DocWindow`) populated through the bridge SQLite database (`catalog.sqlite3`).
+
+## 2. Color tokens (from `src/styles.css`)
+
+- `--bg: #101214` — primary dark canvas and engineering workbench background.
+- `--panel: #1a1e24` — cards, lower-third HUD bars (`rgba(16, 18, 20, 0.90)`), and panels.
+- `--ink: #e8eef4` — primary typography.
+- `--dim: #8b98a8` — secondary labels and technical subtitles.
+- `--cyan: #4fc3f7` — primary telemetry accent, desired trace, and flight controller LED.
+- `--pid: #6b8cff` — control loop response and PID vectors.
+- `--amber: #ffb74d` — calibration, warnings, and secondary trace.
+- `--hot: #ef5350` — incident peaks, faults, and limits.
+- `--ok: #81c784` — active MAVLink link, applied changes, and live SITL status.
+
+## 3. Hero vehicles and multi-reference video (`gemini-omni-1.1-flash`)
+
+- Use `gemini-omni-1.1-flash` (`veo-3.1-*-preview` is deprecated).
+- **Clean unbranded airframes:**
+  - **Primary copter:** 7-inch matte 3K carbon-fiber X-frame quadcopter with brushed aluminum standoffs, top-mounted folding GPS/compass puck, exposed flight controller stack with `#4fc3f7` cyan and `#ffb74d` amber status LEDs, and 2807 brushless motors. Keep the carbon frame, arms, and battery strap **free of printed text, model names, or logos** (no "MARK7" text stamped on the frame or battery).
+  - **Battery on frame:** Any drone shown in flight or ready-to-fly bench shots **MUST have a realistic battery pack** (black heatshrink 6S LiPo/Li-ion battery pack strapped to the top plate with a kevlar battery strap and connected via yellow XT60 power lead). A quadcopter flying in the air without a battery is a common AI generation flaw that looks comical to drone pilots.
+  - **Secondary plane / VTOL:** Clean matte carbon/composite twin-boom fixed-wing or VTOL airframe without text markings.
+- **Multi-reference prompting:**
+  - Generate and pass **multiple reference images** (`--image-reference` -> `[# References <IMAGE_REF_0>@Image1 <IMAGE_REF_1>@Image2 <IMAGE_REF_2>@Image3]`) or `<FIRST_FRAME>` / `<LAST_FRAME>` when calling `gemini-omni-1.1-flash` so every clip preserves the exact airframe geometry, lighting, and real ArduLoops screen interface:
+    1. `ref_drone_3q.png` — 3/4 view of the clean unbranded 7-inch carbon quadcopter on a dark slate workbench (`#101214`) with top-mounted 6S LiPo battery pack.
+    2. `ref_fc_closeup.png` — macro angle of the exposed flight controller stack, glowing cyan/amber LEDs, braided USB-C cable, and XT60 power lead.
+    3. `ref_real_ui.png` — real screenshot of the live ArduLoops `Studio` (`Cascade` + `Scope` + `Assistant`) displayed on the bench monitor.
+
+## 4. Voiceover and background music (`gemini-3.8-flash-tts` + WebAudio synth)
+
+- Model: `gemini-3.8-flash-tts`.
+- Voice: `Leda` (or `Despina`) — cheerful, bright, upbeat, enthusiastic Ukrainian tech product presenter with warm natural smile and energetic cadence (avoids dull/dry delivery).
+- Turn-level direction: `annotations: [{ type: "speech_metadata", style: "cheerful, bright, upbeat, enthusiastic, lively Ukrainian tech product presenter with warm natural smile, energetic cadence and friendly dynamic rhythm" }]` (never inline in transcript text).
+- **No continuous static sine-wave drone:** Never use raw continuous `OscillatorNode` drones (`146 Hz / 220 Hz` constant sine waves), as they sound like a 50/60 Hz mains hum or motor whine.
+- **Background music:** Use a subtle, rhythmic, plucked synthwave/electronic arpeggio with short envelope decays (`attack: 15 ms`, `exponentialRampToValueAtTime` decay), a warm filtered bass pulse, and a soft stereo delay at ~`-22 dB` under the voiceover so speech remains crystal clear.
+- **Outro buffer and fadeout:** Always add 2.5–3.5 seconds of outro buffer at the end of the video after the final spoken sentence. Never cut the audio abruptly; smoothly fade out the background music over 2.0 seconds (`exponentialRampToValueAtTime(0.0001)`) into clean silence.
+
+## 5. UI Interactivity: Screencasts over AI Generative UI
+
+- **Never use generative video (Veo/Omni) to hallucinate interface interactions:** AI video models hallucinate, blur, and melt code, buttons, and telemetry values (`142.4 с`, `VIBE.VibeZ`, KaTeX formulas, Lua syntax).
+- **Use real recorded UI / canvas animation from `http://127.0.0.1:5173/`:**
+  - Animate a high-definition cursor arrow that moves naturally, clicks tabs, expands proposal cards, and inspects data points.
+  - Show live interactive hover states and tooltips (e.g., Plotly inspect tooltip showing exact peak values).
+  - Animate Scope traces and attitude indicator 3D model with real or simulated telemetry input.
+  - Keep all text, numbers, and lines 100% razor sharp at native 1280x720 / 1920x1080 resolution.
+
+## 6. Video resolution, encoding bitrate, and zero color filters
+
+- **Master resolution: Native 1080p (1920x1080):** All screenshots and the video stage canvas must be captured and composed at native 1920x1080 (`deviceScaleFactor: 1`). Never capture at 720p or lower and scale up.
+- **Zero color filters (`ctx.filter = "none"`):**
+  - **Never apply brightness, contrast, or saturation filters** (`brightness(...)`, `contrast(...)`, `saturate(...)`) to UI captures in canvas or CSS.
+  - Never inject artificial CSS overrides into the live application DOM before screenshot capture.
+  - The interface in the video must match the real application 1:1 using authentic design tokens (`--bg: #101214`, `--panel: #1a1e24`, `--cyan: #4fc3f7`, `--amber: #ffb74d`, `--hot: #ef5350`, `--ok: #81c784`, `--pid: #6b8cff`).
+- **High-bitrate master encoding:**
+  - Codec: H.264 High Profile Level 4.0 (`video/mp4;codecs=avc1.640028,mp4a.40.2`) or `video/mp4`.
+  - Video bitrate: `25_000_000` bps (25 Mbps) to ensure dark gradients, scope grids, and fine text are preserved without compression banding.
+  - Audio bitrate: `192_000` bps (192 kbps stereo AAC).
+  - Native 1080p at 25 Mbps enables YouTube's high-bitrate VP9/AV1 transcode profile, avoiding low-res SDR color degradation.
+
+### Color space & video encoding tip (H.264 VUI & Limited/TV Range)
+> [!TIP]
+> When rendering canvas or screencasts to video, browser `MediaRecorder` GPU encoders frequently write full-range YUV (`yuvj420p` or `pc` range) into the MP4 container without setting the required H.264 SPS VUI flag (`video_full_range_flag=1`).
+> Standard video players (Windows Media Player, Movies & TV, QuickTime, browser `<video>` tags) and YouTube default to limited broadcast TV range (16–235), which calculates $Y' = \frac{Y - 16}{219} \times 255$. This aggressively clips all pixel values $\le 16$ to pure black (`0`) and crushes dark UI tokens (`#101214`), turning dark interface themes into illegible black voids.
+>
+> **Recommended implementation**: Pipe lossless canvas frames (PNG or raw RGBA) directly into a deterministic encoder such as `ffmpeg/libx264`:
+> ```bash
+> -vf "scale=out_color_matrix=bt709:out_range=tv:flags=accurate_rnd+full_chroma_int,format=yuv420p" \
+> -c:v libx264 -crf 14 -profile:v high \
+> -colorspace bt709 -color_primaries bt709 -color_trc bt709 -color_range tv
+> ```
+> This ensures sRGB $0\dots 255$ is cleanly mapped to standard broadcast $16\dots 235$ with synchronized container and VUI SPS metadata, guaranteeing 100% native color fidelity and zero black-crush across all players. (Note: different models/pipelines may assemble videos differently, but keeping color range metadata synchronized is key).
+>
+> ### High-speed video rendering optimization (Real-time and faster)
+> - **Avoid CPU PNG encoding in browser loops**: Calling `canvas.toBlob('image/png')` or `canvas.toDataURL()` in headless Chrome/Playwright for every frame causes heavy CPU zlib compression bottlenecks (~50ms/frame), limiting throughput to ~5 FPS (~8.5 minutes for a 90s video).
+> - **In-memory pre-caching and direct raw pipe**: Pre-render static stage frames (backdrop, drop shadows, window borders, HUD text) and pre-decode short B-roll cutaway frames into RAM. During the render loop, simply blit the UI screenshot array and write uncompressed raw BGR (`bgr24`) directly into `ffmpeg.stdin` with `-preset veryfast -crf 16`. This reaches **75–85 FPS (2.5x–2.8x faster than real-time)**, completing an 88-second 1080p master in ~35 seconds with zero color shift or compression degradation.
+- **Presentation style: Floating Studio Window (Apple / Linear Keynote standard):**
+  - Present the application UI inside a floating desktop window (`1680x918`, centered horizontally at `x = 120, y = 44`) over an illuminated engineering workbench backdrop (`ref_drone_3q.png` with 10px blur, `brightness(1.36) contrast(1.06)`, and NO heavy dark vignette, ensuring the drone, battery, and tools are clearly visible).
+  - Window frame: 12px rounded corners, 36px dark brushed metal titlebar (`#161a22`) with colored control dots (red, yellow, green) and live autopilot status pip (`TCP 5770 · 51 Hz · STABILIZE`), subtle cyan metallic rim (`1.5px solid rgba(79, 195, 247, 0.45)`), and deep realistic drop shadow (`52px blur`, `rgba(0, 0, 0, 0.75)`).
+  - This solves perceived flat dark-screen crush by providing environmental studio contrast around the application, while keeping 100% authentic untouched UI pixels inside the window.
+  - Lower-third HUD: Positioned below the window on the studio backdrop (`y = 980..1076`), completely outside the application so 100% of the UI (buttons, inputs, status bar) is visible and unobstructed.
+  - Seamless block transitions: Do not hard-cut back to looped B-roll between consecutive blocks; smoothly crossfade directly between workspace tabs and features inside the studio window.
+- **Content density & filling screen space:**
+  - Ensure editor views (such as CodeMirror in Lua) are populated with full 40–50 line realistic scripts so the middle of the screen is filled with vibrant syntax-highlighted code rather than an empty dark void.
+  - Interactive mouse coordinates must be measured directly from the 1080p DOM (`getBoundingClientRect()`) rather than scaled proportionally from lower resolutions.
+- **Live representative data with SITL:**
+  - Screenshots must show active, representative telemetry rather than static idle zeros.
+  - Run the built-in SITL bridge and stimulate live stick deflections so the Scope chart fills with dynamic responsive waveforms before capturing.
+
+## 7. Official links for video descriptions and documentation
+
+Always include these standard links in video descriptions, pinned comments, release notes, and documentation:
+- 🔗 Офіційний сайт: https://arduloops.web.app/
+- 🐙 GitHub: https://github.com/alex-pokydin/ArduLoops/releases
+- 💬 Спільнота та підтримка: https://t.me/ArduLoops

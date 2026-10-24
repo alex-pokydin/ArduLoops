@@ -2,6 +2,7 @@ import { useEffect, useRef, useState, type FormEvent } from "react";
 import { type LogRow } from "./components/Aside";
 import { Assistant } from "./components/Assistant";
 import { LabDialog, type AppRelease } from "./components/LabDialog";
+import { StudioRecorder } from "./components/StudioRecorder";
 import { SimRail } from "./components/SimRail";
 import { CopterApp } from "./copter/App";
 import { tDetail, useT } from "./i18n/i18n";
@@ -742,6 +743,7 @@ export function App() {
         </VehicleView>
       )}
       <Assistant home={shell === "home"} onOpenOptions={() => setLabOpen(true)} onOpenHome={() => onShell("home")} />
+      {import.meta.env.DEV && <StudioRecorder />}
     </div>
   );
 }

@@ -12,6 +12,12 @@ export function externalPage(href: string): boolean {
 }
 
 export function openExternal(url: string) {
+  // In normal browser mode, open directly via window.open synchronously to avoid popup blockers
+  if (typeof window !== "undefined" && !("__TAURI_INTERNALS__" in window)) {
+    window.open(url, "_blank", "noopener,noreferrer");
+    return;
+  }
+
   void fetch(`${APP_HTTP}/open`, {
     method: "POST",
     headers: { "content-type": "application/json" },

@@ -56,6 +56,7 @@ export function LabDialog({
   const [account, setAccount] = useState<AiAccount | null>(null);
   const [ownKey, setOwnKey] = useState(false);
   const [savedProvider, setSavedProvider] = useState("");
+  const [loginUrl, setLoginUrl] = useState("");
   const [span, setSpan] = useState<PlotSpan>(getPlotSpan);
   const [tlogOn, setTlogOn] = useState(false);
   const [tlogPath, setTlogPath] = useState("");
@@ -133,6 +134,9 @@ export function LabDialog({
       applyAi(s);
       setOwnKey(!!s.own_key);
       setAiKey("");
+    }).catch(() => {});
+    void ai.loginUrl().then((res) => {
+      if (res.url) setLoginUrl(res.url);
     }).catch(() => {});
     const timer = window.setInterval(() => {
       void ai.status().then((s) => {
@@ -266,19 +270,27 @@ export function LabDialog({
                     {t("Sign out")}
                   </button>
                 ) : (
-                  <button
-                    type="button"
+                  <a
                     className="google-signin"
-                    onClick={() => {
+                    href={loginUrl || "#"}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    onClick={(ev) => {
                       setAiState(t("Complete sign-in in the browser."));
-                      void ai.loginUrl().then((res) => {
-                        openExternal(res.url);
-                      }).catch((err: Error) => setAiState(err.message));
+                      if (!loginUrl) {
+                        ev.preventDefault();
+                        void ai.loginUrl().then((res) => {
+                          if (res.url) {
+                            setLoginUrl(res.url);
+                            openExternal(res.url);
+                          }
+                        }).catch((err: Error) => setAiState(err.message));
+                      }
                     }}
                   >
                     <GoogleMark />
                     {t("Sign in with Google")}
-                  </button>
+                  </a>
                 )}
               </div>
               <span>

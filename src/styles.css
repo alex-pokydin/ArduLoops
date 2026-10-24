@@ -2176,6 +2176,7 @@ main.agent-home { display: flex; padding: 0; gap: 0; overflow: hidden; backgroun
   background: #fff; color: #1f1f1f; border: 1px solid #747775; border-radius: 4px;
   font-family: "Segoe UI", Roboto, Arial, sans-serif; font-size: 12px; font-weight: 500;
   letter-spacing: 0; box-shadow: none; filter: none;
+  text-decoration: none; cursor: pointer;
 }
 .ai-title .google-signin svg { flex: none; display: block; width: 14px; height: 14px; }
 .ai-title .google-signin:hover,

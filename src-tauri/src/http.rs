@@ -1270,8 +1270,10 @@ fn open_https(url: &str) -> Result<(), String> {
 fn shell_open(url: &str) -> Result<(), String> {
     #[cfg(windows)]
     {
-        return std::process::Command::new("rundll32.exe")
-            .args(["url.dll,FileProtocolHandler", url])
+        let escaped = url.replace('\'', "''");
+        let script = format!("Start-Process -FilePath '{escaped}'");
+        return std::process::Command::new("powershell.exe")
+            .args(["-NoProfile", "-NonInteractive", "-Command", &script])
             .spawn()
             .map(|_| ())
             .map_err(|err| err.to_string());

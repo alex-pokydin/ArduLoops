@@ -106,13 +106,14 @@ pub fn route(
 }
 
 fn arm_default_hosted(c: &Connection) {
-    let active: i64 = c
-        .query_row("SELECT COUNT(*) FROM ai_provider WHERE active=1", [], |row| row.get(0))
+    let hosted_active: i64 = c
+        .query_row("SELECT COUNT(*) FROM ai_provider WHERE active=1 AND storage='hosted'", [], |row| row.get(0))
         .unwrap_or(0);
-    if active > 0 {
+    if hosted_active > 0 {
         return;
     }
     let model = default_model("gemini");
+    let _ = c.execute("UPDATE ai_provider SET active=0", []).ok();
     let _ = c.execute(
         "INSERT INTO ai_provider (provider, active, model, status, storage, updated_at) VALUES ('gemini', 1, ?1, 'ready', 'hosted', ?2)
          ON CONFLICT(provider) DO UPDATE SET active=1, model=excluded.model, status='ready', storage='hosted', updated_at=excluded.updated_at",
