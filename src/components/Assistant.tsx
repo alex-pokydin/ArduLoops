@@ -2106,16 +2106,17 @@ function DocWindow({ doc, onClose }: { doc: SavedDoc; onClose: () => void }) {
     drag.current = null;
     if (on) {
       placed.current = { left: node.style.left, top: node.style.top, width: node.style.width, height: node.style.height };
-      node.style.left = "0";
-      node.style.top = "0";
-      node.style.width = "100%";
-      node.style.height = "100%";
+      node.style.left = "";
+      node.style.top = "";
+      node.style.width = "";
+      node.style.height = "";
       setFull(true);
       return;
     }
     const prev = placed.current;
+    const topMin = Math.max(8, parseFloat(getComputedStyle(document.documentElement).getPropertyValue("--status-top")) || 0);
     node.style.left = prev?.left ?? "";
-    node.style.top = prev?.top ?? "";
+    node.style.top = prev?.top ? `${Math.max(topMin, parseFloat(prev.top) || topMin)}px` : "";
     node.style.width = prev?.width ?? "";
     node.style.height = prev?.height ?? "";
     setFull(false);
@@ -2145,8 +2146,11 @@ function DocWindow({ doc, onClose }: { doc: SavedDoc; onClose: () => void }) {
     const start = drag.current;
     const node = frame.current;
     if (!start || !node) return;
-    node.style.left = `${Math.max(8, start.left + ev.clientX - start.x)}px`;
-    node.style.top = `${Math.max(8, start.top + ev.clientY - start.y)}px`;
+    const topMin = Math.max(8, parseFloat(getComputedStyle(document.documentElement).getPropertyValue("--status-top")) || 0);
+    const maxLeft = Math.max(8, window.innerWidth - node.offsetWidth - 8);
+    const maxTop = Math.max(topMin, window.innerHeight - node.offsetHeight - 8);
+    node.style.left = `${Math.min(maxLeft, Math.max(8, start.left + ev.clientX - start.x))}px`;
+    node.style.top = `${Math.min(maxTop, Math.max(topMin, start.top + ev.clientY - start.y))}px`;
   }
 
   const ownerDocId = loaded?.id || doc.id || (doc.url.includes("/d/") ? doc.url.split("/d/")[1]?.split(/[/?#]/)[0] : "");
@@ -2837,10 +2841,18 @@ function placeFloat(setup: boolean): { x: number; y: number } {
   return clampFloat(window.innerWidth - w - 18, window.innerHeight - h - 78, w, h);
 }
 
+function statusBarTop(): number {
+  if (typeof window === "undefined" || typeof document === "undefined") return 0;
+  const raw = getComputedStyle(document.documentElement).getPropertyValue("--status-top").trim();
+  const px = parseFloat(raw);
+  return Number.isFinite(px) ? px : 0;
+}
+
 function clampFloat(x: number, y: number, w: number, h: number): { x: number; y: number } {
+  const topMin = Math.max(8, statusBarTop());
   return {
     x: Math.min(Math.max(8, x), Math.max(8, window.innerWidth - w - 8)),
-    y: Math.min(Math.max(8, y), Math.max(8, window.innerHeight - h - 8)),
+    y: Math.min(Math.max(topMin, y), Math.max(topMin, window.innerHeight - h - 8)),
   };
 }
 
