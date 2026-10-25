@@ -2139,7 +2139,11 @@ function DocWindow({ doc, onClose }: { doc: SavedDoc; onClose: () => void }) {
     if (!node) return;
     const rect = node.getBoundingClientRect();
     drag.current = { x: ev.clientX, y: ev.clientY, left: rect.left, top: rect.top };
-    ev.currentTarget.setPointerCapture(ev.pointerId);
+    try {
+      ev.currentTarget.setPointerCapture(ev.pointerId);
+    } catch {
+      /* ignore invalid pointer id */
+    }
   }
 
   function onMove(ev: ReactPointerEvent<HTMLElement>) {
@@ -2148,7 +2152,7 @@ function DocWindow({ doc, onClose }: { doc: SavedDoc; onClose: () => void }) {
     if (!start || !node) return;
     const topMin = Math.max(8, parseFloat(getComputedStyle(document.documentElement).getPropertyValue("--status-top")) || 0);
     const maxLeft = Math.max(8, window.innerWidth - node.offsetWidth - 8);
-    const maxTop = Math.max(topMin, window.innerHeight - node.offsetHeight - 8);
+    const maxTop = Math.max(topMin, window.innerHeight - 44);
     node.style.left = `${Math.min(maxLeft, Math.max(8, start.left + ev.clientX - start.x))}px`;
     node.style.top = `${Math.min(maxTop, Math.max(topMin, start.top + ev.clientY - start.y))}px`;
   }
@@ -2192,7 +2196,13 @@ function DocWindow({ doc, onClose }: { doc: SavedDoc; onClose: () => void }) {
         aria-label={title}
         onClick={(ev) => ev.stopPropagation()}
       >
-        <header onPointerDown={onDrag} onPointerMove={onMove} onPointerUp={() => { drag.current = null; }}>
+        <header
+          onPointerDown={onDrag}
+          onPointerMove={onMove}
+          onPointerUp={() => { drag.current = null; }}
+          onPointerCancel={() => { drag.current = null; }}
+          onLostPointerCapture={() => { drag.current = null; }}
+        >
           <b>{title}</b>
           <span className="ai-doc-meta">
             {format}
@@ -2848,11 +2858,11 @@ function statusBarTop(): number {
   return Number.isFinite(px) ? px : 0;
 }
 
-function clampFloat(x: number, y: number, w: number, h: number): { x: number; y: number } {
+function clampFloat(x: number, y: number, w: number, _h: number): { x: number; y: number } {
   const topMin = Math.max(8, statusBarTop());
   return {
     x: Math.min(Math.max(8, x), Math.max(8, window.innerWidth - w - 8)),
-    y: Math.min(Math.max(topMin, y), Math.max(topMin, window.innerHeight - h - 8)),
+    y: Math.min(Math.max(topMin, y), Math.max(topMin, window.innerHeight - 44)),
   };
 }
 

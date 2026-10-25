@@ -457,7 +457,11 @@ function ChartWindow({ chart, onClose }: { chart: ChartSpec; onClose: () => void
     if (!node) return;
     const rect = node.getBoundingClientRect();
     drag.current = { x: ev.clientX, y: ev.clientY, left: rect.left, top: rect.top };
-    ev.currentTarget.setPointerCapture(ev.pointerId);
+    try {
+      ev.currentTarget.setPointerCapture(ev.pointerId);
+    } catch {
+      /* ignore invalid pointer id */
+    }
   }
   function onMove(ev: ReactPointerEvent<HTMLElement>) {
     const start = drag.current;
@@ -465,7 +469,7 @@ function ChartWindow({ chart, onClose }: { chart: ChartSpec; onClose: () => void
     if (!start || !node) return;
     const topMin = Math.max(8, parseFloat(getComputedStyle(document.documentElement).getPropertyValue("--status-top")) || 0);
     const maxLeft = Math.max(8, window.innerWidth - node.offsetWidth - 8);
-    const maxTop = Math.max(topMin, window.innerHeight - node.offsetHeight - 8);
+    const maxTop = Math.max(topMin, window.innerHeight - 44);
     node.style.left = `${Math.min(maxLeft, Math.max(8, start.left + ev.clientX - start.x))}px`;
     node.style.top = `${Math.min(maxTop, Math.max(topMin, start.top + ev.clientY - start.y))}px`;
   }
@@ -478,7 +482,13 @@ function ChartWindow({ chart, onClose }: { chart: ChartSpec; onClose: () => void
         aria-label={chart.title || chartCaption(chart)}
         onClick={(ev) => ev.stopPropagation()}
       >
-        <header onPointerDown={onDrag} onPointerMove={onMove} onPointerUp={() => { drag.current = null; }}>
+        <header
+          onPointerDown={onDrag}
+          onPointerMove={onMove}
+          onPointerUp={() => { drag.current = null; }}
+          onPointerCancel={() => { drag.current = null; }}
+          onLostPointerCapture={() => { drag.current = null; }}
+        >
           <b>{chart.title || chartCaption(chart)}</b>
           <button
             type="button"

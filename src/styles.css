@@ -2073,12 +2073,17 @@ button.hot { background: #6b2424; }
 .ai-live-plots { flex: 1; min-height: 0; display: flex; flex-direction: column; background: #0c0e11; }
 .ai-live-plots > .plots { flex: 1; min-height: 0; }
 .ai-live-plots .plot-head > b { flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
-.ai-chart-window header { display: flex; align-items: center; gap: 4px; padding: 6px 6px 6px 10px; cursor: move; position: relative; z-index: auto; }
+.ai-chart-window header {
+  display: flex; align-items: center; gap: 4px; padding: 6px 6px 6px 10px;
+  cursor: move; position: relative; z-index: auto;
+  touch-action: none; user-select: none; -webkit-user-select: none;
+}
 .ai-chart-window.full header { cursor: default; }
 .ai-chart-window header b { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 13px; }
 .ai-chart-window header button {
   margin: 0; padding: 0; width: 28px; height: 28px; flex: none;
   display: grid; place-items: center; background: transparent; color: var(--dim); border-radius: 8px;
+  touch-action: auto;
 }
 .ai-chart-window header button:hover { background: #2a3140; color: var(--ink); }
 .ai-chart-plot { flex: 1; min-height: 0; position: relative; }
@@ -2298,8 +2303,7 @@ main.agent-home { display: flex; padding: 0; gap: 0; overflow: hidden; backgroun
   }
   .ai-chart-window {
     left: 8px;
-    right: 8px;
-    width: calc(100vw - 16px);
+    width: min(820px, calc(100vw - 16px));
     max-width: calc(100vw - 16px);
     top: max(var(--status-top, 40px), 12px);
     height: min(540px, calc(100dvh - max(var(--status-top, 40px), 12px) - 16px - env(safe-area-inset-bottom, 0px)));
@@ -2307,8 +2311,7 @@ main.agent-home { display: flex; padding: 0; gap: 0; overflow: hidden; backgroun
   }
   .ai-chart-window.live {
     left: 8px;
-    right: 8px;
-    width: calc(100vw - 16px);
+    width: min(480px, calc(100vw - 16px));
     max-width: calc(100vw - 16px);
     top: max(var(--status-top, 40px), 12px);
     height: calc(100dvh - max(var(--status-top, 40px), 12px) - 16px - env(safe-area-inset-bottom, 0px));
