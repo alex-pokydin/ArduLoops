@@ -1,3 +1,4 @@
+import { Readouts } from "./Readouts";
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { NODES as COPTER_NODES } from "../cascade";
 import { tDetail, useT } from "../i18n/i18n";
@@ -757,7 +758,11 @@ export function Aside({
   return (
     <aside className={alive ? undefined : "idle"}>
       <SignalLog vehicle={vehicle} holdUntil={holdUntil} shownGain={shownGain} />
-      <CraftLive axis={axis} vehicle={vehicle} onCam={vehicle === "plane" ? setPlaneCam : undefined} />
+      <div className="aside-hud">
+        <CraftLive axis={axis} vehicle={vehicle} onCam={vehicle === "plane" ? setPlaneCam : undefined} />
+        <Readouts vehicle={vehicle} />
+      </div>
+      <div className="aside-rest">
       <button
         type="button"
         className={controlsOpen ? "controls-toggle on" : "controls-toggle"}
@@ -811,6 +816,7 @@ export function Aside({
             <span className={row.kind} title={row.msg}>{row.msg}</span>
           </div>
         ))}
+      </div>
       </div>
     </aside>
   );

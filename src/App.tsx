@@ -1,15 +1,16 @@
-import { useEffect, useRef, useState, type FormEvent } from "react";
+import { useEffect, useRef, useState } from "react";
 import { type LogRow } from "./components/Aside";
 import { Assistant } from "./components/Assistant";
+import { LinkChip } from "./components/LinkChip";
 import { LabDialog, type AppRelease } from "./components/LabDialog";
 import { StudioRecorder } from "./components/StudioRecorder";
 import { SimRail } from "./components/SimRail";
 import { CopterApp } from "./copter/App";
-import { tDetail, useT } from "./i18n/i18n";
+import { useT } from "./i18n/i18n";
 import { externalPage, openExternal } from "./lib/open";
 import { addLog, setLogHandler } from "./log";
 import { send } from "./mav/cmd";
-import { APP_HTTP, formatLink, linkLabel, loadLink, loadLinkHistory, parseLink, rememberLink, saveLink, type LinkKind } from "./mav/link";
+import { APP_HTTP, formatLink, loadLink, loadLinkHistory, parseLink, rememberLink, saveLink, type LinkKind } from "./mav/link";
 import {
   downloadParm,
   LAB_KEYS,
@@ -75,45 +76,6 @@ function sameFace(a: ShellFace, b: ShellFace): boolean {
   );
 }
 
-function AttRate() {
-  const text = useStorePicked((s) => {
-    if (!s.ok || !s.att_hz) return "";
-    const live = s.frame === "plane" || s.frame === "copter";
-    const sitl = isSitl(s.params) || !!s.sitl_running;
-    const known = sitl || Object.keys(s.params || {}).length > 0;
-    return `${live || known ? " · " : ""}${s.att_hz} Hz`;
-  });
-  return text ? <>{text}</> : null;
-}
-
-function ParamFill() {
-  const t = useT();
-  const fill = useStorePicked(
-    (s) => {
-      if (!s.ok) return null;
-      const total = s.param_count || 0;
-      const received = Object.keys(s.params || {}).length;
-      if (total <= 0 || received >= total) return null;
-      return { received, total };
-    },
-    (a, b) => a === b || (a != null && b != null && a.received === b.received && a.total === b.total),
-  );
-  if (!fill) return null;
-  const pct = Math.min(100, (100 * fill.received) / fill.total);
-  return (
-    <span
-      className="link-params"
-      role="progressbar"
-      aria-valuemin={0}
-      aria-valuemax={fill.total}
-      aria-valuenow={fill.received}
-      aria-label={t("Parameters {received} of {total}", fill)}
-      title={`${fill.received} / ${fill.total}`}
-    >
-      <span style={{ width: `${pct}%` }} />
-    </span>
-  );
-}
 const SHELLS: Shell[] = ["home", "copter", "plane"];
 
 function frameFromUrl(): Shell | null {
@@ -161,34 +123,8 @@ function serialPortRows(rows: unknown): SerialPort[] {
   });
 }
 
-function portChoice(name: string, label: string): string {
-  const port = name.trim();
-  let title = label.trim();
-  const wrapped = `(${port})`;
-  if (title.toLowerCase().endsWith(wrapped.toLowerCase())) {
-    title = title.slice(0, title.length - wrapped.length).trim().replace(/[\s—-]+$/, "");
-  } else if (title.toLowerCase().startsWith(port.toLowerCase())) {
-    title = title.slice(port.length).replace(/^[\s—-]+/, "");
-  }
-  if (!title || title.toLowerCase() === port.toLowerCase()) return port;
-  return `${port} — ${title}`;
-}
-
 function samePorts(a: SerialPort[], b: SerialPort[]): boolean {
   return a.length === b.length && a.every((port, i) => port.name === b[i]?.name && port.label === b[i]?.label);
-}
-
-function isIdleDetail(detail: string | undefined): boolean {
-  return (
-    detail === "відключено" ||
-    detail === "немає лінку" ||
-    detail === "Disconnected" ||
-    detail === "No link"
-  );
-}
-
-function isWaitDetail(detail: string | undefined): boolean {
-  return /^чекаємо HEARTBEAT \(/i.test(detail || "") || /^Waiting HEARTBEAT \(/i.test(detail || "");
 }
 
 function ShellPicker({
@@ -251,13 +187,10 @@ export function App() {
   const [linkValue, setLinkValue] = useState(() => parseLink(loadLink()).value);
   const [serialPorts, setSerialPorts] = useState<{ name: string; label: string }[]>([]);
   const [linkHist, setLinkHist] = useState(loadLinkHistory);
-  const [linkMenu, setLinkMenu] = useState(false);
-  const [portOpen, setPortOpen] = useState(false);
   const [labOpen, setLabOpen] = useState(false);
   const [sitlOpen, setSitlOpen] = useState(false);
   const [release, setRelease] = useState<AppRelease | null>(null);
   const [pick, setPick] = useState<Shell | null>(() => frameFromUrl());
-  const linkCombo = useRef<HTMLDivElement | null>(null);
   const refreshSerialPorts = useRef<() => void>(() => {});
   const paused = isPaused();
   const lastLive = useRef<Shell | null>(null);
@@ -393,28 +326,6 @@ export function App() {
     setLinkValue(parsed.value);
   }, [face.ok, face.detail]);
 
-  useEffect(() => {
-    if (!linkMenu && !portOpen) return;
-    const onDoc = (ev: MouseEvent) => {
-      if (!linkCombo.current?.contains(ev.target as Node)) {
-        setLinkMenu(false);
-        setPortOpen(false);
-      }
-    };
-    const onKey = (ev: KeyboardEvent) => {
-      if (ev.key === "Escape") {
-        setLinkMenu(false);
-        setPortOpen(false);
-      }
-    };
-    document.addEventListener("mousedown", onDoc);
-    window.addEventListener("keydown", onKey);
-    return () => {
-      document.removeEventListener("mousedown", onDoc);
-      window.removeEventListener("keydown", onKey);
-    };
-  }, [linkMenu, portOpen]);
-
   function togglePause() {
     const next = !isPaused();
     setPaused(next);
@@ -431,9 +342,13 @@ export function App() {
     addLog(t("Link {url}", { url }), "cmd");
   }
 
-  function onLink(ev: FormEvent) {
-    ev.preventDefault();
-    applyLink(linkKind, linkValue);
+  function onLinkKind(kind: LinkKind) {
+    setLinkKind(kind);
+    setLinkValue((cur) => {
+      if (kind === "udp") return /^\d+$/.test(cur) || cur.includes(".") ? cur : "14550";
+      if (kind === "serial") return cur.includes("@") ? cur : "@115200";
+      return cur.includes(":") && !cur.includes("@") ? cur : "127.0.0.1:5760";
+    });
   }
 
   function onDisconnect() {
@@ -462,7 +377,6 @@ export function App() {
   const initDone = face.initDone;
   const initTotal = face.initTotal;
   const initPct = initTotal > 0 ? Math.min(100, Math.round((100 * initDone) / initTotal)) : 0;
-  const linkBad = !linked && !isIdleDetail(face.detail) && !isWaitDetail(face.detail);
   const android = isAndroid();
 
   function onShell(next: Shell) {
@@ -473,20 +387,6 @@ export function App() {
 
   return (
     <div className={["app", android ? "android" : "", !android && sitlOpen ? "sitl-open" : ""].filter(Boolean).join(" ")}>
-      {android ? null : (
-      <div className="sitl-dock">
-        <button
-          type="button"
-          className={sitlOpen ? "sitl-btn on" : "sitl-btn"}
-          aria-pressed={sitlOpen}
-          aria-expanded={sitlOpen}
-          onClick={() => setSitlOpen((on) => !on)}
-          title={t("Simulation")}
-        >
-          {t("SITL")}
-        </button>
-      </div>
-      )}
       {android ? null : (
       <SimRail
         open={sitlOpen}
@@ -499,6 +399,23 @@ export function App() {
       />
       )}
       <header>
+        {android ? null : (
+          <button
+            type="button"
+            className={sitlOpen ? "sitl-btn on" : "sitl-btn"}
+            aria-pressed={sitlOpen}
+            aria-expanded={sitlOpen}
+            onClick={() => setSitlOpen((on) => !on)}
+            title={t("Simulation")}
+          >
+            <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="1.8" aria-hidden="true">
+              <rect x="3" y="4" width="18" height="16" rx="2" />
+              <path d="M9 4v16" />
+            </svg>
+            {t("SITL")}
+            {linked && sitl ? <i className="sitl-live" aria-hidden="true" /> : null}
+          </button>
+        )}
         <div className="hdr-title">
           <h1>
             <a
@@ -529,15 +446,6 @@ export function App() {
               onPick={onShell}
             />
           </h1>
-          <button
-            type="button"
-            className={paused ? "pause-btn on" : "pause-btn"}
-            aria-pressed={paused}
-            onClick={togglePause}
-            title={paused ? t("Resume") : t("Pause")}
-          >
-            {paused ? t("Resume") : t("Pause")}
-          </button>
         </div>
         <p className="sub">
           {shell === "home"
@@ -551,166 +459,47 @@ export function App() {
                 : t("We want an angle. We don't command the angle — we command the rate that takes us there.")}
         </p>
         <div className="hdr-right">
+          <LinkChip
+            linked={linked}
+            detail={face.detail}
+            rebooting={face.rebooting}
+            armed={face.armed}
+            live={live === "home" ? null : live}
+            shell={shell}
+            sitl={sitl}
+            sourceKnown={sourceKnown}
+            kind={linkKind}
+            value={linkValue}
+            serialPorts={serialPorts}
+            history={linkHist}
+            android={android}
+            onKind={onLinkKind}
+            onValue={setLinkValue}
+            onRefreshPorts={() => refreshSerialPorts.current()}
+            onLink={applyLink}
+            onStop={onDisconnect}
+            onShowFrame={(frame) => {
+              if (shell !== frame) onShell(frame);
+            }}
+          />
           {linked ? (
-            <div className="link on">
-              <div className="link-face">
-                <span
-                  className="status"
-                  title={
-                    [
-                      face.detail,
-                      live ? `HEARTBEAT ${live}` : null,
-                      sourceKnown ? (sitl ? t("SITL") : t("board")) : null,
-                    ]
-                      .filter(Boolean)
-                      .join(" · ") || undefined
-                  }
-                >
-                  {live ? (
-                    <button
-                      type="button"
-                      className={shell === live ? "frame-go on" : "frame-go"}
-                      aria-current={shell === live ? "page" : undefined}
-                      title={t("Show {frame}", { frame: t(live) })}
-                      onClick={() => {
-                        if (shell !== live) onShell(live);
-                      }}
-                    >
-                      {t(live)}
-                    </button>
-                  ) : null}
-                  {sourceKnown ? (
-                    <span className="src-bit">
-                      {live ? " · " : ""}
-                      <span className={sitl ? "src sitl" : "src board"}>{sitl ? t("SITL") : t("board")}</span>
-                    </span>
-                  ) : null}
-                  <AttRate />
-                </span>
-                <ParamFill />
-              </div>
-              <button type="button" onClick={onDisconnect} title={t("Disconnect")}>
-                {t("Stop")}
-              </button>
-            </div>
-          ) : (
-            <form className="link" onSubmit={onLink}>
-              <select
-                className="link-kind"
-                aria-label="MAVLink"
-                value={linkKind}
-                onChange={(ev) => {
-                  const kind = ev.target.value as LinkKind;
-                  setLinkKind(kind);
-                  setLinkValue((cur) => {
-                    if (kind === "udp") return /^\d+$/.test(cur) || cur.includes(".") ? cur : "14550";
-                    if (kind === "serial") return cur.includes("@") ? cur : "@115200";
-                    return cur.includes(":") && !cur.includes("@") ? cur : "127.0.0.1:5760";
-                  });
-                }}
-              >
-                <option value="tcp">TCP</option>
-                <option value="udp">UDP</option>
-                {android ? null : <option value="serial">SER</option>}
-              </select>
-              <div className="link-combo" ref={linkCombo}>
-                {linkKind === "serial" ? (
-                  <>
-                    <button
-                      type="button"
-                      className={portOpen ? "port-pick on" : "port-pick"}
-                      aria-label="Serial port"
-                      aria-haspopup="listbox"
-                      aria-expanded={portOpen}
-                      title={portChoice(linkValue.split("@")[0], serialPorts.find((port) => port.name === linkValue.split("@")[0])?.label || linkValue.split("@")[0])}
-                      onPointerDown={() => refreshSerialPorts.current()}
-                      onClick={() => { setLinkMenu(false); setPortOpen((open) => !open); }}
-                    >
-                      {linkValue.split("@")[0] || "—"}
-                    </button>
-                    {portOpen ? (
-                      <ul className="link-menu port-menu" role="listbox" aria-label="Serial port">
-                        {(serialPorts.length ? serialPorts : [{ name: linkValue.split("@")[0], label: linkValue.split("@")[0] }]).filter((port) => port.name).map((port) => {
-                          const choice = portChoice(port.name, port.label);
-                          const on = port.name === linkValue.split("@")[0];
-                          return (
-                            <li key={port.name} role="option" aria-selected={on}>
-                              <button
-                                type="button"
-                                onClick={() => {
-                                  setLinkValue(`${port.name}@${linkValue.split("@")[1] || "115200"}`);
-                                  setPortOpen(false);
-                                }}
-                              >
-                                {choice}
-                              </button>
-                            </li>
-                          );
-                        })}
-                      </ul>
-                    ) : null}
-                    <input
-                      className="baud"
-                      value={linkValue.split("@")[1] || "115200"}
-                      onChange={(ev) => setLinkValue(`${linkValue.split("@")[0]}@${ev.target.value.replace(/\D/g, "")}`)}
-                      inputMode="numeric"
-                      aria-label="Baud"
-                      placeholder="115200"
-                    />
-                  </>
+            <button
+              type="button"
+              className={paused ? "pause-btn on" : "pause-btn"}
+              aria-pressed={paused}
+              aria-label={paused ? t("Resume") : t("Pause")}
+              title={paused ? t("Resume") : t("Pause")}
+              onClick={togglePause}
+            >
+              <svg viewBox="0 0 24 24" width="14" height="14" aria-hidden="true">
+                {paused ? (
+                  <path fill="currentColor" d="M7 5l12 7-12 7z" />
                 ) : (
-                <input
-                  className={[linkKind === "udp" && !linkValue.includes(":") ? "port" : "", linkBad ? "bad" : ""].filter(Boolean).join(" ") || undefined}
-                  value={linkValue}
-                  onChange={(ev) => setLinkValue(ev.target.value)}
-                  spellCheck={false}
-                  autoComplete="off"
-                  aria-invalid={linkBad || undefined}
-                  aria-label={linkKind === "udp" ? "UDP port or host:port" : "TCP host:port"}
-                  placeholder={linkKind === "udp" ? "14550" : "127.0.0.1:5760"}
-                />
+                  <path fill="currentColor" d="M6 5h4v14H6zM14 5h4v14h-4z" />
                 )}
-                {linkHist.length ? (
-                  <button
-                    type="button"
-                    className={linkMenu ? "link-hist on" : "link-hist"}
-                    aria-label={t("Recent links")}
-                    aria-expanded={linkMenu}
-                    aria-haspopup="listbox"
-                    title={t("Recent links")}
-                    onClick={() => setLinkMenu((on) => !on)}
-                  />
-                ) : null}
-                {linkMenu && linkHist.length ? (
-                  <ul className="link-menu" role="listbox">
-                    {linkHist.map((u) => (
-                      <li key={u} role="option" aria-selected={formatLink(linkKind, linkValue) === u}>
-                        <button
-                          type="button"
-                          onClick={() => {
-                            const parsed = parseLink(u);
-                            setLinkMenu(false);
-                            applyLink(parsed.kind, parsed.value);
-                          }}
-                        >
-                          {linkLabel(u)}
-                        </button>
-                      </li>
-                    ))}
-                  </ul>
-                ) : null}
-              </div>
-              <button
-                type="submit"
-                className={isWaitDetail(face.detail) ? "link-go wait" : "link-go"}
-                title={isWaitDetail(face.detail) ? tDetail(face.detail) : undefined}
-                aria-busy={isWaitDetail(face.detail) || undefined}
-              >
-                <i className="link-spin" aria-hidden="true" />
-                {t("Link")}
-              </button>
-            </form>
-          )}
+              </svg>
+            </button>
+          ) : null}
           <button
             type="button"
             className="lab-btn"

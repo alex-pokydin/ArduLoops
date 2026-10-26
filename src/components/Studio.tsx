@@ -22,8 +22,8 @@ type Saved = {
 };
 
 type Drag =
-  | { kind: "col"; startX: number; startW: number; total: number }
-  | { kind: "row"; startY: number; startFr: number; total: number };
+  | { kind: "col"; startX: number; startW: number; total: number; next: number; frame: number }
+  | { kind: "row"; startY: number; startFr: number; total: number; next: number; frame: number };
 
 const MIN_COL1 = 280;
 const MIN_COL2 = 260;
@@ -163,16 +163,39 @@ export function Studio({
     const root = box.current;
     if (!root) return;
     ev.preventDefault();
-    ev.currentTarget.setPointerCapture(ev.pointerId);
-    drag.current = { kind: "col", startX: ev.clientX, startW: col1Raw, total: root.clientWidth };
+    try {
+      ev.currentTarget.setPointerCapture(ev.pointerId);
+    } catch {
+      /* untrusted / synthetic pointer */
+    }
+    drag.current = { kind: "col", startX: ev.clientX, startW: col1Raw, total: root.clientWidth, next: col1Raw, frame: 0 };
   }
 
   function onRowDown(ev: PointerEvent<HTMLDivElement>) {
     const root = box.current;
     if (!root) return;
     ev.preventDefault();
-    ev.currentTarget.setPointerCapture(ev.pointerId);
-    drag.current = { kind: "row", startY: ev.clientY, startFr: rowTopFr, total: root.clientHeight };
+    try {
+      ev.currentTarget.setPointerCapture(ev.pointerId);
+    } catch {
+      /* untrusted / synthetic pointer */
+    }
+    drag.current = { kind: "row", startY: ev.clientY, startFr: rowTopFr, total: root.clientHeight, next: rowTopFr, frame: 0 };
+  }
+
+  const mode = expand === "loop" ? "loop" : expand === "scope" ? "scope" : "rest";
+
+  // While dragging, write the grid tracks once per frame. The layout state, its saved copy and the --studio-*
+  // custom properties change on release: an inherited custom property would restyle every node in the panes.
+  function paint(d: Drag) {
+    const root = box.current;
+    if (!root) return;
+    if (d.kind === "col") {
+      root.style.gridTemplateColumns = `${d.next}px ${GUTTER}px minmax(0, 1fr)`;
+    } else {
+      const bottom = mode === "rest" ? "0" : `${MIN_ROW}px`;
+      root.style.gridTemplateRows = `minmax(0, ${d.next}fr) ${GUTTER}px minmax(${bottom}, ${1 - d.next}fr)`;
+    }
   }
 
   function onSplitMove(ev: PointerEvent<HTMLDivElement>) {
@@ -180,21 +203,39 @@ export function Studio({
     if (!d) return;
     if (d.kind === "col") {
       const max = Math.max(MIN_COL1, d.total - MIN_COL2 - GUTTER);
-      const next = Math.min(max, Math.max(MIN_COL1, d.startW + (ev.clientX - d.startX)));
-      setLayout((s) => (s.expand ? { ...s, col1Expand: next } : { ...s, col1Rest: next }));
-      return;
+      d.next = Math.min(max, Math.max(MIN_COL1, d.startW + (ev.clientX - d.startX)));
+    } else {
+      const usable = Math.max(1, d.total - GUTTER);
+      const minFr = Math.min(0.45, MIN_ROW / usable);
+      d.next = clampSplit(Math.min(1 - minFr, Math.max(minFr, d.startFr + (ev.clientY - d.startY) / usable)));
     }
-    const usable = Math.max(1, d.total - GUTTER);
-    const minFr = Math.min(0.45, MIN_ROW / usable);
-    const next = clampSplit(Math.min(1 - minFr, Math.max(minFr, d.startFr + (ev.clientY - d.startY) / usable)));
-    setLayout((s) => (s.expand ? { ...s, col1RowSplit: next } : { ...s, rightSplit: next }));
+    if (d.frame) return;
+    d.frame = requestAnimationFrame(() => {
+      d.frame = 0;
+      paint(d);
+    });
   }
 
   function onSplitUp() {
+    const d = drag.current;
     drag.current = null;
+    if (!d) return;
+    if (d.frame) cancelAnimationFrame(d.frame);
+    const next = d.next;
+    const root = box.current;
+    if (root) {
+      if (d.kind === "col") root.style.setProperty("--studio-col1", `${next}px`);
+      else {
+        root.style.setProperty("--studio-row-top", `${next}fr`);
+        root.style.setProperty("--studio-row-bot", `${1 - next}fr`);
+      }
+      root.style.gridTemplateColumns = "";
+      root.style.gridTemplateRows = "";
+    }
+    if (d.kind === "col") setLayout((s) => (s.expand ? { ...s, col1Expand: next } : { ...s, col1Rest: next }));
+    else setLayout((s) => (s.expand ? { ...s, col1RowSplit: next } : { ...s, rightSplit: next }));
   }
 
-  const mode = expand === "loop" ? "loop" : expand === "scope" ? "scope" : "rest";
 
   return (
     <div className="studio-wrap">

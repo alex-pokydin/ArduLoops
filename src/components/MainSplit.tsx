@@ -31,24 +31,36 @@ export function MainSplit({ children }: { children: ReactNode }) {
   const t = useT();
   const [width, setWidth] = useState<number | null>(loadWidth);
   const mainRef = useRef<HTMLElement>(null);
-  const drag = useRef<{ originLeft: number; originX: number; last: number } | null>(null);
+  const drag = useRef<{ originLeft: number; originX: number; last: number; frame: number } | null>(null);
   const [left, right] = Children.toArray(children);
 
   useEffect(() => {
+    // While dragging, write the grid tracks straight to <main> once per frame. React state and --aside-w change
+    // only on release: the panes do not re-render, and an inherited custom property would restyle every node.
     function move(ev: globalThis.PointerEvent) {
       const start = drag.current;
       const main = mainRef.current;
       if (!start || !main) return;
-      const n = asideWidth(main, ev.clientX, start.originLeft, start.originX);
-      start.last = n;
-      setWidth(n);
+      start.last = asideWidth(main, ev.clientX, start.originLeft, start.originX);
+      if (start.frame) return;
+      start.frame = requestAnimationFrame(() => {
+        start.frame = 0;
+        main.style.gridTemplateColumns = `minmax(0, 1fr) 12px ${start.last}px`;
+      });
     }
     function up() {
       const start = drag.current;
       if (!start) return;
       drag.current = null;
+      if (start.frame) cancelAnimationFrame(start.frame);
       document.body.classList.remove("split-drag");
-      if (start.last) saveWidth(start.last);
+      const main = mainRef.current;
+      if (main && start.last) {
+        main.style.setProperty("--aside-w", `${start.last}px`);
+        setWidth(start.last);
+        saveWidth(start.last);
+      }
+      if (main) main.style.gridTemplateColumns = "";
     }
     window.addEventListener("pointermove", move);
     window.addEventListener("pointerup", up);
@@ -69,6 +81,7 @@ export function MainSplit({ children }: { children: ReactNode }) {
       originLeft: aside.getBoundingClientRect().left,
       originX: ev.clientX,
       last: 0,
+      frame: 0,
     };
     document.body.classList.add("split-drag");
     try {
