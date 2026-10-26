@@ -421,3 +421,22 @@ mod param_file_tests {
         assert!(parse_param_file("NOT A PARAM LINE").is_err());
     }
 }
+
+#[cfg(test)]
+mod reboot_wait {
+    use super::{reboot_gap, reboot_heartbeat, reboot_started, rebooting, wall_time};
+
+    #[test]
+    fn a_reboot_ends_on_a_heartbeat_after_the_gap() {
+        reboot_started();
+        assert!(rebooting());
+        // Heartbeats before the link goes quiet are the old boot.
+        reboot_heartbeat(wall_time() + 10.0);
+        assert!(rebooting());
+        reboot_gap();
+        reboot_heartbeat(wall_time() - 1.0);
+        assert!(rebooting());
+        reboot_heartbeat(wall_time() + 1.0);
+        assert!(!rebooting());
+    }
+}

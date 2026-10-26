@@ -173,11 +173,12 @@ fn handle(stream: TcpStream, latest: Arc<Mutex<Sample>>, tx: Sender<Cmd>) -> std
     }
 
     if method == "POST" && path == "/motor-test" {
-        let seq = query.get("seq").and_then(|s| s.parse::<u8>().ok()).unwrap_or(0);
-        let percent = query.get("percent").and_then(|s| s.parse::<f32>().ok()).unwrap_or(0.0);
-        let seconds = query.get("seconds").and_then(|s| s.parse::<f32>().ok()).unwrap_or(2.0);
+        let stop = query.get("stop").is_some_and(|s| s == "1");
+        let seq = query.get("seq").and_then(|s| s.parse::<u8>().ok()).unwrap_or(if stop { 1 } else { 0 });
+        let percent = if stop { 0.0 } else { query.get("percent").and_then(|s| s.parse::<f32>().ok()).unwrap_or(0.0) };
+        let seconds = if stop { 0.0 } else { query.get("seconds").and_then(|s| s.parse::<f32>().ok()).unwrap_or(2.0) };
         let mut socket = reader.into_inner();
-        if !(1..=12).contains(&seq) || !(1.0..=25.0).contains(&percent) || !(1.0..=3.0).contains(&seconds) {
+        if !(1..=12).contains(&seq) || (!stop && (!(1.0..=25.0).contains(&percent) || !(1.0..=3.0).contains(&seconds))) {
             return reply(&mut socket, 400, "application/json", br#"{"message":"Motor test rejected. Check the vehicle message."}"#);
         }
         let (result_tx, result_rx) = std::sync::mpsc::channel();
@@ -186,7 +187,7 @@ fn handle(stream: TcpStream, latest: Arc<Mutex<Sample>>, tx: Sender<Cmd>) -> std
         }
         let message = result_rx.recv_timeout(Duration::from_secs(10))
             .unwrap_or_else(|_| "Motor test timed out".into());
-        let ok = message == "Motor test started";
+        let ok = message == "Motor test started" || message == "Motor test stopped";
         return reply(&mut socket, if ok { 200 } else { 409 }, "application/json",
             &serde_json::to_vec(&serde_json::json!({"ok":ok,"message":message}))?);
     }

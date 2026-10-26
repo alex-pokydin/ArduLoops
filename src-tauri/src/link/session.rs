@@ -119,12 +119,15 @@ fn open_link(
 pub type OnSample = Arc<dyn Fn(&Sample) + Send + Sync>;
 
 fn emit_sample(on_sample: &OnSample, latest: &Mutex<Sample>, st: &LinkState, sitl: &SitlCtl) {
+    let rebooting = rebooting();
     let mut s = if let Ok(mut g) = latest.lock() {
         *g = st.sample.clone();
+        g.rebooting = rebooting;
         sitl.write_into(&mut g);
         g.clone()
     } else {
         let mut s = st.sample.clone();
+        s.rebooting = rebooting;
         sitl.write_into(&mut s);
         s
     };
@@ -462,8 +465,15 @@ pub fn run_loop(
             }
         };
         let Some(conn) = conn else {
+            // After our own reboot the port may be gone for a few seconds (USB
+            // re-enumerates). Keep the address and retry instead of giving up.
+            let back_soon = rebooting();
+            if back_soon {
+                reboot_gap();
+                st.sample.detail = "ребут…".into();
+            }
             emit_sample(&on_sample, &latest, &st, &sitl);
-            if serial_url(&target) {
+            if serial_url(&target) && !back_soon {
                 give_up_serial(&url);
                 continue;
             }
@@ -512,6 +522,10 @@ pub fn run_loop(
 
             let now = Instant::now();
             st.sample.t = wall_time();
+            // Radios and UDP keep the socket through a reboot; the heartbeat just stops.
+            if st.sample.heartbeat_at > 0.0 && st.sample.t - st.sample.heartbeat_at > 1.5 {
+                reboot_gap();
+            }
             st.sample.cmd = stick_deg(&st, axis_pwm(&st, false));
             st.sample.pitch_cmd = stick_deg(&st, axis_pwm(&st, true));
             // Same ±ANGLE_MAX throw as roll. Upper yaw plot adds this to heading
@@ -553,7 +567,7 @@ pub fn run_loop(
                     "немає ATTITUDE, reconnect".into()
                 };
                 emit_sample(&on_sample, &latest, &st, &sitl);
-                if serial {
+                if serial && !rebooting() {
                     give_up_serial(&url);
                 }
                 break;
@@ -579,6 +593,7 @@ pub fn run_loop(
                 Ok((hdr, msg)) => {
                     let is_att = matches!(msg, MavMessage::ATTITUDE(_));
                     handle_msg(&mut st, &hdr, msg);
+                    reboot_heartbeat(st.sample.heartbeat_at);
                     if !requested_initial && st.sample.heartbeat_at > 0.0 {
                         request_attitude_stream(&*conn, &st);
                         requested_initial = true;
@@ -602,8 +617,9 @@ pub fn run_loop(
                     if err.kind() == std::io::ErrorKind::TimedOut
                         || err.kind() == std::io::ErrorKind::WouldBlock => {}
                 Err(_) => {
+                    reboot_gap();
                     st.sample.ok = false;
-                    st.sample.detail = "лінк обірвався".into();
+                    st.sample.detail = if rebooting() { "ребут…".into() } else { "лінк обірвався".into() };
                     emit_sample(&on_sample, &latest, &st, &sitl);
                     break;
                 }

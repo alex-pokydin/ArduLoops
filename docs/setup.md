@@ -5,7 +5,7 @@
 ## Copter
 
 1. **Frame.** Pick the picture that matches the frame and save it. The frame class is applied while the vehicle is disarmed.
-2. **Motor numbering.** Propellers off. The setup spins one output at a time. You tap the arm that moved.
+2. **Motor numbering.** Propellers off. Spin an output and tap the arm that moved. That output becomes that motor, and the outputs are saved together. Then spin each motor and compare it with the arrow. A DShot ESC is reversed in software; a PWM ESC needs two motor wires swapped. Idle throttle and the ESC settings are behind the settings button. The drawing follows the frame on the vehicle: any ArduPilot matrix frame, or Tri.
 3. **Radio.** Watch every channel, save the stick ends, and reverse a stick that moves the wrong way. The receiver port is left as it is.
 4. **Level and sensors.** Propellers off. Pick a sensor, match the picture, and start.
 5. **Compass.** The offsets on screen are the last calibration. Start runs a new one: turn the vehicle until every compass fills.

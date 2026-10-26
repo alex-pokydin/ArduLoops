@@ -172,15 +172,46 @@ fn wizard_frame_ok(name: &str, frame: &str) -> Result<&'static WizardSpec, Strin
 fn motor_wizard_frame(sample: &Sample) -> Result<(), &'static str> {
     let cls = sample.params.get("FRAME_CLASS").copied();
     let kind = sample.params.get("FRAME_TYPE").copied();
-    let (Some(cls), Some(kind)) = (cls, kind) else {
+    let (Some(cls), Some(_)) = (cls, kind) else {
         return Err("Frame parameters have not arrived.");
     };
-    let pair = (cls.round() as i64, kind.round() as i64);
-    if matches!(pair, (1, 1) | (1, 0) | (1, 18) | (2, 1) | (3, 1) | (5, 1)) {
+    // Matrix frames (the window draws them from AP_MotorsMatrix) and Tri.
+    if matches!(cls.round() as i64, 1 | 2 | 3 | 4 | 5 | 7 | 12 | 14) {
         Ok(())
     } else {
         Err("This frame has no motor setup wizard.")
     }
+}
+
+/// `steps` and `motors` for the motor window. Both optional.
+fn motor_scope(args: &Value) -> Result<(Vec<String>, Vec<u8>), String> {
+    let mut steps = Vec::new();
+    if let Some(list) = args.get("steps").filter(|v| !v.is_null()) {
+        let Some(list) = list.as_array() else {
+            return Err("steps must be a list of order, direction, idle.".into());
+        };
+        for item in list {
+            match item.as_str() {
+                Some(step @ ("order" | "direction" | "idle")) if !steps.iter().any(|s| s == step) => steps.push(step.to_string()),
+                Some("order" | "direction" | "idle") => {}
+                _ => return Err("steps must be a list of order, direction, idle.".into()),
+            }
+        }
+    }
+    let mut motors = Vec::new();
+    if let Some(list) = args.get("motors").filter(|v| !v.is_null()) {
+        let Some(list) = list.as_array() else {
+            return Err("motors must be a list of motor numbers 1 to 12.".into());
+        };
+        for item in list {
+            match item.as_u64() {
+                Some(n @ 1..=12) if !motors.contains(&(n as u8)) => motors.push(n as u8),
+                Some(1..=12) => {}
+                _ => return Err("motors must be a list of motor numbers 1 to 12.".into()),
+            }
+        }
+    }
+    Ok((steps, motors))
 }
 
 fn wizard_line(args: &Value, key: &str, max: usize) -> Result<String, String> {
@@ -208,21 +239,23 @@ fn wizard_widget(args: &Value, sample: &Sample, c: &Connection, chat: &str) -> V
         Ok(description) => description,
         Err(error) => return json!({ "status": "failed", "error": error }),
     };
+    let mut payload = json!({ "wizard": wizard, "title": title, "vehicle": wizard_vehicle(spec) });
     if wizard == "motors" {
         if let Err(error) = motor_wizard_frame(sample) {
             return json!({ "status": "failed", "error": error, "wizard": "motors" });
         }
+        let (steps, motors) = match motor_scope(args) {
+            Ok(scope) => scope,
+            Err(error) => return json!({ "status": "failed", "error": error, "wizard": "motors" }),
+        };
+        if !steps.is_empty() {
+            payload["steps"] = json!(steps);
+        }
+        if !motors.is_empty() {
+            payload["motors"] = json!(motors);
+        }
     }
-    hold_change(
-        c,
-        chat,
-        "wizard",
-        wizard,
-        None,
-        0.0,
-        &description,
-        &json!({ "wizard": wizard, "title": title, "vehicle": wizard_vehicle(spec) }).to_string(),
-    )
+    hold_change(c, chat, "wizard", wizard, None, 0.0, &description, &payload.to_string())
 }
 
 fn script_change_tool(name: &str, args: &Value, _c: &Connection, chat: &str) -> Value {

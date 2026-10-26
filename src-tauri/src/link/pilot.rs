@@ -178,6 +178,54 @@ fn reboot_fc(conn: &dyn MavConnection<MavMessage>, st: &LinkState) {
         1.0,
         0.0,
     );
+    reboot_started();
+}
+
+// A reboot we asked for. The link drops or goes quiet, then the board comes
+// back on the same address. While this runs, a dropped serial port is retried
+// instead of given up, and the sample says `rebooting`.
+// 0 = idle, 1 = sent, 2 = link gone or quiet.
+static REBOOT_PHASE: std::sync::atomic::AtomicU8 = std::sync::atomic::AtomicU8::new(0);
+static REBOOT_DEADLINE_MS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+static REBOOT_GAP_MS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+const REBOOT_WAIT_MS: u64 = 60_000;
+
+fn wall_ms() -> u64 {
+    (wall_time() * 1000.0) as u64
+}
+
+fn reboot_started() {
+    use std::sync::atomic::Ordering;
+    REBOOT_DEADLINE_MS.store(wall_ms() + REBOOT_WAIT_MS, Ordering::Relaxed);
+    REBOOT_PHASE.store(1, Ordering::Relaxed);
+}
+
+fn rebooting() -> bool {
+    use std::sync::atomic::Ordering;
+    if REBOOT_PHASE.load(Ordering::Relaxed) == 0 {
+        return false;
+    }
+    if wall_ms() > REBOOT_DEADLINE_MS.load(Ordering::Relaxed) {
+        REBOOT_PHASE.store(0, Ordering::Relaxed);
+        return false;
+    }
+    true
+}
+
+/// The link dropped or the heartbeat stopped after the reboot command.
+fn reboot_gap() {
+    use std::sync::atomic::Ordering;
+    if REBOOT_PHASE.compare_exchange(1, 2, Ordering::Relaxed, Ordering::Relaxed).is_ok() {
+        REBOOT_GAP_MS.store(wall_ms(), Ordering::Relaxed);
+    }
+}
+
+/// A heartbeat newer than the gap means the board is back.
+fn reboot_heartbeat(heartbeat_at: f64) {
+    use std::sync::atomic::Ordering;
+    if REBOOT_PHASE.load(Ordering::Relaxed) == 2 && (heartbeat_at * 1000.0) as u64 > REBOOT_GAP_MS.load(Ordering::Relaxed) + 300 {
+        REBOOT_PHASE.store(0, Ordering::Relaxed);
+    }
 }
 
 fn reboot_to_bootloader(conn: &dyn MavConnection<MavMessage>, st: &LinkState) {

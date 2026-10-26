@@ -85,6 +85,8 @@ export type Sample = {
   param_count?: number;
   /** Unix seconds of the last HEARTBEAT. Optional on older samples. */
   heartbeat_at?: number;
+  /** A reboot this app sent is still waiting for the board to come back. */
+  rebooting?: boolean;
   /** RC_CHANNELS raw PWM, channel 1 first, up to 18. Empty until a frame arrives. */
   rc?: number[];
   /** STATUSTEXT, newest first. Optional so older bridge samples still parse. */

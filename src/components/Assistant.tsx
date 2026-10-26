@@ -10,7 +10,7 @@ import { ai, type AiStatus, type Chat, type CloudDoc, type LiveTurn, type LocalL
 import { DEFAULT_MODELS, formatTokens, formatUsd, loadCachedModels, syncModelsDev } from "../assistant/models";
 import { IMAGES_PER_MESSAGE, imageFiles, shrinkImage } from "../assistant/images";
 import { Disconnected } from "./Disconnected";
-import { WizardHost, type WizardAsk } from "./WizardHost";
+import { WizardHost, wizardScope, type WizardAsk } from "./WizardHost";
 import type { WizardClose } from "../wizards/close";
 import { ChartStrip, chartsFromTools } from "./FindingCharts";
 import { LiveHost, LiveView, liveSpecFromTools, type LiveSpec } from "./LivePlots";
@@ -367,6 +367,22 @@ function ProposalIcon({ kind }: { kind: string }) {
   return <svg {...common}><path d="M3 4.4h10M3 8h10M3 11.6h10" fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" /><circle cx="6" cy="4.4" r="1.2" fill="currentColor" /><circle cx="10.2" cy="8" r="1.2" fill="currentColor" /><circle cx="7.2" cy="11.6" r="1.2" fill="currentColor" /></svg>;
 }
 
+/** Steps a scoped motors card will open: Safety → Direction · M3 → Done. */
+function MotorFlow({ t, p }: { t: (k: string, vars?: Record<string, string | number>) => string; p?: Proposal }) {
+  if (!p || p.param !== "motors") return null;
+  const scope = wizardScope(p.payload);
+  if (!scope) return null;
+  const on = scope.motors?.length ? ` · ${scope.motors.map((n) => `M${n}`).join(", ")}` : "";
+  const name = { order: t("Order"), direction: t("Direction"), idle: t("Idle") };
+  const steps = scope.steps?.length ? scope.steps : (["order", "direction"] as const);
+  const chips = [t("Safety check"), ...steps.map((s) => (s === "idle" ? name.idle : `${name[s]}${on}`)), t("Done")];
+  return (
+    <p className="proposal-flow">
+      {chips.map((c, i) => <span key={i} className={i > 0 && i < chips.length - 1 ? "on" : ""}>{c}</span>)}
+    </p>
+  );
+}
+
 function ProposalCard({
   t, items, busy, onDecision, onCancelWait, onOpenWizard, wizardOpenId,
 }: {
@@ -425,7 +441,7 @@ function ProposalCard({
         ) : (
           <p className="proposal-note">{commentText(shown[0])}</p>
         )
-      ) : wizardNote ? <p className="proposal-note">{wizardNote}</p> : more ? (
+      ) : wizardNote ? <><p className="proposal-note">{wizardNote}</p>{kind === "wizard" ? <MotorFlow t={t} p={shown[0]} /> : null}</> : more ? (
         <ul className="proposal-list">
           {shown.map((item) => (
             <li key={item.id}>
@@ -969,7 +985,7 @@ export function Assistant({
             onRetry={(text, pics) => void onSend(undefined, text, pics)}
             onDecision={onDecision}
             onCancelWait={onCancelWait}
-            onOpenWizard={(id, wizard) => setWizardAsk({ id, wizard })}
+            onOpenWizard={(id, wizard) => setWizardAsk({ id, wizard, scope: wizardScope(proposals.find((p) => p.id === id)?.payload) })}
             wizardOpenId={wizardAsk?.id ?? ""}
             onNew={() => { threadGen.current += 1; pendingOut.current = null; setChatId(""); setMessages([]); setProposals([]); }}
             onBench={openBench}
@@ -1091,7 +1107,7 @@ export function Assistant({
               onRetry={(text, pics) => void onSend(undefined, text, pics)}
               onDecision={onDecision}
               onCancelWait={onCancelWait}
-              onOpenWizard={(id, wizard) => setWizardAsk({ id, wizard })}
+              onOpenWizard={(id, wizard) => setWizardAsk({ id, wizard, scope: wizardScope(proposals.find((p) => p.id === id)?.payload) })}
               wizardOpenId={wizardAsk?.id ?? ""}
               onNew={() => { threadGen.current += 1; pendingOut.current = null; setChatId(""); setMessages([]); setProposals([]); }}
               onBench={openBench}

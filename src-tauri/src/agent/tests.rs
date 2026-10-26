@@ -3,7 +3,7 @@
 
 #[cfg(test)]
 mod link_wait_tests {
-        use super::{admit_chart, append_steer, assistant_from_calls, attached_log_board_note, image_file, image_ids, store_image, turn_images, user_message, keep_call_chunk, settled_message, tool_args, attached_log_note, batch_token, begin_live, call_again, call_provider, change_detail, chat_tools, claim_steers_through, compact_prompt, connect_already_up, conversation_prompt, default_model, drain_steers, end_live, failure_body, fit_result, halt_turn, link_fresh, live_buffer, live_fields, live_reply, live_status, live_thinking, live_thought, load_secrets, log_download_wait_s, next_fold_turn, note_stopped_turns_on, note_tool, outcome_item, plan_context, provider_failure, provider_model, provider_turn, reasoning_effort, render_context, scrub_chart, show_live, shown_reply, stamp_live, take_leaked_calls, tool_schema, tool_text, turn_halted, turn_is_live, turn_options, ui_notes, wizard_frame_ok, wizard_line, wizard_name_ok, wizard_vehicle, xml_block, ChartBook, ChartSlot, MsgRow, SKILL_ROOT};
+        use super::{admit_chart, append_steer, assistant_from_calls, attached_log_board_note, image_file, image_ids, store_image, turn_images, user_message, keep_call_chunk, settled_message, tool_args, attached_log_note, batch_token, begin_live, call_again, call_provider, change_detail, chat_tools, claim_steers_through, compact_prompt, connect_already_up, conversation_prompt, default_model, drain_steers, end_live, failure_body, fit_result, halt_turn, link_fresh, live_buffer, live_fields, live_reply, live_status, live_thinking, live_thought, load_secrets, log_download_wait_s, next_fold_turn, note_stopped_turns_on, note_tool, outcome_item, plan_context, provider_failure, provider_model, provider_turn, reasoning_effort, render_context, scrub_chart, show_live, shown_reply, stamp_live, take_leaked_calls, tool_schema, tool_text, turn_halted, turn_is_live, turn_options, ui_notes, motor_scope, wizard_frame_ok, wizard_line, wizard_name_ok, wizard_vehicle, xml_block, ChartBook, ChartSlot, MsgRow, SKILL_ROOT};
     use crate::link::Sample;
     use rusqlite::Connection;
     use serde_json::{json, Value};
@@ -839,6 +839,13 @@ mod link_wait_tests {
         assert_eq!(wizard_line(&json!({"title": "  Калібрування   компаса  "}), "title", 80).unwrap(), "Калібрування компаса");
         assert!(wizard_line(&json!({"title": ""}), "title", 80).is_err());
         assert!(wizard_line(&json!({"title": "x".repeat(81)}), "title", 80).is_err());
+        let (steps, motors) = motor_scope(&json!({"steps": ["direction", "direction"], "motors": [3]})).unwrap();
+        assert_eq!(steps, vec!["direction".to_string()]);
+        assert_eq!(motors, vec![3]);
+        assert!(motor_scope(&json!({})).unwrap().0.is_empty());
+        assert!(motor_scope(&json!({"steps": ["spin"]})).is_err());
+        assert!(motor_scope(&json!({"motors": [0]})).is_err());
+        assert!(motor_scope(&json!({"motors": [13]})).is_err());
         assert!(tools.iter().any(|tool| tool.schema.is_some()));
     }
 

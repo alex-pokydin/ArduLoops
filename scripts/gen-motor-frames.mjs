@@ -1,0 +1,125 @@
+// Builds src/lib/motorFrameData.ts from ArduPilot's motor tables.
+// Usage: node scripts/gen-motor-frames.mjs [path/to/ardupilot]
+import { readFileSync, writeFileSync } from "node:fs";
+import { dirname, join, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
+
+const root = join(dirname(fileURLToPath(import.meta.url)), "..");
+const ardupilot = resolve(process.argv[2] ?? join(root, "..", "ardupilot"));
+const motorsDir = join(ardupilot, "libraries", "AP_Motors");
+const matrix = readFileSync(join(motorsDir, "AP_MotorsMatrix.cpp"), "utf8");
+const classHeader = readFileSync(join(motorsDir, "AP_Motors_Class.h"), "utf8");
+
+const TYPE_NUM = {};
+for (const m of classHeader.matchAll(/(MOTOR_FRAME_TYPE_\w+)\s*=\s*(\d+)/g)) TYPE_NUM[m[1]] = Number(m[2]);
+
+const CLASSES = { quad: 1, hexa: 2, octa: 3, octaquad: 4, y6: 5, dodecahexa: 12, deca: 14 };
+const CLASS_TITLE = { 1: "Quad", 2: "Hexa", 3: "Octa", 4: "OctaQuad", 5: "Y6", 7: "Tri", 12: "Dodeca-Hexa", 14: "Deca" };
+const TYPE_TITLE = {
+  0: "+", 1: "X", 2: "V", 3: "H", 4: "V-tail", 5: "A-tail", 6: "+ reversed", 10: "Y6B", 11: "Y6F",
+  12: "BF X", 13: "DJI X", 14: "CW X", 15: "I", 16: "NYT +", 17: "NYT X", 18: "BF X reversed", 19: "Y4",
+  20: "X co-rotating", 21: "CW X co-rotating",
+};
+
+function body(src, start) {
+  let depth = 0;
+  for (let i = src.indexOf("{", start); i < src.length; i += 1) {
+    if (src[i] === "{") depth += 1;
+    else if (src[i] === "}" && --depth === 0) return src.slice(src.indexOf("{", start) + 1, i);
+  }
+  throw new Error("Unbalanced braces");
+}
+
+function yawOf(token) {
+  if (token.includes("YAW_FACTOR_CCW")) return 1;
+  if (token.includes("YAW_FACTOR_CW")) return -1;
+  const n = Number(token.replace(/f$/, ""));
+  return Number.isFinite(n) ? Math.sign(n) : 0;
+}
+const num = (s) => Number(s.replace(/f$/, ""));
+const rad = (deg) => (deg * Math.PI) / 180;
+
+/** Position: x to the right, y forward. Same convention as the roll and pitch factors. */
+function motorsIn(segment) {
+  const out = [];
+  const def = segment.match(/MotorDef motors\[\]\s*\{([\s\S]*?)\};/);
+  if (def) {
+    for (const m of def[1].matchAll(/\{\s*([-\d.]+f?)\s*,\s*([\w.-]+)\s*,\s*(\d+)\s*\}/g)) {
+      const a = rad(num(m[1]));
+      out.push({ x: Math.sin(a), y: Math.cos(a), yaw: yawOf(m[2]), test: Number(m[3]) });
+    }
+    return out;
+  }
+  const raw = segment.match(/MotorDefRaw motors\[\]\s*\{([\s\S]*?)\};/);
+  if (raw) {
+    for (const m of raw[1].matchAll(/\{\s*([-\d.]+f?)\s*,\s*([-\d.]+f?)\s*,\s*([\w.-]+)\s*,\s*(\d+)\s*\}/g)) {
+      out.push({ x: -num(m[1]), y: num(m[2]), yaw: yawOf(m[3]), test: Number(m[4]) });
+    }
+    return out;
+  }
+  // add_motor(MOT_n, roll_deg, pitch_deg, yaw, order): the V-tail form.
+  for (const m of segment.matchAll(/add_motor\(\s*AP_MOTORS_MOT_(\d+)\s*,\s*([-\d.]+)\s*,\s*([-\d.]+)\s*,\s*([\w.-]+)\s*,\s*(\d+)\s*\)/g)) {
+    out[Number(m[1]) - 1] = { x: -Math.cos(rad(num(m[2]) + 90)), y: Math.cos(rad(num(m[3]))), yaw: yawOf(m[4]), test: Number(m[5]) };
+  }
+  return out;
+}
+
+function normalize(motors) {
+  const r = Math.max(...motors.filter(Boolean).map((m) => Math.hypot(m.x, m.y)), 1e-9);
+  return motors.map((m) => (m ? { x: +(m.x / r).toFixed(4), y: +(m.y / r).toFixed(4), yaw: m.yaw, test: m.test } : null));
+}
+
+const frames = {};
+for (const fn of matrix.matchAll(/bool AP_MotorsMatrix::setup_(\w+)_matrix\(motor_frame_type frame_type\)/g)) {
+  const cls = CLASSES[fn[1]];
+  if (cls == null) continue;
+  const text = body(matrix, fn.index);
+  const labels = [...text.matchAll(/case\s+(MOTOR_FRAME_TYPE_\w+)\s*:|default\s*:/g)];
+  let pending = [];
+  labels.forEach((label, i) => {
+    pending.push(label[1] ? TYPE_NUM[label[1]] : "*");
+    const segment = text.slice(label.index, labels[i + 1]?.index ?? text.length);
+    const motors = motorsIn(segment);
+    if (!motors.length) {
+      if (/break;|return false;/.test(segment)) pending = [];
+      return;
+    }
+    for (const type of pending) {
+      const title = cls === 5 && type !== "*" ? TYPE_TITLE[type] : `${CLASS_TITLE[cls]}${type === "*" ? "" : ` ${TYPE_TITLE[type] ?? type}`}`;
+      frames[`${cls}/${type}`] = { title, motors: normalize(motors) };
+    }
+    pending = [];
+  });
+}
+
+// Tri is not a matrix frame: motors 1, 2 and 4 plus the yaw servo on the Motor 7 output.
+// Test order from AP_MotorsTri::_output_test_seq: 1 = M1, 2 = M4, 3 = servo, 4 = M2.
+frames["7/*"] = {
+  title: "Tri",
+  motors: normalize([
+    { x: Math.sin(rad(60)), y: Math.cos(rad(60)), yaw: 0, test: 1 },
+    { x: Math.sin(rad(-60)), y: Math.cos(rad(-60)), yaw: 0, test: 4 },
+    null,
+    { x: 0, y: -1, yaw: 0, test: 2 },
+  ]),
+  servo: { fn: 39, test: 3 },
+};
+
+const keys = Object.keys(frames).sort((a, b) => {
+  const [ca, ta] = a.split("/"), [cb, tb] = b.split("/");
+  return Number(ca) - Number(cb) || (ta === "*" ? 99 : Number(ta)) - (tb === "*" ? 99 : Number(tb));
+});
+const lines = keys.map((key) => `  ${JSON.stringify(key)}: ${JSON.stringify(frames[key])},`);
+const out = `// Generated by scripts/gen-motor-frames.mjs from ArduPilot AP_MotorsMatrix.cpp. Do not edit.
+// Keys are "FRAME_CLASS/FRAME_TYPE"; "*" covers any type of that class.
+// x is right and y is forward, scaled so the outermost motor sits at 1. yaw: 1 = CCW, -1 = CW, 0 = none.
+
+export type MotorDef = { x: number; y: number; yaw: -1 | 0 | 1; test: number } | null;
+export type FrameDef = { title: string; motors: MotorDef[]; servo?: { fn: number; test: number } };
+
+export const FRAME_DEFS: Record<string, FrameDef> = {
+${lines.join("\n")}
+};
+`;
+writeFileSync(join(root, "src", "lib", "motorFrameData.ts"), out);
+console.log(`${keys.length} frames → src/lib/motorFrameData.ts`);

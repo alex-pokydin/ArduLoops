@@ -5,9 +5,9 @@ import { CompassMot } from "./CompassMot";
 import { CompassCalWizard } from "./CompassPanel";
 import { BatterySetup } from "./BatterySetup";
 import { ModeSetup } from "./ModeSetup";
-import { MotorSetup } from "./MotorSetup";
+import { MotorSetup, type MotorScope, type MotorStep } from "./MotorSetup";
 import { RcSetup } from "./RcSetup";
-import { AirspeedWizard, FailsafeWizard, ServoWizard, motorFrame } from "./SetupWizards";
+import { AirspeedWizard, FailsafeWizard, ServoWizard } from "./SetupWizards";
 import { useT } from "../i18n/i18n";
 import { getLatest, subscribe } from "../mav/store";
 import type { WizardClose } from "../wizards/close";
@@ -35,7 +35,20 @@ function WizardFrame({ title, onClose, children }: { title: string; onClose: () 
   );
 }
 
-export type WizardAsk = { id: string; wizard: string };
+export type WizardAsk = { id: string; wizard: string; scope?: MotorScope };
+
+/** `steps` and `motors` from a motors wizard card. */
+export function wizardScope(payload: string | undefined): MotorScope | undefined {
+  if (!payload) return undefined;
+  try {
+    const raw = JSON.parse(payload) as { steps?: unknown; motors?: unknown };
+    const steps = Array.isArray(raw.steps) ? raw.steps.filter((s): s is MotorStep => s === "order" || s === "direction" || s === "idle") : [];
+    const motors = Array.isArray(raw.motors) ? raw.motors.filter((n): n is number => typeof n === "number" && n >= 1 && n <= 12) : [];
+    return steps.length || motors.length ? { steps, motors } : undefined;
+  } catch {
+    return undefined;
+  }
+}
 
 export function WizardHost({
   ask,
@@ -92,24 +105,6 @@ export function WizardHost({
       </WizardFrame>
     );
   }
-  if (ask.wizard === "motors") {
-    const frame = motorFrame(sample.params);
-    if (frame) return <MotorSetup frame={frame.id} count={frame.count} onClose={finish} />;
-    return createPortal(
-      <div className="modal-back" role="presentation">
-        <div className="modal orient-wizard" role="dialog" aria-modal="true">
-          <div className="modal-head">
-            <h2>{t("Motor setup wizard")}</h2>
-            <button type="button" className="modal-x" onClick={() => finish()} aria-label={t("Close")} title={t("Close")}>×</button>
-          </div>
-          <p className="mag-line">{t("This frame has no motor setup wizard.")}</p>
-          <div className="wiz-apply">
-            <button type="button" className="wiz-go" onClick={() => finish()}>{t("Close")}</button>
-          </div>
-        </div>
-      </div>,
-      document.body,
-    );
-  }
+  if (ask.wizard === "motors") return <MotorSetup onClose={finish} scope={ask.scope} fromAssistant />;
   return null;
 }

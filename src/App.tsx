@@ -36,6 +36,7 @@ type Shell = "home" | "copter" | "plane";
 
 type ShellFace = {
   ok: boolean;
+  rebooting: boolean;
   frame: string;
   detail: string;
   armed: boolean;
@@ -49,6 +50,7 @@ function shellFace(s: Sample): ShellFace {
   const sitl = isSitl(s.params) || !!s.sitl_running;
   return {
     ok: s.ok,
+    rebooting: !!s.rebooting,
     frame: s.frame,
     detail: s.detail || "",
     armed: !!s.armed,
@@ -62,6 +64,7 @@ function shellFace(s: Sample): ShellFace {
 function sameFace(a: ShellFace, b: ShellFace): boolean {
   return (
     a.ok === b.ok &&
+    a.rebooting === b.rebooting &&
     a.frame === b.frame &&
     a.detail === b.detail &&
     a.armed === b.armed &&
@@ -257,7 +260,11 @@ export function App() {
   const linkCombo = useRef<HTMLDivElement | null>(null);
   const refreshSerialPorts = useRef<() => void>(() => {});
   const paused = isPaused();
-  const live: Shell | null = face.ok && (face.frame === "plane" || face.frame === "copter") ? face.frame : null;
+  const lastLive = useRef<Shell | null>(null);
+  const seen: Shell | null = face.ok && (face.frame === "plane" || face.frame === "copter") ? face.frame : null;
+  if (seen) lastLive.current = seen;
+  // A reboot this app sent drops the link for a few seconds. Keep the screen until the board is back.
+  const live: Shell | null = seen ?? (face.rebooting ? lastLive.current : null);
   const shell: Shell = pick ?? live ?? "home";
   const plane = shell === "plane";
   const shellAlive = shell !== "home" && live === shell;

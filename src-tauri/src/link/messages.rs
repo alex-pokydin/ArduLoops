@@ -837,7 +837,9 @@ fn motor_test(
     if st.sample.armed {
         return "Disarm before a motor test".into();
     }
-    if !(1..=12).contains(&seq) || !(1.0..=25.0).contains(&percent) || !(1.0..=3.0).contains(&seconds) {
+    // Zero throttle and zero timeout is a stop: the vehicle ends the test on its next loop.
+    let stop = percent == 0.0 && seconds == 0.0;
+    if !(1..=12).contains(&seq) || (!stop && (!(1.0..=25.0).contains(&percent) || !(1.0..=3.0).contains(&seconds))) {
         return "Motor test rejected. Check the vehicle message.".into();
     }
     let message = MavMessage::COMMAND_LONG(COMMAND_LONG_DATA {
@@ -856,7 +858,8 @@ fn motor_test(
     if conn.send(&header(), &message).is_err() {
         return "Could not send calibration command".into();
     }
-    let result = wait_cmd_ack(conn, st, on_sample, latest, sitl, MavCmd::MAV_CMD_DO_MOTOR_TEST, 8, "Motor test started");
+    let ok = if stop { "Motor test stopped" } else { "Motor test started" };
+    let result = wait_cmd_ack(conn, st, on_sample, latest, sitl, MavCmd::MAV_CMD_DO_MOTOR_TEST, 8, ok);
     if result == "Calibration rejected or failed; check vehicle messages" {
         return "Motor test rejected. Check the vehicle message.".into();
     }

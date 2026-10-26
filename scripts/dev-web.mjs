@@ -33,10 +33,14 @@ function bridgeArgs() {
 
 function startApi() {
   const apiRoot = join(root, "..", "arduloops-api");
-  const script = join(apiRoot, "src", "server.mjs");
-  if (!existsSync(script)) return;
+  // The API is TypeScript (src/server.ts, run with its own tsx). Older checkouts had src/server.mjs.
+  const tsx = join(apiRoot, "node_modules", "tsx", "dist", "cli.mjs");
+  const ts = join(apiRoot, "src", "server.ts");
+  const legacy = join(apiRoot, "src", "server.mjs");
+  const args = existsSync(ts) && existsSync(tsx) ? [tsx, ts] : existsSync(legacy) ? [legacy] : null;
+  if (!args) return;
   process.env.ARDULOOPS_API = process.env.ARDULOOPS_API || "https://api-qm4zps6yqa-ew.a.run.app";
-  const child = spawn(process.execPath, [script], {
+  const child = spawn(process.execPath, args, {
     stdio: "inherit",
     cwd: apiRoot,
     env: { ...process.env, ARDULOOPS_DEV: process.env.ARDULOOPS_DEV || "1", PORT: "8788" },

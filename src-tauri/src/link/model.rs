@@ -225,6 +225,9 @@ pub struct Sample {
     pub param_indices: HashSet<u16>,
     pub param_count: u16,
     pub heartbeat_at: f64,
+    /// A reboot we sent is still waiting for the board to come back.
+    #[serde(default)]
+    pub rebooting: bool,
     #[serde(skip)]
     pub telemetry: HashMap<String, serde_json::Value>,
     /// Numeric MAVLink fields seen on this link, keyed `MESSAGE.field`.
@@ -341,6 +344,7 @@ impl Sample {
             param_indices: HashSet::new(),
             param_count: 0,
             heartbeat_at: 0.0,
+            rebooting: false,
             telemetry: HashMap::new(),
             live_nums: HashMap::new(),
             events: Vec::new(),

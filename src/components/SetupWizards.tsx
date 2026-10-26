@@ -1,6 +1,8 @@
 import { useEffect, useState, useSyncExternalStore } from "react";
 import { ModeSetup, modeSlot } from "./ModeSetup";
-import { MotorSetup } from "./MotorSetup";
+import { MotorDiagram } from "./MotorDiagram";
+import { MotorSetup, type MotorScope } from "./MotorSetup";
+import { frameFromParams, motorOfFunction } from "../lib/motorFrames";
 import { RcSetup } from "./RcSetup";
 import { compassGlance } from "./CompassPanel";
 import { useT } from "../i18n/i18n";
@@ -14,18 +16,11 @@ const FRAMES: { id: FrameId; title: string; cls: number; type: number; count: nu
   { id: "x", title: "Quad X", cls: 1, type: 1, count: 4, motors: [45, -135, -45, 135] },
   { id: "plus", title: "Quad +", cls: 1, type: 0, count: 4, motors: [90, -90, 0, 180] },
   { id: "bf", title: "Quad X Betaflight", cls: 1, type: 18, count: 4, motors: [135, 45, -135, -45] },
+  { id: "bf", title: "Quad X Betaflight (Props In)", cls: 1, type: 12, count: 4, motors: [135, 45, -135, -45] },
   { id: "hex", title: "Hex X", cls: 2, type: 1, count: 6, motors: null },
   { id: "octo", title: "Octo X", cls: 3, type: 1, count: 8, motors: null },
   { id: "y6", title: "Y6", cls: 5, type: 1, count: 6, motors: null },
 ];
-
-export function motorFrame(params: Record<string, number> | undefined): { id: string; count: number } | null {
-  const cls = params?.FRAME_CLASS;
-  const kind = params?.FRAME_TYPE;
-  if (cls == null || kind == null) return null;
-  const found = FRAMES.find((frame) => frame.cls === Math.round(cls) && frame.type === Math.round(kind));
-  return found ? { id: found.id, count: found.count } : null;
-}
 
 const COPTER_MODES: [string, number][] = [
   ["STABILIZE", 0],
@@ -193,41 +188,59 @@ export function FrameWizard() {
 export function MotorWizard() {
   const t = useT();
   const sample = useSample();
-  const cls = whole(param(sample.params, "FRAME_CLASS"));
-  const type = whole(param(sample.params, "FRAME_TYPE"));
-  const frame = FRAMES.find((item) => item.cls === cls && item.type === type) ?? null;
-  const count = frame?.count ?? null;
-  const angles = frame?.motors ?? null;
-  const bound = count != null && Array.from({ length: count }, (_, i) => {
-    for (let channel = 1; channel <= 16; channel += 1) {
-      if (whole(param(sample.params, `SERVO${channel}_FUNCTION`)) === 33 + i) return true;
-    }
-    return false;
-  }).every(Boolean);
-  const [setup, setSetup] = useState(false);
+  const params = sample.params;
+  const frame = frameFromParams(params);
+  const [open, setOpen] = useState<MotorScope | null | false>(false);
+  const placed = new Set<number>();
+  for (let ch = 1; ch <= 16; ch += 1) {
+    const fn = param(params, `SERVO${ch}_FUNCTION`);
+    const motor = fn == null ? null : motorOfFunction(fn);
+    if (motor != null) placed.add(motor);
+  }
+  const matched = frame ? frame.spots.filter((s) => placed.has(s.n)).length : 0;
+  const arm = param(params, "MOT_SPIN_ARM");
+  const rvmask = Math.round(param(params, "SERVO_BLH_RVMASK") ?? 0);
+  const reversed = Array.from({ length: 16 }, (_, i) => i + 1).filter((ch) => rvmask & (1 << (ch - 1)));
+  const safety = param(params, "BRD_SAFETY_DEFLT");
+  const safetyOn = safety != null && safety !== 0;
+  const row = (tone: "ok" | "warn" | "", name: string, value: string) => (
+    <div className="mw-sr">
+      <i className={`mw-er-dot ${tone}`} />
+      <span className="mw-grow">{name}</span>
+      <span className={`mw-sr-v ${tone}`}>{value}</span>
+    </div>
+  );
   return (
-    <div className="wiz">
-      {angles ? (
-        <svg className="wiz-motors" viewBox="0 0 64 64" aria-hidden="true">
-          <polygon points="32,4 38,14 26,14" fill="currentColor" />
-          {angles.map((angle, index) => {
-            const p = dot(angle, 20);
-            return (
-              <g key={index}>
-                <circle cx={p.x} cy={p.y} r="7" fill="#141a22" stroke="currentColor" />
-                <text x={p.x} y={p.y + 3} textAnchor="middle" fontSize="8" fill="currentColor">{index + 1}</text>
-              </g>
-            );
-          })}
-        </svg>
-      ) : count == null ? (
+    <div className="wiz mw-entry">
+      {frame ? (
+        <div className="mw-entry-body">
+          <div className="mw-entry-art">
+            <MotorDiagram
+              frame={frame}
+              size={150}
+              marks={Object.fromEntries(frame.spots.map((s) => [s.n, placed.has(s.n) ? "done" : "pending"]))}
+              arrows
+              label={(n) => t("Motor {n}", { n })}
+              servoLabel={t("Servo")}
+            />
+          </div>
+          <div className="mw-entry-rows">
+            <div className="mw-sr head"><b>{frame.title}</b></div>
+            {row(matched === frame.spots.length ? "ok" : "warn", t("Outputs"), t("{n} of {total} matched", { n: matched, total: frame.spots.length }))}
+            {row("", t("Reversed in ESC"), reversed.length ? reversed.map((ch) => `OUT ${ch}`).join(", ") : t("None"))}
+            {row("", t("Idle"), arm != null ? `${Math.round(arm * 100)}%` : "—")}
+            {row(safetyOn ? "warn" : "ok", t("Safety switch"), safetyOn ? t("Required") : t("Off"))}
+          </div>
+        </div>
+      ) : (
         <p className="wiz-msg">{t("Pick a frame first. This step follows the frame already on the vehicle.")}</p>
-      ) : null}
-      <p className="wiz-msg">{bound ? t("Outputs already match this frame.") : t("The setup spins each output. Tap the arm that turned.")}</p>
+      )}
       <div className="wiz-apply">
-        <button type="button" className="wiz-go" disabled={!sample.ok || !frame} onClick={() => setSetup(true)}>{t("Set up the motors")}</button>
+        <button type="button" className="wiz-go" disabled={!sample.ok || !frame} onClick={() => setOpen(null)}>{t("Set up the motors")}</button>
+        <button type="button" className="wiz-quiet" disabled={!sample.ok || !frame} onClick={() => setOpen({ steps: ["order"] })}>{t("Match outputs")}</button>
+        <button type="button" className="wiz-quiet" disabled={!sample.ok || !frame} onClick={() => setOpen({ steps: ["direction"] })}>{t("Check direction")}</button>
       </div>
-      {setup && frame ? <MotorSetup frame={frame.id} count={frame.count} onClose={() => setSetup(false)} /> : null}
+      {open !== false ? <MotorSetup scope={open ?? undefined} onClose={() => setOpen(false)} /> : null}
     </div>
   );
 }
