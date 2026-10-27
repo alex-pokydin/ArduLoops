@@ -4,6 +4,7 @@ import { addLog } from "../log";
 import { send as sendCmd } from "../mav/cmd";
 import { APP_HTTP } from "../mav/link";
 import { downloadParamBackup } from "../mav/paramBackup";
+import { openSetupOverview } from "../lib/setupNav";
 import type { Sample } from "../mav/types";
 import { usePicked, useVehicle } from "../mav/view";
 import { NOTE_TITLE_MAX, flightVersion, genericMark, joinNote, markShape, preArmState, splitNote, type MarkShape } from "../lib/vehicleHeader";
@@ -91,14 +92,18 @@ function VehicleMark({ shape }: { shape: MarkShape }) {
 
 type Tone = "ok" | "amber" | "hot" | "mute";
 
-function Tile({ label, value, sub, tone, wide, title }: { label: string; value: string; sub?: string; tone: Tone; wide?: boolean; title?: string }) {
-  return (
-    <div className={`vb-tile ${tone}${wide ? " wide" : ""}`} title={title}>
+function Tile({ label, value, sub, tone, wide, title, onOpen }: { label: string; value: string; sub?: string; tone: Tone; wide?: boolean; title?: string; onOpen?: () => void }) {
+  const body = (
+    <>
       <span className="vb-tl"><i />{label}</span>
       <b>{value}</b>
       {sub ? <span className="vb-ts">{sub}</span> : null}
-    </div>
+    </>
   );
+  if (onOpen) {
+    return <button type="button" className={`vb-tile vb-open ${tone}${wide ? " wide" : ""}`} title={title} onClick={onOpen}>{body}</button>;
+  }
+  return <div className={`vb-tile ${tone}${wide ? " wide" : ""}`} title={title}>{body}</div>;
 }
 
 const PreArmTile = memo(function PreArmTile() {
@@ -116,13 +121,13 @@ const PreArmTile = memo(function PreArmTile() {
   });
   if (key === "off") return <Tile wide label={t("Pre-arm")} value="—" sub={t("No link")} tone="mute" />;
   const state = JSON.parse(key) as ReturnType<typeof preArmState>;
-  if (state.kind === "armed") return <Tile wide label={t("Pre-arm")} value={t("Armed")} sub={t("Checks passed at arming")} tone="ok" />;
-  if (state.kind === "ready") return <Tile wide label={t("Pre-arm")} value={t("Ready to arm")} sub={t("All checks pass")} tone="ok" />;
+  if (state.kind === "armed") return <Tile wide label={t("Pre-arm")} value={t("Armed")} sub={t("Checks passed at arming")} tone="ok" onOpen={openSetupOverview} />;
+  if (state.kind === "ready") return <Tile wide label={t("Pre-arm")} value={t("Ready to arm")} sub={t("All checks pass")} tone="ok" onOpen={openSetupOverview} />;
   if (state.kind === "failing") {
     const more = state.lines.length > 1 ? ` · +${state.lines.length - 1}` : "";
-    return <Tile wide label={t("Pre-arm")} value={t("{n} failing", { n: state.lines.length })} sub={`${state.lines[0]}${more}`} tone="hot" title={state.lines.join("\n")} />;
+    return <Tile wide label={t("Pre-arm")} value={t("{n} failing", { n: state.lines.length })} sub={`${state.lines[0]}${more}`} tone="hot" title={state.lines.join("\n")} onOpen={openSetupOverview} />;
   }
-  return <Tile wide label={t("Pre-arm")} value={t("No report yet")} sub={t("The vehicle repeats failures about every 30 s")} tone="mute" />;
+  return <Tile wide label={t("Pre-arm")} value={t("No report yet")} sub={t("The vehicle repeats failures about every 30 s")} tone="mute" onOpen={openSetupOverview} />;
 });
 
 const FIX_NAMES: Record<number, string> = { 2: "2D", 3: "3D", 4: "DGPS", 5: "RTK float", 6: "RTK" };

@@ -1,4 +1,5 @@
-import { startTransition, useState } from "react";
+import { startTransition, useEffect, useState } from "react";
+import { OPEN_SETUP_OVERVIEW } from "../lib/setupNav";
 import { useT } from "../i18n/i18n";
 import { ControllerBoard } from "./ControllerBoard";
 import { FirmwareLibrary } from "./FirmwareLibrary";
@@ -10,7 +11,7 @@ import { WorkspaceTabs, type WorkspaceId } from "./WorkspaceTabs";
 const PANES = ["calibration", "logs", "params", "firmware"] as const;
 type Pane = (typeof PANES)[number];
 
-const TAB_LABEL: Partial<Record<Pane, string>> = { calibration: "Setup" };
+const TAB_LABEL: Record<Pane, string> = { calibration: "Setup", logs: "Logs", params: "Params", firmware: "Firmware" };
 
 export function ControllerView({
   ids,
@@ -27,6 +28,15 @@ export function ControllerView({
     setPane(id);
     startTransition(() => setBody(id));
   }
+  // The header's Pre-arm tile opens Setup; Setup itself turns to its Overview.
+  useEffect(() => {
+    const show = () => {
+      setPane("calibration");
+      startTransition(() => setBody("calibration"));
+    };
+    window.addEventListener(OPEN_SETUP_OVERVIEW, show);
+    return () => window.removeEventListener(OPEN_SETUP_OVERVIEW, show);
+  }, []);
   return (
     <section className="scope work">
       <div className="work-bar">
@@ -36,7 +46,7 @@ export function ControllerView({
       <div className="studio-tabs controller-tabs" role="tablist" aria-label={t("controller")}>
         {PANES.map((id) => (
           <button key={id} type="button" role="tab" aria-selected={pane === id} onClick={() => choose(id)}>
-            <span>{t(TAB_LABEL[id] ?? id)}</span>
+            <span>{t(TAB_LABEL[id])}</span>
           </button>
         ))}
       </div>

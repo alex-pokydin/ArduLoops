@@ -10,17 +10,40 @@ import { addLog } from "../log";
 import { noteUi, sameParam, writeParam } from "../mav/cmd";
 import { getSetupSnapshot, getSnapshot, subscribe } from "../mav/store";
 
-type FrameId = "x" | "plus" | "bf" | "hex" | "octo" | "y6";
+type FrameId = "x" | "plus" | "bf" | "bfin" | "hex" | "octo" | "y6";
 
 const FRAMES: { id: FrameId; title: string; cls: number; type: number; count: number; motors: readonly number[] | null }[] = [
   { id: "x", title: "Quad X", cls: 1, type: 1, count: 4, motors: [45, -135, -45, 135] },
   { id: "plus", title: "Quad +", cls: 1, type: 0, count: 4, motors: [90, -90, 0, 180] },
   { id: "bf", title: "Quad X Betaflight", cls: 1, type: 18, count: 4, motors: [135, 45, -135, -45] },
-  { id: "bf", title: "Quad X Betaflight (Props In)", cls: 1, type: 12, count: 4, motors: [135, 45, -135, -45] },
+  { id: "bfin", title: "Quad X Betaflight (Props In)", cls: 1, type: 12, count: 4, motors: [135, 45, -135, -45] },
   { id: "hex", title: "Hex X", cls: 2, type: 1, count: 6, motors: null },
   { id: "octo", title: "Octo X", cls: 3, type: 1, count: 8, motors: null },
   { id: "y6", title: "Y6", cls: 5, type: 1, count: 6, motors: null },
 ];
+
+/**
+ * ArduPilot's own value names for the failsafe parameters (Parameters.cpp, AP_BattMonitor_Params.cpp),
+ * shared by the step summary and the wizard so every stored value has a name.
+ */
+const FS_NAMES = {
+  copterRadio: { 0: "Disabled", 1: "Return home", 2: "Keep the mission in Auto", 3: "Land", 4: "SmartRTL or RTL", 5: "SmartRTL or Land", 6: "Auto landing or RTL", 7: "Brake or Land" },
+  copterBatt: { 0: "Warn only", 1: "Land", 2: "Return home", 3: "SmartRTL or RTL", 4: "SmartRTL or Land", 5: "Terminate", 6: "Auto landing or RTL", 7: "Brake or Land" },
+  planeRadio: { 0: "Disabled", 1: "Enabled", 2: "Detect only" },
+  planeShort: { 0: "Circle, or keep the mission", 1: "Circle", 2: "Level, throttle off", 3: "Disabled", 4: "FBWB" },
+  planeLong: { 0: "Keep going", 1: "Return home", 2: "Glide", 3: "Parachute", 4: "Auto", 5: "Autoland" },
+  planeBatt: { 0: "Warn only", 1: "Return home", 2: "Land", 3: "Terminate", 4: "QLand", 5: "Parachute", 6: "Loiter to QLand", 7: "Autoland or RTL" },
+} satisfies Record<string, Record<number, string>>;
+
+function fsName(names: Record<number, string>, value: number): string {
+  return names[value] ?? String(value);
+}
+
+/** The usual choices, plus the stored value when it is another one, so the current setting is always shown. */
+function fsOptions(names: Record<number, string>, usual: number[], current: number | null): { label: string; value: number }[] {
+  const values = current != null && !usual.includes(current) ? [...usual, current] : usual;
+  return values.map((value) => ({ label: fsName(names, value), value }));
+}
 
 const COPTER_MODES: [string, number][] = [
   ["STABILIZE", 0],
@@ -300,18 +323,25 @@ export function stepGlance(
     return { text: name ?? (value == null ? "" : String(value)), live: true };
   }
   if (kind === "failsafe") {
-    const radioName = vehicle === "plane" ? "FS_SHORT_ACTN" : "FS_THR_ENABLE";
-    const radio = whole(param(params, radioName));
     const batt = whole(param(params, "BATT_FS_LOW_ACT"));
-    if (radio == null) return { text: "", live: false };
-    const radioText = vehicle === "plane"
-      ? ({ 1: "Circle", 2: "Level, throttle off", 3: "Disabled" } as Record<number, string>)[radio] ?? String(radio)
-      : ({ 0: "Disabled", 1: "Return home", 3: "Land" } as Record<number, string>)[radio] ?? String(radio);
-    const battText = batt == null ? "" : vehicle === "plane"
-      ? ({ 0: "Warn only", 1: "Return home", 2: "Land" } as Record<number, string>)[batt] ?? String(batt)
-      : ({ 0: "Warn only", 1: "Land", 2: "Return home" } as Record<number, string>)[batt] ?? String(batt);
+    const battText = batt == null ? "" : fsName(vehicle === "plane" ? FS_NAMES.planeBatt : FS_NAMES.copterBatt, batt);
+    let radioText: string;
+    let live: boolean;
+    if (vehicle === "plane") {
+      // THR_FAILSAFE switches the radio failsafe on; FS_LONG_ACTN is what the plane then does.
+      const on = whole(param(params, "THR_FAILSAFE"));
+      const long = whole(param(params, "FS_LONG_ACTN"));
+      if (on == null || long == null) return { text: "", live: false };
+      live = on === 1;
+      radioText = on === 1 ? fsName(FS_NAMES.planeLong, long) : fsName(FS_NAMES.planeRadio, on);
+    } else {
+      const radio = whole(param(params, "FS_THR_ENABLE"));
+      if (radio == null) return { text: "", live: false };
+      live = radio !== 0;
+      radioText = fsName(FS_NAMES.copterRadio, radio);
+    }
     // Without a battery monitor ArduPilot hides BATT_FS_LOW_ACT; the radio failsafe still counts.
-    return { text: batt == null ? radioText : `${radioText} · ${battText}`, live: vehicle === "plane" ? radio !== 3 : radio !== 0 };
+    return { text: batt == null ? radioText : `${radioText} · ${battText}`, live };
   }
   if (kind === "battery") {
     if (whole(param(params, "BATT_MONITOR")) === 0) return { text: "No battery monitor", live: false };
@@ -406,45 +436,52 @@ type WizardMeasures = Record<string, number | string | null>;
 
 export function FailsafeWizard({ frame, onDone }: { frame: "copter" | "plane"; onDone?: (measures: WizardMeasures) => void }) {
   const sample = useSample();
-  const radioName = frame === "plane" ? "FS_SHORT_ACTN" : "FS_THR_ENABLE";
-  const longName = frame === "plane" ? "FS_LONG_ACTN" : "";
-  const radioOptions = frame === "plane"
-    ? [{ label: "Circle", value: 1 }, { label: "Level, throttle off", value: 2 }, { label: "Disabled", value: 3 }]
-    : [{ label: "Disabled", value: 0 }, { label: "Return home", value: 1 }, { label: "Land", value: 3 }];
-  const longOptions = [{ label: "Keep going", value: 0 }, { label: "Return home", value: 1 }, { label: "Glide", value: 2 }];
-  const batteryOptions = frame === "plane"
-    ? [{ label: "Warn only", value: 0 }, { label: "Return home", value: 1 }, { label: "Land", value: 2 }]
-    : [{ label: "Warn only", value: 0 }, { label: "Land", value: 1 }, { label: "Return home", value: 2 }];
+  const plane = frame === "plane";
+  const radioName = plane ? "FS_SHORT_ACTN" : "FS_THR_ENABLE";
+  const longName = plane ? "FS_LONG_ACTN" : "";
+  const onNow = plane ? whole(param(sample.params, "THR_FAILSAFE")) : null;
   const radioNow = whole(param(sample.params, radioName));
   const longNow = longName ? whole(param(sample.params, longName)) : null;
+  // Without a battery monitor ArduPilot hides BATT_FS_LOW_ACT; the radio failsafe can still be saved.
   const battNow = whole(param(sample.params, "BATT_FS_LOW_ACT"));
+  const onOptions = fsOptions(FS_NAMES.planeRadio, [1, 0], onNow);
+  const radioOptions = plane ? fsOptions(FS_NAMES.planeShort, [0, 1, 2, 3], radioNow) : fsOptions(FS_NAMES.copterRadio, [0, 1, 3], radioNow);
+  const longOptions = fsOptions(FS_NAMES.planeLong, [0, 1, 2], longNow);
+  const batteryOptions = plane ? fsOptions(FS_NAMES.planeBatt, [0, 1, 2], battNow) : fsOptions(FS_NAMES.copterBatt, [0, 1, 2], battNow);
+  const [on, setOn] = useState(onNow);
   const [radio, setRadio] = useState(radioNow);
   const [long, setLong] = useState(longNow);
   const [batt, setBatt] = useState(battNow);
+  useEffect(() => { setOn(onNow); }, [onNow]);
   useEffect(() => { setRadio(radioNow); }, [radioNow]);
   useEffect(() => { setLong(longNow); }, [longNow]);
   useEffect(() => { setBatt(battNow); }, [battNow]);
   const [busy, setBusy] = useState(false);
-  const dirty = radio !== radioNow || (frame === "plane" && long !== longNow) || batt !== battNow;
+  const dirty = radio !== radioNow || (plane && (on !== onNow || long !== longNow)) || batt !== battNow;
   return (
     <div className="wiz">
-      <ChoiceRow title={frame === "plane" ? "Short radio loss" : "Radio lost"} value={radio} options={radioOptions} onPick={setRadio} />
-      {frame === "plane" ? <ChoiceRow title="Long radio loss" value={long} options={longOptions} onPick={setLong} /> : null}
-      <ChoiceRow title="Battery low" value={batt} options={batteryOptions} onPick={setBatt} />
+      {plane ? <ChoiceRow title="Radio failsafe" value={on} options={onOptions} onPick={setOn} /> : null}
+      <ChoiceRow title={plane ? "Short radio loss" : "Radio lost"} value={radio} options={radioOptions} onPick={setRadio} />
+      {plane ? <ChoiceRow title="Long radio loss" value={long} options={longOptions} onPick={setLong} /> : null}
+      {battNow != null ? <ChoiceRow title="Battery low" value={batt} options={batteryOptions} onPick={setBatt} /> : null}
       <ApplyButton
         label="Save failsafe"
         busy={busy}
-        disabled={!sample.ok || !dirty || radioNow == null || battNow == null || radio == null || batt == null || (frame === "plane" && (longNow == null || long == null))}
+        disabled={!sample.ok || !dirty || radioNow == null || radio == null || (plane && (onNow == null || on == null || longNow == null || long == null))}
         onApply={async () => {
-          if (radio == null || batt == null) return null;
+          if (radio == null) return null;
           setBusy(true);
           try {
-            const pairs: [string, number][] = [[radioName, radio], ["BATT_FS_LOW_ACT", batt]];
-            if (frame === "plane" && long != null) pairs.push(["FS_LONG_ACTN", long]);
+            const pairs: [string, number][] = [[radioName, radio]];
+            if (batt != null && batt !== battNow) pairs.push(["BATT_FS_LOW_ACT", batt]);
+            if (plane && on != null) pairs.push(["THR_FAILSAFE", on]);
+            if (plane && long != null) pairs.push(["FS_LONG_ACTN", long]);
             const err = await writeList(pairs);
             if (!err) {
-              const measures: WizardMeasures = { [radioName]: radio, BATT_FS_LOW_ACT: batt };
-              if (frame === "plane" && long != null) measures.FS_LONG_ACTN = long;
+              const measures: WizardMeasures = { [radioName]: radio };
+              if (batt != null) measures.BATT_FS_LOW_ACT = batt;
+              if (plane && on != null) measures.THR_FAILSAFE = on;
+              if (plane && long != null) measures.FS_LONG_ACTN = long;
               onDone?.(measures);
             }
             return err;

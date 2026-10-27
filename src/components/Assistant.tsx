@@ -15,6 +15,7 @@ import type { WizardClose } from "../wizards/close";
 import { ChartStrip, chartsFromTools } from "./FindingCharts";
 import { LiveHost, LiveView, liveSpecFromTools, type LiveSpec } from "./LivePlots";
 import { getLang, useT } from "../i18n/i18n";
+import { ASK_ASSISTANT } from "../lib/assistantAsk";
 import { getLuaQuote, quoteLabel, setLuaQuote, subscribeLuaQuote, type LuaQuote } from "../luaQuote";
 import { subscribe } from "../mav/store";
 import { useVehicle, viewSample } from "../mav/view";
@@ -506,6 +507,26 @@ export function Assistant({
   }, []);
   const [draft, setDraft] = useState("");
   const [busy, setBusy] = useState(false);
+  // Ask buttons elsewhere in the app send a prepared message; without an account they open Options.
+  const sendRef = useRef<typeof onSend | null>(null);
+  sendRef.current = onSend;
+  const configuredRef = useRef(false);
+  configuredRef.current = !!status?.configured;
+  const optionsRef = useRef(onOpenOptions);
+  optionsRef.current = onOpenOptions;
+  useEffect(() => {
+    const ask = (ev: Event) => {
+      const text = (ev as CustomEvent<string>).detail;
+      if (!configuredRef.current) {
+        optionsRef.current();
+        return;
+      }
+      setOpen(true);
+      if (text) void sendRef.current?.(undefined, text, true);
+    };
+    window.addEventListener(ASK_ASSISTANT, ask);
+    return () => window.removeEventListener(ASK_ASSISTANT, ask);
+  }, []);
   const [followUser, setFollowUser] = useState(false);
   const [live, setLive] = useState<LiveTurn | null>(null);
   const [note, setNote] = useState("");
@@ -682,10 +703,25 @@ export function Assistant({
     };
   }, [chatId, status?.configured]);
 
-  async function onSend(ev?: FormEvent, preset?: string, presetImages?: string[]) {
+  /** `fresh` starts a new conversation for the message, as the New chat button does. */
+  async function onSend(ev?: FormEvent, preset?: string, fresh = false, presetImages?: string[]) {
     ev?.preventDefault();
     const text = (preset ?? draft).trim();
     if (!text) return;
+    if (fresh) {
+      // Do not cut into a turn that is still running: leave the text ready to send.
+      if (busy) {
+        setDraft(text);
+        setNote("The assistant is still answering. Send this when it finishes.");
+        return;
+      }
+      threadGen.current += 1;
+      pendingOut.current = null;
+      setChatId("");
+      setProposals([]);
+      setMessages([]);
+      messagesRef.current = [];
+    }
     const attached = logId;
     const quoted = preset ? null : getLuaQuote();
     if (busy) {
@@ -728,7 +764,7 @@ export function Assistant({
     const ctrl = new AbortController();
     sendAbort.current = ctrl;
     sending.current = true;
-    let id = chatId;
+    let id = fresh ? "" : chatId;
     try {
       if (!id) {
         const created = await ai.create(droneKey);
@@ -982,7 +1018,7 @@ export function Assistant({
             onDraft={setDraft}
             onModel={setModel}
             onSend={(preset) => void onSend(undefined, preset)}
-            onRetry={(text, pics) => void onSend(undefined, text, pics)}
+            onRetry={(text, pics) => void onSend(undefined, text, false, pics)}
             onDecision={onDecision}
             onCancelWait={onCancelWait}
             onOpenWizard={(id, wizard) => setWizardAsk({ id, wizard, scope: wizardScope(proposals.find((p) => p.id === id)?.payload) })}
@@ -1104,7 +1140,7 @@ export function Assistant({
               onDraft={setDraft}
               onModel={setModel}
               onSend={(preset) => void onSend(undefined, preset)}
-              onRetry={(text, pics) => void onSend(undefined, text, pics)}
+              onRetry={(text, pics) => void onSend(undefined, text, false, pics)}
               onDecision={onDecision}
               onCancelWait={onCancelWait}
               onOpenWizard={(id, wizard) => setWizardAsk({ id, wizard, scope: wizardScope(proposals.find((p) => p.id === id)?.payload) })}
