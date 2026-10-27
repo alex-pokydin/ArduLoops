@@ -6,7 +6,9 @@ import { BatteryWizard } from "./BatterySetup";
 import { CalibrationPanel } from "./CalibrationPanel";
 import { ParameterLibrary } from "./ParameterLibrary";
 import { CompassPanel } from "./CompassPanel";
-import { AirspeedWizard, FailsafeWizard, FrameWizard, ModeWizard, MotorWizard, RadioWizard, ServoWizard, stepGlance } from "./SetupWizards";
+import { FrameStep } from "./FrameStep";
+import { PlaneAirframeStep } from "./PlaneAirframeStep";
+import { AirspeedWizard, FailsafeWizard, ModeWizard, MotorWizard, RadioWizard, ServoWizard, stepGlance } from "./SetupWizards";
 import { nextSteps, prearmStep, stepState, type StepState } from "../lib/setupSteps";
 import { OPEN_SETUP_OVERVIEW } from "../lib/setupNav";
 import { askAssistant } from "../lib/assistantAsk";
@@ -67,7 +69,7 @@ type Step = {
   id: string;
   title: string;
   body: string;
-  kind: "frame" | "motors" | "radio" | "level" | "compass" | "modes" | "failsafe" | "battery" | "servos" | "airspeed";
+  kind: "frame" | "motors" | "radio" | "level" | "compass" | "modes" | "failsafe" | "battery" | "servos" | "airspeed" | "airframe";
   group: Group;
   /** Not needed to fly: hidden by the Required filter and not counted. */
   optional?: boolean;
@@ -118,7 +120,7 @@ const MODES: Step = {
 const GROUPS: Group[] = ["Airframe", "Sensors", "Control", "Safety"];
 
 const COPTER: Step[] = [
-  { id: "frame", title: "Frame", body: "Pick the picture that matches the frame, then save it.", kind: "frame", group: "Airframe" },
+  { id: "frame", title: "Frame", body: "How many arms, and how the motors are laid out.", kind: "frame", group: "Airframe" },
   { id: "motors", title: "Motors", body: "The numbers are the motors. The setup spins each output and you tap the arm that turned.", kind: "motors", group: "Airframe" },
   { id: "servos", title: "Other outputs", body: "Output channel settings. Motor names are the motor step.", kind: "servos", group: "Airframe", optional: true },
   LEVEL,
@@ -130,7 +132,8 @@ const COPTER: Step[] = [
 ];
 
 const PLANE: Step[] = [
-  { id: "servos", title: "Outputs", body: "Name the four surfaces, and reverse one that moves the wrong way. ESC calibration stays in the wiki, with the propeller removed.", kind: "servos", group: "Airframe" },
+  { id: "airframe", title: "Airframe type", body: "Pick the surface layout. Outputs are matched on the next step.", kind: "airframe", group: "Airframe" },
+  { id: "servos", title: "Outputs", body: "Check that each surface moves the right way, and reverse one that does not. ESC calibration stays in the wiki, with the propeller removed.", kind: "servos", group: "Airframe" },
   LEVEL,
   COMPASS,
   { id: "airspeed", title: "Airspeed", body: "If there is no airspeed sensor, say so. The usual default expects a sensor that may not be fitted.", kind: "airspeed", group: "Sensors" },
@@ -181,6 +184,9 @@ function StepIcon({ kind }: { kind: Step["kind"] }) {
   }
   if (kind === "airspeed") {
     return <svg {...p}><path d="M2 9h8l4-3v5H2z" /></svg>;
+  }
+  if (kind === "airframe") {
+    return <svg {...p}><path d="M8 1.5v13M1.5 7h13M5.5 13h5" /></svg>;
   }
   return <svg {...p}><path d="M8 2.5v6" /><circle cx="8" cy="12" r="1" fill="currentColor" stroke="none" /></svg>;
 }
@@ -574,7 +580,7 @@ export const HardwareSetup = memo(function HardwareSetup() {
         </div>
       ) : (
       <div className="setup-pbody">
-        {step.kind === "frame" ? <FrameWizard /> : null}
+        {step.kind === "frame" ? <FrameStep /> : null}
         {step.kind === "motors" ? <MotorWizard /> : null}
         {step.kind === "radio" ? <><RcLive /><RadioWizard /></> : null}
         {step.kind === "level" ? <CalibrationPanel /> : null}
@@ -584,6 +590,7 @@ export const HardwareSetup = memo(function HardwareSetup() {
         {step.kind === "battery" ? <BatteryWizard /> : null}
         {step.kind === "servos" ? (frame === "plane" ? <ServoWizard /> : <ParameterLibrary focus={servoFocus} />) : null}
         {step.kind === "airspeed" ? <AirspeedWizard /> : null}
+        {step.kind === "airframe" ? <PlaneAirframeStep /> : null}
       </div>
       )}
         {overview ? (

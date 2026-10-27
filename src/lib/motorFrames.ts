@@ -1,5 +1,11 @@
 import { FRAME_DEFS, type FrameDef } from "./motorFrameData";
 
+/** FRAME_CLASS names, from ArduCopter Parameters.cpp @Values. */
+export const CLASS_NAMES: Record<number, string> = {
+  0: "Undefined", 1: "Quad", 2: "Hexa", 3: "Octa", 4: "OctaQuad", 5: "Y6", 6: "Heli", 7: "Tri", 8: "SingleCopter", 9: "CoaxCopter",
+  10: "BiCopter", 11: "Heli_Dual", 12: "Dodeca-Hexa", 13: "HeliQuad", 14: "Deca", 15: "Scripting Matrix", 16: "6DoF Scripting", 17: "Dynamic Scripting Matrix",
+};
+
 /** One motor on the drawing. `n` is the 1-based motor number (Motor n output function). */
 export type MotorSpot = {
   n: number;

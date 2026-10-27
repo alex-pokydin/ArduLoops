@@ -2,25 +2,14 @@ import { useEffect, useState, useSyncExternalStore } from "react";
 import { ModeSetup, modeSlot } from "./ModeSetup";
 import { MotorDiagram } from "./MotorDiagram";
 import { MotorSetup, type MotorScope } from "./MotorSetup";
-import { frameFromParams, motorOfFunction } from "../lib/motorFrames";
+import { CLASS_NAMES, frameFromParams, motorFrame, motorFunction, motorOfFunction } from "../lib/motorFrames";
+import { LAYOUT_NAMES, classifyLayout, surfacesFor } from "../lib/planeAirframe";
 import { RcSetup } from "./RcSetup";
 import { compassGlance } from "./CompassPanel";
 import { useT } from "../i18n/i18n";
 import { addLog } from "../log";
 import { noteUi, sameParam, writeParam } from "../mav/cmd";
 import { getSetupSnapshot, getSnapshot, subscribe } from "../mav/store";
-
-type FrameId = "x" | "plus" | "bf" | "bfin" | "hex" | "octo" | "y6";
-
-const FRAMES: { id: FrameId; title: string; cls: number; type: number; count: number; motors: readonly number[] | null }[] = [
-  { id: "x", title: "Quad X", cls: 1, type: 1, count: 4, motors: [45, -135, -45, 135] },
-  { id: "plus", title: "Quad +", cls: 1, type: 0, count: 4, motors: [90, -90, 0, 180] },
-  { id: "bf", title: "Quad X Betaflight", cls: 1, type: 18, count: 4, motors: [135, 45, -135, -45] },
-  { id: "bfin", title: "Quad X Betaflight (Props In)", cls: 1, type: 12, count: 4, motors: [135, 45, -135, -45] },
-  { id: "hex", title: "Hex X", cls: 2, type: 1, count: 6, motors: null },
-  { id: "octo", title: "Octo X", cls: 3, type: 1, count: 8, motors: null },
-  { id: "y6", title: "Y6", cls: 5, type: 1, count: 6, motors: null },
-];
 
 /**
  * ArduPilot's own value names for the failsafe parameters (Parameters.cpp, AP_BattMonitor_Params.cpp),
@@ -68,12 +57,6 @@ const PLANE_MODES: [string, number][] = [
   ["LOITER", 12],
 ];
 
-const SURFACES: { title: string; fn: number }[] = [
-  { title: "Aileron", fn: 4 },
-  { title: "Elevator", fn: 19 },
-  { title: "Throttle", fn: 70 },
-  { title: "Rudder", fn: 21 },
-];
 
 function useSample() {
   return useSyncExternalStore(subscribe, getSetupSnapshot, getSetupSnapshot);
@@ -88,11 +71,6 @@ function whole(value: number | null): number | null {
   return value == null ? null : Math.round(value);
 }
 
-function dot(angle: number, r = 18): { x: number; y: number } {
-  const rad = (angle * Math.PI) / 180;
-  return { x: 32 + Math.sin(rad) * r, y: 32 - Math.cos(rad) * r };
-}
-
 async function writeList(pairs: [string, number][]): Promise<string | null> {
   const params = getSnapshot().params;
   for (const [name, value] of pairs) {
@@ -103,19 +81,6 @@ async function writeList(pairs: [string, number][]): Promise<string | null> {
     noteUi([{ kind: "param", name, value, from: typeof from === "number" ? from : null }]);
   }
   return null;
-}
-
-function FrameGlyph({ motors, count }: { motors: readonly number[] | null; count: number }) {
-  const angles = motors ?? Array.from({ length: count }, (_, i) => (i * 360) / count);
-  return (
-    <svg viewBox="0 0 64 64" aria-hidden="true">
-      <polygon points="32,6 37,14 27,14" fill="currentColor" />
-      {angles.map((angle, index) => {
-        const p = dot(angle);
-        return <circle key={index} cx={p.x} cy={p.y} r="4.5" fill="none" stroke="currentColor" strokeWidth="1.5" />;
-      })}
-    </svg>
-  );
 }
 
 function ApplyButton({
@@ -153,57 +118,6 @@ function ApplyButton({
         {busy ? t("Writing…") : t(label)}
       </button>
       {note ? <p className="wiz-msg" role="status">{t(note)}</p> : null}
-    </div>
-  );
-}
-
-export function FrameWizard() {
-  const t = useT();
-  const sample = useSample();
-  const cls = whole(param(sample.params, "FRAME_CLASS"));
-  const type = whole(param(sample.params, "FRAME_TYPE"));
-  const known = FRAMES.find((frame) => frame.cls === cls && frame.type === type) ?? null;
-  const [pick, setPick] = useState<FrameId | null>(known?.id ?? null);
-  useEffect(() => {
-    setPick(known?.id ?? null);
-  }, [known?.id]);
-  const chosen = FRAMES.find((frame) => frame.id === pick) ?? null;
-  const same = chosen != null && chosen.cls === cls && chosen.type === type;
-  const [busy, setBusy] = useState(false);
-  return (
-    <div className="wiz">
-      <div className="wiz-cards" role="listbox" aria-label={t("Frame")}>
-        {FRAMES.map((frame) => (
-          <button
-            key={frame.id}
-            type="button"
-            role="option"
-            aria-selected={pick === frame.id}
-            className={pick === frame.id ? "wiz-card on" : "wiz-card"}
-            onClick={() => setPick(frame.id)}
-          >
-            <FrameGlyph motors={frame.motors} count={frame.count} />
-            <b>{t(frame.title)}</b>
-          </button>
-        ))}
-      </div>
-      <ApplyButton
-        label="Use this frame"
-        busy={busy}
-        disabled={!sample.ok || !chosen || same || cls == null}
-        onApply={async () => {
-          if (!chosen) return null;
-          setBusy(true);
-          try {
-            return await writeList([
-              ["FRAME_CLASS", chosen.cls],
-              ["FRAME_TYPE", chosen.type],
-            ]);
-          } finally {
-            setBusy(false);
-          }
-        }}
-      />
     </div>
   );
 }
@@ -284,7 +198,7 @@ export function RadioWizard() {
 }
 
 export function stepGlance(
-  kind: "frame" | "motors" | "radio" | "level" | "compass" | "modes" | "failsafe" | "battery" | "servos" | "airspeed",
+  kind: "frame" | "motors" | "radio" | "level" | "compass" | "modes" | "failsafe" | "battery" | "servos" | "airspeed" | "airframe",
   vehicle: "copter" | "plane",
   params: Record<string, number>,
   rc: number[],
@@ -292,21 +206,20 @@ export function stepGlance(
   if (kind === "frame") {
     const cls = whole(param(params, "FRAME_CLASS"));
     const type = whole(param(params, "FRAME_TYPE"));
-    const known = FRAMES.find((frame) => frame.cls === cls && frame.type === type);
     if (cls == null) return { text: "", live: false };
-    return { text: known?.title ?? "Other frame", live: true };
+    // 0 is Undefined: ArduPilot refuses to arm until a class is set.
+    if (cls === 0) return { text: "Undefined", live: false };
+    return { text: motorFrame(cls, type)?.title ?? CLASS_NAMES[cls] ?? "Other frame", live: true };
   }
   if (kind === "motors") {
-    const cls = whole(param(params, "FRAME_CLASS"));
-    const type = whole(param(params, "FRAME_TYPE"));
-    const frame = FRAMES.find((item) => item.cls === cls && item.type === type);
+    const frame = motorFrame(whole(param(params, "FRAME_CLASS")), whole(param(params, "FRAME_TYPE")));
     if (!frame) return { text: "", live: false };
-    const named = Array.from({ length: frame.count }, (_, i) => {
-      for (let channel = 1; channel <= 16; channel += 1) {
-        if (whole(param(params, `SERVO${channel}_FUNCTION`)) === 33 + i) return true;
-      }
-      return false;
-    }).every(Boolean);
+    const used = new Set<number>();
+    for (let channel = 1; channel <= 32; channel += 1) {
+      const fn = whole(param(params, `SERVO${channel}_FUNCTION`));
+      if (fn != null) used.add(fn);
+    }
+    const named = frame.spots.every((spot) => used.has(motorFunction(spot.n)));
     return { text: named ? "Outputs named" : "Outputs not named", live: named };
   }
   if (kind === "radio") {
@@ -362,11 +275,12 @@ export function stepGlance(
       if (!seen) return { text: "", live: false };
       return { text: `${named}/16`, live: named > 0 };
     }
-    const found = SURFACES.filter((surface) => {
+    const surfaces = surfacesFor(classifyLayout(params));
+    const found = surfaces.filter((surface) => {
       for (let i = 1; i <= 16; i++) if (whole(param(params, `SERVO${i}_FUNCTION`)) === surface.fn) return true;
       return false;
     }).length;
-    return { text: found ? `${found}/4` : "Not on an output yet.", live: found === 4 };
+    return { text: found ? `${found}/${surfaces.length}` : "Not on an output yet.", live: found === surfaces.length };
   }
   if (kind === "airspeed") {
     const type = whole(param(params, "ARSPD_TYPE"));
@@ -381,6 +295,12 @@ export function stepGlance(
     if ([...offs, ...scal].some((v) => v == null)) return { text: "", live: false };
     const calibrated = offs.some((v) => v !== 0) || scal.some((v) => v !== 1);
     return { text: calibrated ? "Calibrated" : "Not calibrated", live: calibrated };
+  }
+  if (kind === "airframe") {
+    const layout = classifyLayout(params);
+    if (layout == null) return { text: "No surfaces yet", live: false };
+    const q = whole(param(params, "Q_ENABLE"));
+    return { text: q ? `${LAYOUT_NAMES[layout]} · QuadPlane` : LAYOUT_NAMES[layout], live: true };
   }
   if (kind === "compass") return compassGlance(params);
   return { text: "", live: false };
@@ -494,10 +414,10 @@ export function FailsafeWizard({ frame, onDone }: { frame: "copter" | "plane"; o
   );
 }
 
-function servoMeasures(found: { title: string; output: number; reversed: boolean }[], flip: Record<string, boolean>, assigned: Map<string, number>): WizardMeasures {
+function servoMeasures(found: { key: string; title: string; output: number; reversed: boolean }[], flip: Record<string, boolean>, assigned: Map<string, number>): WizardMeasures {
   const measures: WizardMeasures = {};
   for (const surface of found) {
-    const key = surface.title.toLowerCase();
+    const key = surface.key;
     const output = surface.output || assigned.get(surface.title) || 0;
     measures[`${key}_output`] = output || null;
     measures[`${key}_reversed`] = (flip[surface.title] ?? surface.reversed) ? 1 : 0;
@@ -508,7 +428,7 @@ function servoMeasures(found: { title: string; output: number; reversed: boolean
 export function ServoWizard({ onDone }: { onDone?: (measures: WizardMeasures) => void } = {}) {
   const t = useT();
   const sample = useSample();
-  const found = SURFACES.map((surface) => {
+  const found = surfacesFor(classifyLayout(sample.params)).map((surface) => {
     let output = 0;
     for (let i = 1; i <= 16; i++) {
       if (whole(param(sample.params, `SERVO${i}_FUNCTION`)) === surface.fn) { output = i; break; }
@@ -539,7 +459,7 @@ export function ServoWizard({ onDone }: { onDone?: (measures: WizardMeasures) =>
       </div>
       {missing ? (
         <ApplyButton
-          label="Assign the four surfaces"
+          label="Assign the surfaces"
           busy={busy}
           disabled={!sample.ok}
           onApply={async () => {
