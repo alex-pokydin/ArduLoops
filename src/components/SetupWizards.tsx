@@ -220,7 +220,10 @@ export function stepGlance(
       if (fn != null) used.add(fn);
     }
     const named = frame.spots.every((spot) => used.has(motorFunction(spot.n)));
-    return { text: named ? "Outputs named" : "Outputs not named", live: named };
+    if (!named) return { text: "Outputs not named", live: false };
+    const pwm = whole(param(params, "MOT_PWM_TYPE"));
+    const protocol = pwm == null ? "" : (["PWM", "OneShot", "OneShot125", "Brushed", "DShot150", "DShot300", "DShot600", "DShot1200"][pwm] ?? "");
+    return { text: protocol ? `${frame.spots.length} motors · ${protocol}` : `${frame.spots.length} motors`, live: true };
   }
   if (kind === "radio") {
     const live = rc.some((value) => value >= 800 && value <= 2200);

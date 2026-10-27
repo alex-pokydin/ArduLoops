@@ -4,11 +4,12 @@ import { getSetupSnapshot, subscribe } from "../mav/store";
 import { useStorePicked, useVehicle } from "../mav/view";
 import { BatteryWizard } from "./BatterySetup";
 import { CalibrationPanel } from "./CalibrationPanel";
-import { ParameterLibrary } from "./ParameterLibrary";
 import { CompassPanel } from "./CompassPanel";
 import { FrameStep } from "./FrameStep";
 import { PlaneAirframeStep } from "./PlaneAirframeStep";
-import { AirspeedWizard, FailsafeWizard, ModeWizard, MotorWizard, RadioWizard, ServoWizard, stepGlance } from "./SetupWizards";
+import { AirspeedWizard, FailsafeWizard, ModeWizard, RadioWizard, stepGlance } from "./SetupWizards";
+import { MotorsStep } from "./MotorsStep";
+import { PlaneOutputsStep } from "./PlaneOutputsStep";
 import { nextSteps, prearmStep, stepState, type StepState } from "../lib/setupSteps";
 import { OPEN_SETUP_OVERVIEW } from "../lib/setupNav";
 import { askAssistant } from "../lib/assistantAsk";
@@ -91,7 +92,6 @@ const BATTERY: Step = {
   group: "Sensors",
 };
 
-const servoFocus = (name: string) => /^SERVO/.test(name);
 
 const LEVEL: Step = {
   id: "level",
@@ -121,8 +121,7 @@ const GROUPS: Group[] = ["Airframe", "Sensors", "Control", "Safety"];
 
 const COPTER: Step[] = [
   { id: "frame", title: "Frame", body: "How many arms, and how the motors are laid out.", kind: "frame", group: "Airframe" },
-  { id: "motors", title: "Motors", body: "The numbers are the motors. The setup spins each output and you tap the arm that turned.", kind: "motors", group: "Airframe" },
-  { id: "servos", title: "Other outputs", body: "Output channel settings. Motor names are the motor step.", kind: "servos", group: "Airframe", optional: true },
+  { id: "motors", title: "Motors & outputs", body: "What is on each output: which motor, which way it spins, and every servo or payload.", kind: "motors", group: "Airframe" },
   LEVEL,
   COMPASS,
   BATTERY,
@@ -133,7 +132,7 @@ const COPTER: Step[] = [
 
 const PLANE: Step[] = [
   { id: "airframe", title: "Airframe type", body: "Pick the surface layout. Outputs are matched on the next step.", kind: "airframe", group: "Airframe" },
-  { id: "servos", title: "Outputs", body: "Check that each surface moves the right way, and reverse one that does not. ESC calibration stays in the wiki, with the propeller removed.", kind: "servos", group: "Airframe" },
+  { id: "servos", title: "Outputs", body: "Everything on an output: each surface, the throttle, the lift motors with QuadPlane, and anything else.", kind: "servos", group: "Airframe" },
   LEVEL,
   COMPASS,
   { id: "airspeed", title: "Airspeed", body: "If there is no airspeed sensor, say so. The usual default expects a sensor that may not be fitted.", kind: "airspeed", group: "Sensors" },
@@ -581,14 +580,14 @@ export const HardwareSetup = memo(function HardwareSetup() {
       ) : (
       <div className="setup-pbody">
         {step.kind === "frame" ? <FrameStep /> : null}
-        {step.kind === "motors" ? <MotorWizard /> : null}
+        {step.kind === "motors" ? <MotorsStep /> : null}
         {step.kind === "radio" ? <><RcLive /><RadioWizard /></> : null}
         {step.kind === "level" ? <CalibrationPanel /> : null}
         {step.kind === "compass" ? <CompassPanel /> : null}
         {step.kind === "modes" ? <ModeWizard frame={frame} /> : null}
         {step.kind === "failsafe" ? <FailsafeWizard frame={frame} /> : null}
         {step.kind === "battery" ? <BatteryWizard /> : null}
-        {step.kind === "servos" ? (frame === "plane" ? <ServoWizard /> : <ParameterLibrary focus={servoFocus} />) : null}
+        {step.kind === "servos" ? <PlaneOutputsStep /> : null}
         {step.kind === "airspeed" ? <AirspeedWizard /> : null}
         {step.kind === "airframe" ? <PlaneAirframeStep /> : null}
       </div>

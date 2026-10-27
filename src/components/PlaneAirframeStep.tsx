@@ -7,7 +7,7 @@ import { noteUi, sameParam, writeParam } from "../mav/cmd";
 import { getSetupSnapshot, getSnapshot, subscribe } from "../mav/store";
 import { useStorePicked } from "../mav/view";
 
-const GUIDE = "https://ardupilot.org/plane/docs/rc-output-mapping.html";
+const GUIDE = "https://ardupilot.org/plane/docs/servo-functions.html";
 
 const CARDS: { kind: LayoutKind; detail: string }[] = [
   { kind: "conventional", detail: "Aileron · elevator · rudder" },
@@ -171,7 +171,7 @@ export function PlaneAirframeStep() {
   else if (!qNow) qLine = t("Adds VTOL motors. Sets Q_ENABLE = 1, then the board must reboot before the Q_ parameters appear.");
   else if (!qOn) qLine = t("Sets Q_ENABLE = 0 and removes VTOL flight after a reboot.");
   else if (qClsNow == null) qLine = t("QuadPlane is on. Reboot the board so the Q_ parameters appear.");
-  else qLine = t("QuadPlane is on: {frame}. The VTOL motors are matched on their own step.", { frame: qFrameTitle });
+  else qLine = t("QuadPlane is on: {frame}. The VTOL motors are matched on the Outputs step.", { frame: qFrameTitle });
 
   return (
     <div className="frs">
