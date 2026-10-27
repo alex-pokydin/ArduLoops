@@ -557,20 +557,41 @@ body.split-drag iframe, body.split-drag canvas { pointer-events: none; }
 .work { padding: 6px 10px 8px; gap: 6px; overflow: hidden; }
 .controller-pane { display: flex; flex-direction: column; flex: 1; min-height: 0; gap: 6px; }
 .controller-pane[hidden] { display: none; }
-.setup { display: grid; grid-template-columns: 232px minmax(0, 1fr); grid-template-rows: auto minmax(0, 1fr); flex: 1; min-height: 0; gap: 8px 12px; }
+.setup { display: grid; grid-template-columns: 248px minmax(0, 1fr); grid-template-rows: auto minmax(0, 1fr); flex: 1; min-height: 0; gap: 8px 12px; }
 .setup-lead { grid-column: 1 / -1; margin: 0; color: var(--dim); font-size: 12px; line-height: 1.45; }
 .setup-lead a { color: var(--cyan); }
-.setup-list { grid-row: 2; list-style: none; margin: 0; padding: 0; min-height: 0; overflow: auto; display: flex; flex-direction: column; gap: 2px; }
-.setup-step { display: flex; align-items: flex-start; gap: 8px; width: 100%; margin: 0; padding: 7px 8px; border-radius: 6px; background: transparent; color: var(--dim); text-align: left; }
+.setup-rail { grid-row: 2; min-height: 0; overflow: auto; display: flex; flex-direction: column; }
+.setup-rail-top { display: flex; flex-direction: column; gap: 7px; padding: 2px 6px 10px; }
+.setup-rail-row { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.setup-rail-row b { color: var(--ink); font-size: 12px; font-weight: 650; }
+.setup-seg { display: inline-flex; padding: 2px; border-radius: 7px; background: #11151a; border: 1px solid #222a36; }
+.setup-seg button { margin: 0; padding: 2px 9px; border-radius: 5px; background: transparent; color: var(--dim); font-size: 11px; font-weight: 600; }
+.setup-seg button[aria-pressed="true"] { background: #2a3140; color: var(--ink); }
+.setup-bar { display: block; height: 5px; border-radius: 3px; background: #222a36; overflow: hidden; }
+.setup-bar i { display: block; height: 100%; border-radius: 3px; background: var(--ok); }
+.setup-bar.amber i { background: var(--amber); }
+.setup-group { border-top: 1px solid #262d38; padding-top: 4px; margin-top: 4px; }
+.setup-group-head { display: flex; justify-content: space-between; padding: 6px 8px 3px; color: var(--dim); font-size: 10px; font-weight: 700; letter-spacing: 0.07em; text-transform: uppercase; }
+.setup-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 1px; }
+.setup-step { display: flex; align-items: center; gap: 8px; width: 100%; margin: 0; padding: 7px 8px; border-radius: 6px; background: transparent; color: var(--dim); text-align: left; }
 .setup-step b { color: var(--ink); font-size: 13px; font-weight: 650; }
-.setup-step.on { background: #141a22; }
+.setup-step.on { background: #0c0e11; box-shadow: inset 2px 0 var(--cyan); }
+.setup-step.opt b { color: #a9b6c4; font-weight: 500; }
 .setup-ico { flex: none; width: 18px; height: 18px; margin-top: 1px; color: var(--dim); }
 .setup-step.on .setup-ico { color: var(--cyan); }
 .setup-ico svg { width: 18px; height: 18px; display: block; }
-.setup-copy { min-width: 0; display: flex; flex-direction: column; gap: 1px; }
+.setup-copy { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 1px; }
 .setup-copy b, .setup-state { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .setup-state { font-size: 11px; }
-.setup-state.live { color: var(--cyan); }
+.setup-step.warn .setup-state { color: var(--amber); }
+.setup-step.fail .setup-state { color: #f4a3a2; }
+.setup-mark { flex: none; width: 15px; height: 15px; }
+.setup-mark svg { width: 15px; height: 15px; display: block; }
+.setup-mark .si-ok { fill: var(--ok); } .setup-mark .si-warn { fill: var(--amber); } .setup-mark .si-hot { fill: var(--hot); }
+.setup-mark .si-mark { fill: none; stroke: var(--bg); stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
+.setup-mark .si-dot { fill: var(--bg); }
+.setup-mark .si-todo { fill: none; stroke: var(--dim); stroke-width: 1.5; }
+.setup-mark .si-dash { fill: none; stroke: #5a6778; stroke-width: 1.6; stroke-linecap: round; }
 .setup-detail { grid-row: 2; display: flex; flex-direction: column; min-height: 0; gap: 8px; overflow: auto; }
 .setup-detail > p { margin: 0; color: var(--dim); font-size: 13px; line-height: 1.4; }
 .wiz { display: flex; flex-direction: column; gap: 8px; }

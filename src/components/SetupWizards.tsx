@@ -303,16 +303,18 @@ export function stepGlance(
     const radioName = vehicle === "plane" ? "FS_SHORT_ACTN" : "FS_THR_ENABLE";
     const radio = whole(param(params, radioName));
     const batt = whole(param(params, "BATT_FS_LOW_ACT"));
-    if (radio == null || batt == null) return { text: "", live: false };
+    if (radio == null) return { text: "", live: false };
     const radioText = vehicle === "plane"
       ? ({ 1: "Circle", 2: "Level, throttle off", 3: "Disabled" } as Record<number, string>)[radio] ?? String(radio)
       : ({ 0: "Disabled", 1: "Return home", 3: "Land" } as Record<number, string>)[radio] ?? String(radio);
-    const battText = vehicle === "plane"
+    const battText = batt == null ? "" : vehicle === "plane"
       ? ({ 0: "Warn only", 1: "Return home", 2: "Land" } as Record<number, string>)[batt] ?? String(batt)
       : ({ 0: "Warn only", 1: "Land", 2: "Return home" } as Record<number, string>)[batt] ?? String(batt);
-    return { text: `${radioText} · ${battText}`, live: vehicle === "plane" ? radio !== 3 : radio !== 0 };
+    // Without a battery monitor ArduPilot hides BATT_FS_LOW_ACT; the radio failsafe still counts.
+    return { text: batt == null ? radioText : `${radioText} · ${battText}`, live: vehicle === "plane" ? radio !== 3 : radio !== 0 };
   }
   if (kind === "battery") {
+    if (whole(param(params, "BATT_MONITOR")) === 0) return { text: "No battery monitor", live: false };
     const cap = whole(param(params, "BATT_CAPACITY"));
     if (cap == null) return { text: "", live: false };
     return { text: `${cap} mAh`, live: cap > 0 };
@@ -340,6 +342,15 @@ export function stepGlance(
     const type = whole(param(params, "ARSPD_TYPE"));
     if (type == null) return { text: "", live: false };
     return { text: type === 0 ? "No airspeed sensor" : "Leave the sensor", live: true };
+  }
+  if (kind === "level") {
+    // ArduPilot's defaults are offset 0 and scale 1; anything else was written by a calibration.
+    const axes = ["X", "Y", "Z"];
+    const offs = axes.map((a) => param(params, `INS_ACCOFFS_${a}`));
+    const scal = axes.map((a) => param(params, `INS_ACCSCAL_${a}`));
+    if ([...offs, ...scal].some((v) => v == null)) return { text: "", live: false };
+    const calibrated = offs.some((v) => v !== 0) || scal.some((v) => v !== 1);
+    return { text: calibrated ? "Calibrated" : "Not calibrated", live: calibrated };
   }
   if (kind === "compass") return compassGlance(params);
   return { text: "", live: false };
