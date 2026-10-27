@@ -655,6 +655,14 @@ fn accel_face(pos: u32) -> bool {
     (1..=6).contains(&pos) || pos == ACCEL_POS_SUCCESS || pos == ACCEL_POS_FAILED
 }
 
+/// Keep one entry per distinct PreArm line, newest first. A line not repeated for
+/// two minutes is dropped; the UI decides which entries still count as current.
+fn note_prearm(lines: &mut Vec<PreArmLine>, text: &str, at: f64) {
+    lines.retain(|line| line.text != text && at - line.at < 120.0);
+    lines.insert(0, PreArmLine { text: text.to_owned(), at });
+    lines.truncate(32);
+}
+
 fn note_accel_pos(sample: &mut Sample, pos: u32, at: f64) {
     if !accel_face(pos) {
         return;
@@ -1359,6 +1367,9 @@ fn handle_msg(st: &mut LinkState, header: &MavHeader, msg: MavMessage) {
                 st.sample.boot_uid = uid;
             }
             let sev = format!("{severity:?}").replace("MAV_SEVERITY_", "");
+            if msg.starts_with("PreArm:") {
+                note_prearm(&mut st.sample.prearm, &msg, wall_time());
+            }
             st.sample.texts.insert(0, format!("{sev} {msg}"));
             st.sample.texts.truncate(256);
         }

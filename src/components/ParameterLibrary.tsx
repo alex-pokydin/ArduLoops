@@ -3,7 +3,8 @@ import { useT } from "../i18n/i18n";
 import { addLog } from "../log";
 import { noteUi, sameParam, send, writeParam } from "../mav/cmd";
 import { APP_HTTP } from "../mav/link";
-import { formatParamBackup, parseParamFile } from "../mav/paramFile";
+import { downloadParamBackup } from "../mav/paramBackup";
+import { parseParamFile } from "../mav/paramFile";
 import { getLinkBits, getParamsSnapshot, getSnapshot, subscribe } from "../mav/store";
 
 type ParamDoc = { human?: string; doc?: string; min?: string; max?: string; range?: string; units?: string };
@@ -136,34 +137,13 @@ export const ParameterLibrary = memo(function ParameterLibrary({ focus }: { focu
   }
 
   function backup() {
-    const live = getSnapshot();
-    const count = live.param_count ?? 0;
-    const params = live.params ?? {};
-    const received = Object.keys(params).filter((name) => Number.isFinite(params[name])).length;
-    if (!live.ok || count === 0 || received < count) {
-      send({ op: "params_list" });
+    const result = downloadParamBackup();
+    if (!result.saved) {
       setJob(tr("Parameter list is incomplete. Wait until every parameter arrives, then back up again."));
       return;
     }
-    const board = live.board_name || "board";
-    const text = formatParamBackup(
-      { board, vehicle: live.frame || "vehicle", uid: live.boot_uid || "" },
-      params,
-    );
-    const stamp = new Date();
-    const pad = (n: number) => String(n).padStart(2, "0");
-    const day = `${stamp.getFullYear()}${pad(stamp.getMonth() + 1)}${pad(stamp.getDate())}-${pad(stamp.getHours())}${pad(stamp.getMinutes())}`;
-    const safeBoard = board.replace(/[^\w.-]+/g, "_");
-    const uid = (live.boot_uid || "").slice(0, 8);
-    const blob = new Blob([text], { type: "text/plain;charset=utf-8" });
-    const url = URL.createObjectURL(blob);
-    const linkEl = document.createElement("a");
-    linkEl.href = url;
-    linkEl.download = `${safeBoard}${uid ? `-${uid}` : ""}-${day}.param`;
-    linkEl.click();
-    URL.revokeObjectURL(url);
-    setJob(tr("Saved {count} parameters", { count: received }));
-    addLog(tr("Saved {count} parameters", { count: received }), "cmd");
+    setJob(tr("Saved {count} parameters", { count: result.count }));
+    addLog(tr("Saved {count} parameters", { count: result.count }), "cmd");
   }
 
   async function restore(file: File) {

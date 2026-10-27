@@ -111,6 +111,51 @@ mod live_buffer_tests {
     use mavlink::MavHeader;
 
     #[test]
+    fn bitflags_and_prearm_lines_reach_the_sample() {
+        use mavlink::ardupilotmega::{
+            EkfStatusFlags, MavSeverity, MavSysStatusSensor, EKF_STATUS_REPORT_DATA, STATUSTEXT_DATA, SYS_STATUS_DATA,
+        };
+        let mut st = LinkState::new();
+        let hdr = MavHeader { system_id: 1, component_id: 1, sequence: 0 };
+        handle_msg(
+            &mut st,
+            &hdr,
+            MavMessage::SYS_STATUS(SYS_STATUS_DATA {
+                onboard_control_sensors_health: MavSysStatusSensor::MAV_SYS_STATUS_PREARM_CHECK,
+                voltage_battery: 12400,
+                ..Default::default()
+            }),
+        );
+        assert_eq!(
+            st.sample.live_nums.get("SYS_STATUS.onboard_control_sensors_health"),
+            Some(&(MavSysStatusSensor::MAV_SYS_STATUS_PREARM_CHECK.bits() as f64))
+        );
+        assert_eq!(st.sample.live_nums.get("SYS_STATUS.voltage_battery"), Some(&12400.0));
+        handle_msg(
+            &mut st,
+            &hdr,
+            MavMessage::EKF_STATUS_REPORT(EKF_STATUS_REPORT_DATA {
+                flags: EkfStatusFlags::EKF_ATTITUDE,
+                ..Default::default()
+            }),
+        );
+        assert_eq!(st.sample.live_nums.get("EKF_STATUS_REPORT.flags"), Some(&(EkfStatusFlags::EKF_ATTITUDE.bits() as f64)));
+
+        let text = |s: &str| {
+            let mut buf = [0u8; 50];
+            buf[..s.len()].copy_from_slice(s.as_bytes());
+            MavMessage::STATUSTEXT(STATUSTEXT_DATA { severity: MavSeverity::MAV_SEVERITY_CRITICAL, text: buf, ..Default::default() })
+        };
+        handle_msg(&mut st, &hdr, text("PreArm: Compass not calibrated"));
+        handle_msg(&mut st, &hdr, text("PreArm: Battery 1 below minimum arming voltage"));
+        handle_msg(&mut st, &hdr, text("PreArm: Compass not calibrated"));
+        handle_msg(&mut st, &hdr, text("EKF3 IMU0 is using GPS"));
+        let lines: Vec<&str> = st.sample.prearm.iter().map(|line| line.text.as_str()).collect();
+        assert_eq!(lines, ["PreArm: Compass not calibrated", "PreArm: Battery 1 below minimum arming voltage"]);
+        assert!(st.sample.prearm.iter().all(|line| line.at > 0.0));
+    }
+
+    #[test]
     fn rangefinder_and_flow_land_on_the_sample() {
         let mut st = LinkState::new();
         let hdr = MavHeader { system_id: 1, component_id: 1, sequence: 0 };

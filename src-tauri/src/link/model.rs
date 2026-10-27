@@ -85,6 +85,14 @@ struct ActiveLogDownload {
 const LOG_PEEK_HEAD: usize = 96 * 1024;
 const LOG_PEEK_TAIL: usize = 8 * 1024;
 
+/// One `PreArm:` STATUSTEXT and when it last arrived. ArduPilot repeats each failing
+/// check while disarmed, so `at` says whether the failure is still current.
+#[derive(Debug, Clone, Serialize)]
+pub struct PreArmLine {
+    pub text: String,
+    pub at: f64,
+}
+
 /// Face the vehicle is asking for during a six-face accelerometer calibration.
 #[derive(Debug, Clone, Serialize, Default)]
 pub struct AccelCal {
@@ -237,6 +245,8 @@ pub struct Sample {
     pub events: Vec<serde_json::Value>,
     /// Newest first. STATUSTEXT from the vehicle.
     pub texts: Vec<String>,
+    /// Distinct `PreArm:` lines with the time each last arrived. Newest first.
+    pub prearm: Vec<PreArmLine>,
     /// Compass calibration progress and the latest report, one slot per compass id.
     #[serde(default)]
     pub mag_cal: Vec<MagCalSlot>,
@@ -349,6 +359,7 @@ impl Sample {
             live_nums: HashMap::new(),
             events: Vec::new(),
             texts: Vec::new(),
+            prearm: Vec::new(),
             mag_cal: Vec::new(),
             accel_cal: AccelCal { pos: 0, at: 0.0 },
             init_done: 0,

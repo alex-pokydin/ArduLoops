@@ -44,7 +44,9 @@ fn absorb_message(nums: &mut HashMap<String, f64>, msg: &MavMessage) {
         if key == "type" || key == "axis" {
             continue;
         }
-        let Some(n) = item.as_f64() else { continue };
+        // Bitflag fields serialize as {"bits": N}; keep N so flags such as
+        // SYS_STATUS health or EKF_STATUS_REPORT.flags reach the UI.
+        let Some(n) = item.as_f64().or_else(|| item.get("bits").and_then(|bits| bits.as_f64())) else { continue };
         if !n.is_finite() {
             continue;
         }
