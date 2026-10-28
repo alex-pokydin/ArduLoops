@@ -1,4 +1,5 @@
 import type { LuaQuote } from "../luaQuote";
+import type { SetupView } from "../lib/setupView";
 import { APP_HTTP } from "../mav/link";
 
 export type AiAccount = {
@@ -85,10 +86,10 @@ export const ai = {
     json("/ai/chats/rename", { method: "POST", body: JSON.stringify({ id, title }) }),
   thread: (chat: string) => json<{ messages: Msg[]; proposals: Proposal[] }>(`/ai/messages?chat=${encodeURIComponent(chat)}`),
   live: (chat: string) => json<LiveTurn>(`/ai/live?chat=${encodeURIComponent(chat)}`),
-  send: (chat: string, text: string, lang: string, model: string, reasoning: string, log = "", script: LuaQuote | null = null, signal?: AbortSignal, images: string[] = []) =>
+  send: (chat: string, text: string, lang: string, model: string, reasoning: string, log = "", script: LuaQuote | null = null, signal?: AbortSignal, view: SetupView | null = null, images: string[] = []) =>
     json<{ ok: boolean; status?: string; message?: string; proposal?: Proposal | null }>("/ai/send", {
       method: "POST",
-      body: JSON.stringify({ chat, text, lang, model, reasoning, log, ...(script ? { script } : {}), ...(images.length ? { images } : {}) }),
+      body: JSON.stringify({ chat, text, lang, model, reasoning, log, ...(script ? { script } : {}), ...(view ? { view } : {}), ...(images.length ? { images } : {}) }),
       signal,
     }),
   /** Store one image on the bridge. The id goes into `send`. */

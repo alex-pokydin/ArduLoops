@@ -15,7 +15,8 @@ import type { WizardClose } from "../wizards/close";
 import { ChartStrip, chartsFromTools } from "./FindingCharts";
 import { LiveHost, LiveView, liveSpecFromTools, type LiveSpec } from "./LivePlots";
 import { getLang, useT } from "../i18n/i18n";
-import { ASK_ASSISTANT } from "../lib/assistantAsk";
+import { ASK_ASSISTANT, takeFocusRequest, type AskDetail } from "../lib/assistantAsk";
+import { getAskStarters, getSetupView, getViewOff, sentView, setAskStarters, setViewOff, setWaitingCards, subscribeSetupView, viewLabel, type SetupView } from "../lib/setupView";
 import { getLuaQuote, quoteLabel, setLuaQuote, subscribeLuaQuote, type LuaQuote } from "../luaQuote";
 import { subscribe } from "../mav/store";
 import { useVehicle, viewSample } from "../mav/view";
@@ -56,7 +57,7 @@ type LinkFace = {
 let linkFaceCache: LinkFace = { ok: false, frame: "", mode: "", armed: false, boot_uid: "", board_name: "", sitl: false };
 let linkFaceVehicle = "";
 
-type PendingOut = { role: "user" | "steer"; body: string; at: number; attach: string; quote: string; images: string[] };
+type PendingOut = { role: "user" | "steer"; body: string; at: number; attach: string; quote: string; view: string; images: string[] };
 
 function quotePayload(quoted: LuaQuote): string {
   return JSON.stringify({
@@ -89,6 +90,7 @@ function mergeOutgoing(list: Msg[], pendingRef: { current: PendingOut | null }):
   if (pending.attach) extra.push({ role: "attach", body: pending.attach, at: pending.at });
   for (const id of pending.images) extra.push({ role: "image", body: id, at: pending.at });
   if (pending.quote) extra.push({ role: "quote", body: pending.quote, at: pending.at });
+  if (pending.view) extra.push({ role: "view", body: pending.view, at: pending.at });
   return [...list, ...extra];
 }
 
@@ -514,15 +516,43 @@ export function Assistant({
   configuredRef.current = !!status?.configured;
   const optionsRef = useRef(onOpenOptions);
   optionsRef.current = onOpenOptions;
+  const busyRef = useRef(false);
+  busyRef.current = busy;
+  /** An empty conversation, as the New chat button starts; the view chip is back on for it. */
+  function newThread() {
+    threadGen.current += 1;
+    pendingOut.current = null;
+    setChatId("");
+    setMessages([]);
+    setProposals([]);
+    messagesRef.current = [];
+    setViewOff(false);
+    setAskStarters([]);
+  }
+  const newThreadRef = useRef(newThread);
+  newThreadRef.current = newThread;
+  // Setup marks the step a waiting card belongs to.
+  useEffect(() => {
+    setWaitingCards(proposals
+      .filter((p) => p.status === "pending" && (p.kind === "wizard" || !p.kind || p.kind === "param"))
+      .map((p) => ({ kind: p.kind === "wizard" ? "wizard" : "param", name: p.param })));
+  }, [proposals]);
   useEffect(() => {
     const ask = (ev: Event) => {
-      const text = (ev as CustomEvent<string>).detail;
+      const detail = (ev as CustomEvent<AskDetail>).detail;
       if (!configuredRef.current) {
         optionsRef.current();
         return;
       }
       setOpen(true);
-      if (text) void sendRef.current?.(undefined, text, true);
+      if (detail.send) {
+        if (detail.text) void sendRef.current?.(undefined, detail.text, true);
+        return;
+      }
+      if (detail.keep) return;
+      // Ask: a new chat with the view chip on and nothing sent. A running turn is not cut.
+      if (!busyRef.current) newThreadRef.current?.();
+      setAskStarters(detail.starters ?? []);
     };
     window.addEventListener(ASK_ASSISTANT, ask);
     return () => window.removeEventListener(ASK_ASSISTANT, ask);
@@ -564,13 +594,14 @@ export function Assistant({
     setProposals(thread.proposals);
     return true;
   }
-  function paintOutgoing(role: "user" | "steer", text: string, attached: string, quoted: LuaQuote | null, pics: string[] = []) {
+  function paintOutgoing(role: "user" | "steer", text: string, attached: string, quoted: LuaQuote | null, viewed: SetupView | null, pics: string[] = []) {
     pendingOut.current = {
       role,
       body: text,
       at: Math.floor(Date.now() / 1000),
       attach: attached,
       quote: quoted ? quotePayload(quoted) : "",
+      view: viewed ? JSON.stringify(viewed) : "",
       images: pics,
     };
     setMessages((prev) => {
@@ -715,23 +746,20 @@ export function Assistant({
         setNote("The assistant is still answering. Send this when it finishes.");
         return;
       }
-      threadGen.current += 1;
-      pendingOut.current = null;
-      setChatId("");
-      setProposals([]);
-      setMessages([]);
-      messagesRef.current = [];
+      newThread();
     }
     const attached = logId;
     const quoted = preset ? null : getLuaQuote();
+    const viewed = sentView();
+    if (!fresh) setAskStarters([]);
     if (busy) {
       if (!chatId) return;
       setDraft("");
       setLogId("");
       setLuaQuote(null);
-      paintOutgoing("steer", text, "", quoted);
+      paintOutgoing("steer", text, "", quoted, viewed);
       try {
-        const res = await ai.send(chatId, text, getLang(), model, reasoning, attached, quoted);
+        const res = await ai.send(chatId, text, getLang(), model, reasoning, attached, quoted, undefined, viewed);
         if (!res.ok) setNote(res.status || "network unavailable");
         const gen = openThread();
         const thread = await ai.thread(chatId);
@@ -760,7 +788,7 @@ export function Assistant({
     setLogId("");
     if (!presetImages) setImages([]);
     setLuaQuote(null);
-    paintOutgoing("user", text, attached, quoted, pics);
+    paintOutgoing("user", text, attached, quoted, viewed, pics);
     const ctrl = new AbortController();
     sendAbort.current = ctrl;
     sending.current = true;
@@ -771,7 +799,7 @@ export function Assistant({
         id = created.id;
         setChatId(id);
       }
-      const res = await ai.send(id, text, getLang(), model, reasoning, attached, quoted, ctrl.signal, pics);
+      const res = await ai.send(id, text, getLang(), model, reasoning, attached, quoted, ctrl.signal, viewed, pics);
       if (!res.ok) setNote(res.status || "network unavailable");
       const gen = openThread();
       const thread = await ai.thread(id);
@@ -1014,7 +1042,7 @@ export function Assistant({
             models={models}
             bench={status?.bench || null}
             quota={hostedQuota(status)}
-            onPick={setChatId}
+            onPick={(id) => { setViewOff(false); setAskStarters([]); setChatId(id); }}
             onDraft={setDraft}
             onModel={setModel}
             onSend={(preset) => void onSend(undefined, preset)}
@@ -1023,7 +1051,7 @@ export function Assistant({
             onCancelWait={onCancelWait}
             onOpenWizard={(id, wizard) => setWizardAsk({ id, wizard, scope: wizardScope(proposals.find((p) => p.id === id)?.payload) })}
             wizardOpenId={wizardAsk?.id ?? ""}
-            onNew={() => { threadGen.current += 1; pendingOut.current = null; setChatId(""); setMessages([]); setProposals([]); }}
+            onNew={newThread}
             onBench={openBench}
             onStop={() => void ai.benchStop().then(() => refreshStatus())}
             query={query}
@@ -1136,7 +1164,7 @@ export function Assistant({
               bench={status?.bench || null}
               quota={hostedQuota(status)}
               compact
-              onPick={setChatId}
+              onPick={(id) => { setViewOff(false); setAskStarters([]); setChatId(id); }}
               onDraft={setDraft}
               onModel={setModel}
               onSend={(preset) => void onSend(undefined, preset)}
@@ -1145,7 +1173,7 @@ export function Assistant({
               onCancelWait={onCancelWait}
               onOpenWizard={(id, wizard) => setWizardAsk({ id, wizard, scope: wizardScope(proposals.find((p) => p.id === id)?.payload) })}
               wizardOpenId={wizardAsk?.id ?? ""}
-              onNew={() => { threadGen.current += 1; pendingOut.current = null; setChatId(""); setMessages([]); setProposals([]); }}
+              onNew={newThread}
               onBench={openBench}
               onStop={() => void ai.benchStop().then(() => refreshStatus())}
               query={query}
@@ -1301,6 +1329,10 @@ function ChatPane({
   flow?: Sample["log_download"];
 }) {
   const scriptQuote = useSyncExternalStore(subscribeLuaQuote, getLuaQuote, getLuaQuote);
+  const setupView = useSyncExternalStore(subscribeSetupView, getSetupView, getSetupView);
+  const viewOff = useSyncExternalStore(subscribeSetupView, getViewOff, getViewOff);
+  const askStarters = useSyncExternalStore(subscribeSetupView, getAskStarters, getAskStarters);
+  const viewOn = !!setupView && !viewOff;
   const scroller = useRef<HTMLDivElement>(null);
   const stick = useRef(true);
   const pinning = useRef(false);
@@ -1472,6 +1504,16 @@ function ChatPane({
     el.style.height = `${Math.min(168, Math.max(24, el.scrollHeight))}px`;
   }, [draft]);
   useEffect(() => {
+    const focus = () => {
+      window.setTimeout(() => {
+        if (takeFocusRequest()) box.current?.focus();
+      }, 60);
+    };
+    focus();
+    window.addEventListener(ASK_ASSISTANT, focus);
+    return () => window.removeEventListener(ASK_ASSISTANT, focus);
+  }, []);
+  useEffect(() => {
     if (!plus) return;
     const close = (ev: PointerEvent) => {
       if (!(ev.target instanceof Element) || !ev.target.closest(".ai-plus-wrap")) setPlus(false);
@@ -1614,8 +1656,15 @@ function ChatPane({
               <div className="ai-empty">
                 <Orb />
                 <h2>ArduLoops <span>{t("Assistant")}</span></h2>
+                {viewOn && askStarters.length && setupView ? (
+                  <p className="ai-view-lead">
+                    {setupView.draft.length
+                      ? t("The assistant sees {step} and your unwritten changes.", { step: t(setupView.title) })
+                      : t("The assistant sees {step}.", { step: t(setupView.title) })}
+                  </p>
+                ) : null}
                 <div className="ai-prompts">
-                  {starterPrompts(drone.frame).map((text) => (
+                  {(viewOn && askStarters.length ? askStarters : starterPrompts(drone.frame)).map((text) => (
                     <button type="button" key={text} onClick={() => onSend(t(text))}>{t(text)}</button>
                   ))}
                 </div>
@@ -1631,7 +1680,7 @@ function ChatPane({
             ) : block.kind === "proposal" ? (
               <ProposalCard key={block.key} t={t} items={block.items} busy={busy} onDecision={onDecision} onCancelWait={onCancelWait} onOpenWizard={onOpenWizard} wizardOpenId={wizardOpenId} />
             ) : (
-              block.attach || block.quote || block.images?.length ? (
+              block.attach || block.quote || block.view || block.images?.length ? (
                 <div key={block.key} className="ai-user-block">
                   <article className={block.msg.role}>
                     {block.msg.role === "steer" ? <span className="ai-steer-label">{t("Note for later")}</span> : null}
@@ -1648,6 +1697,7 @@ function ChatPane({
                   ) : null}
                   {block.attach ? <span className="ai-chip ai-chip-sent" title={block.attach}>{logName(block.attach)}</span> : null}
                   {block.quote ? <span className="ai-chip ai-chip-line" title={block.quoteTitle}>{block.quote}</span> : null}
+                  {block.view ? <ViewChip body={block.view} t={t} /> : null}
                 </div>
               ) : block.docs?.length && !block.msg.body ? (
                 <DocStrip key={block.key} docs={block.docs} />
@@ -1728,8 +1778,14 @@ function ChatPane({
               </div>
             ) : null}
             {imageNote ? <p className="ai-error">{t(imageNote)}</p> : null}
-            {scriptQuote || logId ? (
+            {scriptQuote || logId || viewOn ? (
               <div className="ai-chips">
+                {viewOn && setupView ? (
+                  <span className="ai-chip ai-chip-view" title={t("Sent with your message: where you are in Setup and what you have not written yet.")}>
+                    <span>{viewLabel(setupView, t)}</span>
+                    <button type="button" aria-label={t("Remove")} onClick={() => setViewOff(true)}>×</button>
+                  </span>
+                ) : null}
                 {scriptQuote ? (
                   <span className="ai-chip ai-chip-line" title={scriptQuote.selection}>
                     <span>{quoteLabel(scriptQuote)}</span>
@@ -1745,7 +1801,7 @@ function ChatPane({
               ref={box}
               value={draft}
               onChange={(ev) => onDraft(ev.target.value)}
-              placeholder={waiting || busy ? t("Add a note for the next reply") : t("Ask about this vehicle")}
+              placeholder={waiting || busy ? t("Add a note for the next reply") : viewOn && setupView ? t("Ask about {step}…", { step: setupView.focus ?? t(setupView.title) }) : t("Ask about this vehicle")}
               aria-label={t("Message")}
               rows={1}
               onPaste={(ev) => {
@@ -1774,6 +1830,12 @@ function ChatPane({
                 </button>
                 {plus ? (
                   <div className="ai-plus-menu">
+                    {setupView ? (
+                      <label className="ai-plus-check">
+                        <input type="checkbox" checked={!viewOff} onChange={(ev) => setViewOff(!ev.target.checked)} />
+                        <span>{t("Current view")}<small>{viewLabel(setupView, t)}</small></span>
+                      </label>
+                    ) : null}
                     <div className="ai-log-pick">
                       <span className="ai-log-head">{t("Local log")}</span>
                       <input
@@ -2181,9 +2243,20 @@ const AssistantMarkdown = memo(function AssistantMarkdown({ text }: { text: stri
 
 type ToolItem = { key: string; name: string; input?: string; output: string; usd?: number };
 type ThreadBlock =
-  | { kind: "msg"; key: string; msg: Msg; at: number; attach?: string; images?: string[]; quote?: string; quoteTitle?: string; docs?: SavedDoc[] }
+  | { kind: "msg"; key: string; msg: Msg; at: number; attach?: string; images?: string[]; quote?: string; quoteTitle?: string; view?: string; docs?: SavedDoc[] }
   | { kind: "tools"; key: string; items: ToolItem[]; workedMs?: number; workedUsd?: number; workedTokens?: number; note?: string; at: number }
   | { kind: "proposal"; key: string; items: Proposal[]; at: number };
+
+/** The Setup view chip a sent message carried, as it was at send time. */
+function ViewChip({ body, t }: { body: string; t: (k: string, vars?: Record<string, string | number>) => string }) {
+  let label = "";
+  try {
+    label = viewLabel(JSON.parse(body) as SetupView, t);
+  } catch {
+    return null;
+  }
+  return <span className="ai-chip ai-chip-view" title={t("What the assistant saw: where you were in Setup and what you had not written yet.")}>{label}</span>;
+}
 
 function quoteChip(body: string): { label: string; title: string } {
   try {
@@ -2310,6 +2383,13 @@ function groupMessages(messages: Msg[]): ThreadBlock[] {
       const prev = out.at(-1);
       if (prev?.kind === "msg" && (prev.msg.role === "user" || prev.msg.role === "steer") && !prev.quote) {
         out[out.length - 1] = { ...prev, quote: chip.label, quoteTitle: chip.title };
+      }
+      continue;
+    }
+    if (msg.role === "view") {
+      const prev = out.at(-1);
+      if (prev?.kind === "msg" && (prev.msg.role === "user" || prev.msg.role === "steer") && !prev.view) {
+        out[out.length - 1] = { ...prev, view: msg.body };
       }
       continue;
     }

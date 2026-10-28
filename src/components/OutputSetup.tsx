@@ -5,6 +5,8 @@ import { COPTER_FUNCTIONS, PLANE_FUNCTIONS } from "../lib/servoFunctionData";
 import { noteUi, sameParam, writeParam } from "../mav/cmd";
 import { getSnapshot } from "../mav/store";
 import { useStorePicked } from "../mav/view";
+import { openAssistant } from "../lib/assistantAsk";
+import { setViewFocus, useViewDraft } from "../lib/setupView";
 
 export const OUTPUTS = 16;
 
@@ -72,6 +74,7 @@ export function useParamDraft(params: Record<string, number>) {
       setBusy(false);
     }
   }
+  useViewDraft(changes.map(([param, to]) => ({ param, from: pnum(params, param), to })));
   return { value, set, changes, discard, write, busy, error, written, setWritten };
 }
 
@@ -133,6 +136,29 @@ export function StepFooter({
   );
 }
 
+/**
+ * The violet spark on a hovered field row: opens the chat about that parameter, with the draft in the view chip.
+ * Nothing is sent.
+ */
+export function FieldAsk({ name }: { name: string }) {
+  const t = useT();
+  return (
+    <button
+      type="button"
+      className="ops-ask"
+      aria-label={t("Ask about {name}", { name })}
+      title={t("Ask about {name}", { name })}
+      onClick={(ev) => {
+        ev.preventDefault();
+        setViewFocus(name);
+        openAssistant([t("Is my value for {name} right for this vehicle?", { name }), t("What does {name} change in flight?", { name })]);
+      }}
+    >
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M12 1.8c.35 3.1 1.55 5.2 3.7 7.35 2.15 2.15 4.25 3.35 7.35 3.7-3.1.35-5.2 1.55-7.35 3.7-2.15 2.15-3.35 4.25-3.7 7.35-.35-3.1-1.55-5.2-3.7-7.35-2.15-2.15-4.25-3.35-7.35-3.7 3.1-.35 5.2-1.55 7.35-3.7 2.15-2.15 3.35-4.25 3.7-7.35Z" /></svg>
+    </button>
+  );
+}
+
 /** A labelled number input bound to a parameter. `scale` shows ms as s, for example. */
 export function NumField({ draft, name, label, unit, width = 74, scale = 1, step }: { draft: Draft; name: string; label: string; unit?: string; width?: number; scale?: number; step?: number }) {
   const t = useT();
@@ -142,6 +168,7 @@ export function NumField({ draft, name, label, unit, width = 74, scale = 1, step
   return (
     <label className="ops-field">
       <span className="ops-field-copy"><b>{t(label)}</b><span>{name}</span></span>
+      <FieldAsk name={name} />
       <span className="ops-num">
         <input
           type="number"
@@ -174,6 +201,7 @@ export function SwitchField({ draft, name, label }: { draft: Draft; name: string
   return (
     <div className="ops-field">
       <span className="ops-field-copy"><b>{t(label)}</b><span>{name}</span></span>
+      <FieldAsk name={name} />
       <Switch on={v !== 0} label={t(label)} onChange={(on) => draft.set(name, on ? 1 : 0)} />
     </div>
   );
@@ -187,6 +215,7 @@ export function SelectField({ draft, name, label, options, hint }: { draft: Draf
   return (
     <label className="ops-field">
       <span className="ops-field-copy"><b>{t(label)}</b><span>{hint ?? name}</span></span>
+      <FieldAsk name={name} />
       <select value={Math.round(v)} onChange={(e) => draft.set(name, Number(e.target.value))}>
         {list.map(([o, text]) => <option key={o} value={o}>{t(text)}</option>)}
       </select>

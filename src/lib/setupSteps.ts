@@ -20,10 +20,25 @@ export function prearmStep(text: string): string | null {
   return null;
 }
 
-/**
- * One state per step. A current PreArm failure wins; otherwise the step's own glance:
- * live = done, something to say but not live = needs attention, nothing yet = to do.
- */
+/** A step's parameter list holds exact names and prefixes ending in `*` (`COMPASS_*`, `SERVO*`). */
+export function paramMatches(pattern: string, name: string): boolean {
+  return pattern.endsWith("*") ? name.startsWith(pattern.slice(0, -1)) : name === pattern;
+}
+
+/** The step that owns a parameter: an exact name first, then the first prefix in step order. */
+export function stepOfParam<T extends { id: string; params: string[] }>(steps: T[], name: string): T | null {
+  return (
+    steps.find((step) => step.params.includes(name)) ??
+    steps.find((step) => step.params.some((p) => p.endsWith("*") && paramMatches(p, name))) ??
+    null
+  );
+}
+
+/** Names on the board that a step reads, sorted, at most `limit`. */
+export function stepParamNames(patterns: string[], params: Record<string, number>, limit = 160): string[] {
+  return Object.keys(params).filter((name) => patterns.some((p) => paramMatches(p, name))).sort().slice(0, limit);
+}
+
 /**
  * What to do next on the Overview: required steps that are not done, the ones that block arming first,
  * then those that need attention, then the rest, each in step order.
@@ -38,6 +53,10 @@ export function nextSteps<T>(items: { item: T; state: StepState; optional: boole
     .map((entry) => entry.item);
 }
 
+/**
+ * One state per step. A current PreArm failure wins; otherwise the step's own glance:
+ * live = done, something to say but not live = needs attention, nothing yet = to do.
+ */
 export function stepState(glance: { text: string; live: boolean }, prearm: string[], optional: boolean): { state: StepState; reason: string } {
   if (prearm.length) return { state: "fail", reason: prearm[0].replace(/^PreArm:\s*/, "") };
   if (glance.live) return { state: "done", reason: glance.text };

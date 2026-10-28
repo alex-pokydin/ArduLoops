@@ -3,7 +3,7 @@
 
 #[cfg(test)]
 mod link_wait_tests {
-        use super::{admit_chart, append_steer, assistant_from_calls, attached_log_board_note, image_file, image_ids, store_image, turn_images, user_message, keep_call_chunk, settled_message, tool_args, attached_log_note, batch_token, begin_live, call_again, call_provider, change_detail, chat_tools, claim_steers_through, compact_prompt, connect_already_up, conversation_prompt, default_model, drain_steers, end_live, failure_body, fit_result, halt_turn, link_fresh, live_buffer, live_fields, live_reply, live_status, live_thinking, live_thought, load_secrets, log_download_wait_s, next_fold_turn, note_stopped_turns_on, note_tool, outcome_item, plan_context, provider_failure, provider_model, provider_turn, reasoning_effort, render_context, scrub_chart, show_live, shown_reply, stamp_live, take_leaked_calls, tool_schema, tool_text, turn_halted, turn_is_live, turn_options, ui_notes, motor_scope, wizard_frame_ok, wizard_line, wizard_name_ok, wizard_vehicle, xml_block, ChartBook, ChartSlot, MsgRow, SKILL_ROOT};
+        use super::{admit_chart, append_steer, assistant_from_calls, attached_log_board_note, image_file, image_ids, store_image, turn_images, user_message, keep_call_chunk, settled_message, tool_args, attached_log_note, batch_token, begin_live, call_again, call_provider, change_detail, chat_tools, claim_steers_through, compact_prompt, connect_already_up, conversation_prompt, default_model, drain_steers, end_live, failure_body, fit_result, halt_turn, link_fresh, live_buffer, live_fields, live_reply, live_status, live_thinking, live_thought, load_secrets, log_download_wait_s, next_fold_turn, note_stopped_turns_on, note_tool, outcome_item, plan_context, provider_failure, provider_model, provider_turn, reasoning_effort, render_context, scrub_chart, show_live, shown_reply, stamp_live, take_leaked_calls, tool_schema, tool_text, turn_halted, turn_is_live, turn_options, ui_notes, motor_scope, wizard_frame_ok, wizard_line, wizard_name_ok, wizard_vehicle, xml_block, ChartBook, ChartSlot, MsgRow, SKILL_ROOT, setup_view_body};
     use crate::link::Sample;
     use rusqlite::Connection;
     use serde_json::{json, Value};
@@ -979,6 +979,27 @@ mod link_wait_tests {
         assert!(text.contains("full source"), "{text}");
         assert!(text.contains("unsaved"), "{text}");
         assert!(text.contains("script_read"), "{text}");
+    }
+
+    #[test]
+    fn a_setup_view_names_the_step_the_field_and_the_draft() {
+        let sent = json!({ "view": {
+            "view": "setup", "vehicle": "plane", "step": "servos", "title": "Outputs", "focus": "THR_MAX",
+            "draft": [{ "param": "THR_MAX", "from": 75.0, "to": 80.0 }, { "param": "SERVO5_FUNCTION", "from": null, "to": 21.0 }],
+            "warnings": [], "extra": "x".repeat(5000),
+        } });
+        let body = setup_view_body(&sent).expect("view");
+        assert!(body.len() < 1024, "{body}");
+        assert!(!body.contains("extra"), "{body}");
+        let rows = vec![
+            MsgRow { id: 1, role: "user".into(), body: "is this right".into() },
+            MsgRow { id: 2, role: "view".into(), body },
+        ];
+        let text = render_context(&plan_context(&rows));
+        assert!(text.contains("Setup › Outputs, looking at THR_MAX"), "{text}");
+        assert!(text.contains("THR_MAX 75 → 80; SERVO5_FUNCTION not set → 21"), "{text}");
+        assert!(text.contains("setup_status(section: \"servos\")"), "{text}");
+        assert!(setup_view_body(&json!({ "view": { "step": "" } })).is_none());
     }
 
     fn saved_provider_model(provider: &str) -> Option<String> {

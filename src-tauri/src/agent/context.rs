@@ -319,10 +319,85 @@ fn quote_for_model(body: &str) -> String {
     )
 }
 
+/// The Setup view chip sent with a message: the step, the field asked about, and the unwritten draft.
+/// Only these keys are kept, and each is clipped, so a stored view stays well under 1 KB.
+fn setup_view_body(value: &Value) -> Option<String> {
+    let view = value.get("view")?;
+    let step = view.get("step")?.as_str()?.trim();
+    if step.is_empty() || step.len() > 32 {
+        return None;
+    }
+    let title = clip_chars(view["title"].as_str().unwrap_or(step).trim(), 64);
+    let vehicle = clip_chars(view["vehicle"].as_str().unwrap_or("").trim(), 16);
+    let focus = clip_chars(view["focus"].as_str().unwrap_or("").trim(), 32);
+    let draft: Vec<Value> = view["draft"].as_array().map(|list| {
+        list.iter().take(24).filter_map(|item| {
+            let param = item.get("param")?.as_str()?.trim();
+            if param.is_empty() || param.len() > 32 {
+                return None;
+            }
+            Some(json!({ "param": param, "from": item.get("from").and_then(Value::as_f64), "to": item.get("to")?.as_f64()? }))
+        }).collect()
+    }).unwrap_or_default();
+    let warnings: Vec<String> = view["warnings"].as_array().map(|list| {
+        list.iter().take(8).filter_map(|item| item.as_str().map(|text| clip_chars(text.trim(), 64))).collect()
+    }).unwrap_or_default();
+    Some(json!({
+        "view": "setup",
+        "vehicle": vehicle,
+        "step": step,
+        "title": title,
+        "focus": if focus.is_empty() { Value::Null } else { json!(focus) },
+        "draft": draft,
+        "warnings": warnings,
+    }).to_string())
+}
+
+fn short_num(value: f64) -> String {
+    let text = format!("{value:.4}");
+    let text = text.trim_end_matches('0').trim_end_matches('.');
+    if text.is_empty() || text == "-0" { "0".into() } else { text.to_string() }
+}
+
+fn view_for_model(body: &str) -> String {
+    let Ok(value) = serde_json::from_str::<Value>(body) else {
+        return String::new();
+    };
+    let title = value["title"].as_str().unwrap_or("");
+    let step = value["step"].as_str().unwrap_or("overview");
+    let mut out = format!("The user is on Controller › Setup › {title}");
+    if let Some(focus) = value["focus"].as_str() {
+        out.push_str(&format!(", looking at {focus}"));
+    }
+    out.push('.');
+    let draft: Vec<String> = value["draft"].as_array().map(|list| {
+        list.iter().filter_map(|item| {
+            let param = item["param"].as_str()?;
+            let to = item["to"].as_f64()?;
+            let from = item["from"].as_f64().map(short_num).unwrap_or_else(|| "not set".into());
+            Some(format!("{param} {from} → {}", short_num(to)))
+        }).collect()
+    }).unwrap_or_default();
+    if draft.is_empty() {
+        out.push_str(" No unwritten changes.");
+    } else {
+        out.push_str(&format!(" Unwritten draft, not on the vehicle: {}.", draft.join("; ")));
+    }
+    let warnings: Vec<&str> = value["warnings"].as_array().map(|list| list.iter().filter_map(Value::as_str).collect()).unwrap_or_default();
+    if !warnings.is_empty() {
+        out.push_str(&format!(" Warnings on screen: {}.", warnings.join(", ")));
+    }
+    out.push_str(&format!(" Call setup_status(section: \"{step}\") for the vehicle state."));
+    out
+}
+
 fn for_context(role: &str, body: &str) -> String {
     let body = body.trim();
     if role == "quote" {
         return quote_for_model(body);
+    }
+    if role == "view" {
+        return view_for_model(body);
     }
     if role == "doc" {
         return format!("A document link was saved for this account: {body}");

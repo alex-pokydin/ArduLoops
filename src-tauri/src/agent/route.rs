@@ -95,6 +95,8 @@ pub fn route(
         ("GET", "/ai/audit") => Ok(audit_list(&c)),
         ("POST", "/ai/revert") => revert_audit(&c, body, sample),
         ("POST", "/ai/note") => note_ui(&c, body),
+        ("POST", "/ai/setup-status") => publish_setup_status(body),
+        ("GET", "/ai/setup-status") => Ok(setup_status(query.get("section").map(String::as_str).unwrap_or(""), sample)),
         ("POST", "/ai/bench") => bench(&c, body),
         ("POST", "/ai/bench/stop") => Ok(bench_stop(&c, "Emergency stop")),
         ("POST", "/ai/stop") => {
@@ -364,7 +366,7 @@ fn note_stopped_turns_on(c: &Connection) {
     }
     for chat in chats {
         let last: Option<String> = c.query_row(
-            "SELECT role FROM ai_message WHERE chat_id=?1 AND role NOT IN ('held', 'compact', 'context', 'work', 'attach', 'image', 'quote', 'doc') ORDER BY id DESC LIMIT 1",
+            "SELECT role FROM ai_message WHERE chat_id=?1 AND role NOT IN ('held', 'compact', 'context', 'work', 'attach', 'image', 'quote', 'view', 'doc') ORDER BY id DESC LIMIT 1",
             [&chat],
             |row| row.get(0),
         ).ok();
@@ -554,6 +556,18 @@ fn store_script_quote(c: &Connection, chat: &str, body: &Value, t: i64) -> Resul
     Ok(())
 }
 
+/// The Setup view chip, stored after the message as it was at send time.
+fn store_setup_view(c: &Connection, chat: &str, body: &Value, t: i64) -> Result<(), (u16, String)> {
+    let Some(stored) = setup_view_body(body) else {
+        return Ok(());
+    };
+    c.execute(
+        "INSERT INTO ai_message (chat_id, role, body, created_at) VALUES (?1, 'view', ?2, ?3)",
+        params![chat, stored, t],
+    ).map_err(|e| (500, e.to_string()))?;
+    Ok(())
+}
+
 fn send(c: &Connection, body: &Value, sample: &Sample, tx: &Sender<Cmd>) -> Result<Value, (u16, String)> {
     let chat = body["chat"].as_str().unwrap_or("");
     let text = body["text"].as_str().unwrap_or("").trim();
@@ -570,6 +584,7 @@ fn send(c: &Connection, body: &Value, sample: &Sample, tx: &Sender<Cmd>) -> Resu
             params![chat, text, t],
         ).map_err(|e| (500, e.to_string()))?;
         store_script_quote(c, chat, body, t)?;
+        store_setup_view(c, chat, body, t)?;
         c.execute("UPDATE ai_chat SET updated_at=?1 WHERE id=?2", params![t, chat]).ok();
         return Ok(json!({"ok": true, "status": "steer", "message": text}));
     }
@@ -589,6 +604,7 @@ fn send(c: &Connection, body: &Value, sample: &Sample, tx: &Sender<Cmd>) -> Resu
         ).map_err(|e| (500, e.to_string()))?;
     }
     store_script_quote(c, chat, body, t)?;
+    store_setup_view(c, chat, body, t)?;
     remember_chat_vehicle(c, chat, sample);
     if title_is_new(c, chat) {
         let title: String = text.chars().take(48).collect();

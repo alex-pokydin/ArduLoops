@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState, useSyncExternalStore } from "react";
+import { useViewDraft } from "../lib/setupView";
 import { useT } from "../i18n/i18n";
 import { addLog } from "../log";
 import { FRAME_DEFS } from "../lib/motorFrameData";
@@ -113,6 +114,10 @@ export function FrameStep() {
   const nextType = cls == null ? null : picked?.any ? (cls === savedCls && savedType != null ? savedType : ANY_TYPE) : type;
   const changes = cls == null || nextType == null ? 0 : Number(cls !== savedCls) + Number(nextType !== savedType);
   const canWrite = sample.ok && !armed && changes > 0 && !busy;
+  useViewDraft([
+    ...(cls != null && cls !== savedCls ? [{ param: "FRAME_CLASS", from: savedCls, to: cls }] : []),
+    ...(nextType != null && nextType !== savedType ? [{ param: "FRAME_TYPE", from: savedType, to: nextType }] : []),
+  ]);
 
   function pickClass(next: number) {
     setError("");

@@ -135,7 +135,7 @@ fn drain_steers(c: &Connection, chat: &str, after: &mut i64) -> Option<String> {
     let mut bodies = Vec::new();
     {
         let mut st = c.prepare(
-            "SELECT id, role, body FROM ai_message WHERE chat_id=?1 AND id>?2 AND role IN ('steer', 'quote') ORDER BY id",
+            "SELECT id, role, body FROM ai_message WHERE chat_id=?1 AND id>?2 AND role IN ('steer', 'quote', 'view') ORDER BY id",
         ).ok()?;
         let mut rows = st.query(params![chat, *after]).ok()?;
         while let Ok(Some(row)) = rows.next() {
@@ -145,8 +145,8 @@ fn drain_steers(c: &Connection, chat: &str, after: &mut i64) -> Option<String> {
             if id > *after {
                 *after = id;
             }
-            if role == "quote" {
-                let text = quote_for_model(&body);
+            if role == "quote" || role == "view" {
+                let text = if role == "quote" { quote_for_model(&body) } else { view_for_model(&body) };
                 if !text.trim().is_empty() {
                     bodies.push(text);
                 }

@@ -25,6 +25,29 @@ fn tool_schema() -> Value {
             "parameters": { "type": "object", "properties": {} }
         },
         {
+            "name": "setup_status",
+            "description": doc!(
+                "The setup state of the linked vehicle as the Setup tab shows it: each step with its state and reason, and whether it can arm.",
+                "The states come from the same rules as the Setup list, including PreArm lines matched to steps.",
+                "Without `section` it returns one line per step. With a step id it returns that step with the parameters it reads and their values.",
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    // Step ids are defined in ArduLoops `src/components/HardwareSetup.tsx` (COPTER, PLANE). Keep both lists the same.
+                    "section": {
+                        "type": "string",
+                        "enum": ["overview", "frame", "motors", "airframe", "servos", "level", "compass", "airspeed", "battery", "radio", "modes", "failsafe"],
+                        "description": doc!(
+                            "`overview`, or one step. Copter and plane: `level` (accelerometer), `compass`, `battery`, `radio`, `modes`, `failsafe`.",
+                            "Copter only: `frame`, `motors` (motors and outputs). Plane only: `airframe` (airframe type), `servos` (outputs).",
+                            "A step this vehicle does not have returns the ids it does have.",
+                        ),
+                    }
+                }
+            }
+        },
+        {
             "name": "get_param",
             "description": doc!(
                 "The current value of parameter names whose spelling is already known.",

@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState, useSyncExternalStore } from "react";
+import { useViewDraft } from "../lib/setupView";
 import { useT } from "../i18n/i18n";
 import { addLog } from "../log";
 import { motorFrame } from "../lib/motorFrames";
@@ -132,6 +133,7 @@ export function PlaneAirframeStep() {
   if (qNow && qOn && qClsNow != null && qFrame.cls != null && qFrame.cls !== qClsNow) writes.push(["Q_FRAME_CLASS", qFrame.cls]);
   if (qNow && qOn && qTypeNow != null && qFrame.type != null && qFrame.type !== qTypeNow) writes.push(["Q_FRAME_TYPE", qFrame.type]);
   const needsReboot = writes.some(([name]) => name.startsWith("Q_"));
+  useViewDraft(writes.map(([param, to]) => ({ param, from: num(params, param), to })));
   const canWrite = sample.ok && !loading && !armed && writes.length > 0 && !busy && !(plan && plan.missing.length);
 
   function discard() {

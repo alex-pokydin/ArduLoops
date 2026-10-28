@@ -5,6 +5,7 @@ import { send as sendCmd } from "../mav/cmd";
 import { APP_HTTP } from "../mav/link";
 import { downloadParamBackup } from "../mav/paramBackup";
 import { openSetupOverview } from "../lib/setupNav";
+import { FixButton } from "./HardwareSetup";
 import type { Sample } from "../mav/types";
 import { usePicked, useVehicle } from "../mav/view";
 import { NOTE_TITLE_MAX, flightVersion, genericMark, joinNote, markShape, preArmState, splitNote, type MarkShape } from "../lib/vehicleHeader";
@@ -123,12 +124,53 @@ const PreArmTile = memo(function PreArmTile() {
   const state = JSON.parse(key) as ReturnType<typeof preArmState>;
   if (state.kind === "armed") return <Tile wide label={t("Pre-arm")} value={t("Armed")} sub={t("Checks passed at arming")} tone="ok" onOpen={openSetupOverview} />;
   if (state.kind === "ready") return <Tile wide label={t("Pre-arm")} value={t("Ready to arm")} sub={t("All checks pass")} tone="ok" onOpen={openSetupOverview} />;
-  if (state.kind === "failing") {
-    const more = state.lines.length > 1 ? ` · +${state.lines.length - 1}` : "";
-    return <Tile wide label={t("Pre-arm")} value={t("{n} failing", { n: state.lines.length })} sub={`${state.lines[0]}${more}`} tone="hot" title={state.lines.join("\n")} onOpen={openSetupOverview} />;
-  }
+  if (state.kind === "failing") return <PreArmFailing lines={state.lines} />;
   return <Tile wide label={t("Pre-arm")} value={t("No report yet")} sub={t("The vehicle repeats failures about every 30 s")} tone="mute" onOpen={openSetupOverview} />;
 });
+
+/** Failing checks: the tile opens a list of the lines, each with Fix, and a way to the Setup Overview. */
+function PreArmFailing({ lines }: { lines: string[] }) {
+  const t = useT();
+  const [open, setOpen] = useState(false);
+  const wrap = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (!open) return;
+    const close = (ev: PointerEvent) => {
+      if (!(ev.target instanceof Node) || !wrap.current?.contains(ev.target)) setOpen(false);
+    };
+    const key = (ev: KeyboardEvent) => {
+      if (ev.key === "Escape") setOpen(false);
+    };
+    window.addEventListener("pointerdown", close);
+    window.addEventListener("keydown", key);
+    return () => {
+      window.removeEventListener("pointerdown", close);
+      window.removeEventListener("keydown", key);
+    };
+  }, [open]);
+  const more = lines.length > 1 ? ` · +${lines.length - 1}` : "";
+  return (
+    <div className="vb-pop-wrap" ref={wrap}>
+      <button type="button" className="vb-tile vb-open hot wide" aria-expanded={open} aria-haspopup="dialog" title={lines.join("\n")} onClick={() => setOpen((v) => !v)}>
+        <span className="vb-tl"><i />{t("Pre-arm")}</span>
+        <b>{t("{n} failing", { n: lines.length })}</b>
+        <span className="vb-ts">{`${lines[0]}${more}`}</span>
+      </button>
+      {open ? (
+        <div className="vb-pop" role="dialog" aria-label={t("Pre-arm checks")}>
+          <div className="vb-pop-head">{t("Pre-arm · {n} failing", { n: lines.length })}</div>
+          {lines.map((line) => (
+            <div className="vb-pop-row" key={line}>
+              <span>{line.replace(/^PreArm:\s*/, "")}</span>
+              <FixButton small text={t("Fix: {line}", { line: /^PreArm:/.test(line) ? line : `PreArm: ${line}` })} focus={line.slice(0, 32)} onSent={() => setOpen(false)} />
+            </div>
+          ))}
+          <button type="button" className="vb-pop-more" onClick={() => { setOpen(false); openSetupOverview(); }}>{t("Open the Setup overview")} →</button>
+        </div>
+      ) : null}
+    </div>
+  );
+}
 
 const FIX_NAMES: Record<number, string> = { 2: "2D", 3: "3D", 4: "DGPS", 5: "RTK float", 6: "RTK" };
 

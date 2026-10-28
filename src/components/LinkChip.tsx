@@ -188,6 +188,8 @@ export function LinkChip({
         {!live && !source && !tel.hz ? <span>{t("Linked")}</span> : null}
       </>
     );
+    // On Home the vehicle on the link is one click away.
+    if (live && shell === "home") action = { text: t("Open {frame}", { frame: t(live) }), run: () => onShowFrame(live) };
   } else if (state === "other" && live) {
     label = <span>{t("{frame} on link", { frame: t(live) })}</span>;
     action = { text: t("Show {frame}", { frame: t(live) }), run: () => onShowFrame(live) };
@@ -289,9 +291,9 @@ export function LinkChip({
                     </div>
                   </div>
                 ) : null}
-                {state === "other" && live ? (
+                {live && linked && shell !== live ? (
                   <button type="button" className="lc-wide" onClick={() => { onShowFrame(live); setOpen(false); }}>
-                    {t("Show {frame}", { frame: t(live) })}
+                    {state === "other" ? t("Show {frame}", { frame: t(live) }) : t("Open {frame} view", { frame: t(live) })}
                   </button>
                 ) : null}
                 <form className="lc-form" onSubmit={onSubmit}>

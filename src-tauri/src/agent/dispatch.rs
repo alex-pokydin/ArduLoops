@@ -1053,8 +1053,79 @@ fn run_tool(
         "wait" => wait_tool(args, c, chat),
         "rc_stick" => rc_stick_tool(args, sample, c, chat),
         "health" => bridge_get("/health", 8),
+        "setup_status" => setup_status(args["section"].as_str().unwrap_or(""), sample),
         _ => json!({ "error": "unknown tool" }),
     }
+}
+
+/// The Setup tab's own verdicts, published by the app whenever they change. The rules live in the app;
+/// this keeps the last copy so the chat and the screen give one answer.
+static SETUP_STATUS: LazyLock<Mutex<Option<(Value, i64)>>> = LazyLock::new(|| Mutex::new(None));
+
+fn publish_setup_status(body: &Value) -> Result<Value, (u16, String)> {
+    if !body["steps"].is_array() {
+        return Err((400, "steps required".into()));
+    }
+    if let Ok(mut slot) = SETUP_STATUS.lock() {
+        *slot = Some((body.clone(), now()));
+    }
+    Ok(json!({ "ok": true }))
+}
+
+fn setup_status(section: &str, sample: &Sample) -> Value {
+    let stored = SETUP_STATUS.lock().ok().and_then(|slot| slot.clone());
+    let Some((status, at)) = stored else {
+        return json!({ "ok": false, "error": "The app has not published a setup state yet." });
+    };
+    if !sample.ok {
+        return json!({ "ok": false, "linked": false, "error": "No vehicle is linked." });
+    }
+    let age_s = now() - at;
+    let steps = status["steps"].as_array().cloned().unwrap_or_default();
+    let section = section.trim();
+    if section.is_empty() || section == "overview" {
+        let lines: Vec<Value> = steps.iter().map(|step| json!({
+            "id": step["id"],
+            "title": step["title"],
+            "group": step["group"],
+            "state": step["state"],
+            "reason": step["reason"],
+            "optional": step["optional"],
+            "prearm": step["prearm"],
+            "wizard": step["wizard"],
+        })).collect();
+        return json!({
+            "vehicle": status["vehicle"],
+            "ready_to_arm": status["ready_to_arm"],
+            "armed": sample.armed,
+            "done": status["done"],
+            "required": status["required"],
+            "prearm": status["prearm"],
+            "hidden": status["hidden"],
+            "steps": lines,
+            "age_s": age_s,
+            "note": "`state` is done, warn (needs attention), fail (a current PreArm line blocks arming), todo, or opt (optional, not counted). `reason` is the text the Setup list shows. `prearm` lines are ArduPilot's own text; the step they sit on is the app's match by keyword. `ready_to_arm` is ready, failing, armed, or unknown (no report yet). `hidden` steps have no parameters on this firmware. `age_s` is how old this copy is.",
+        });
+    }
+    let Some(step) = steps.iter().find(|step| step["id"].as_str() == Some(section)) else {
+        let ids: Vec<&str> = steps.iter().filter_map(|step| step["id"].as_str()).collect();
+        return json!({ "ok": false, "error": format!("No step `{section}`."), "steps": ids });
+    };
+    let names: Vec<String> = step["params"].as_array().map(|list| list.iter().filter_map(|name| name.as_str().map(str::to_string)).collect()).unwrap_or_default();
+    let params: serde_json::Map<String, Value> = names.iter().map(|name| (name.clone(), sample.params.get(name).map(|v| json!(v)).unwrap_or(Value::Null))).collect();
+    json!({
+        "id": step["id"],
+        "title": step["title"],
+        "group": step["group"],
+        "state": step["state"],
+        "reason": step["reason"],
+        "optional": step["optional"],
+        "prearm": step["prearm"],
+        "wizard": step["wizard"],
+        "params": params,
+        "age_s": age_s,
+        "note": "`params` are the names this step reads, with the value on the link now; null means it has not arrived. At most 160 names are listed; `list_params` finds the rest. `wizard` is the wizard_widget id for this step, when it has one.",
+    })
 }
 
 fn arg_strings(args: &Value, plural: &str, single: &str, limit: usize) -> Vec<String> {
