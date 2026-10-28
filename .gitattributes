@@ -1,0 +1,20 @@
+# Text is stored and checked out with LF on every OS.
+* text=auto eol=lf
+
+# Binary files are never converted or merged as text.
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.webp binary
+*.ico binary
+*.icns binary
+*.p12 binary
+*.bin binary
+*.apk binary
+*.zip binary
+*.woff binary
+*.woff2 binary
+*.ttf binary
+*.mp4 binary
+*.webm binary
