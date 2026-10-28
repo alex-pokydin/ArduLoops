@@ -154,6 +154,7 @@ fn run_tool(
                 "note": "`source: live` is the link. `source: cached` is the last saved set.",
             })
         }
+        "suggest_next" => suggestions(args),
         "recent_status" => {
             let n = args["limit"].as_u64().or_else(|| args["n"].as_u64()).unwrap_or(10).clamp(1, 64) as usize;
             json!({ "limit": n, "lines": sample.texts.iter().take(n).cloned().collect::<Vec<_>>() })
@@ -671,4 +672,29 @@ fn resolve_live_line<'a>(raw: &str, book: &'a ParamBook) -> Option<(String, Stri
     let name = raw.strip_prefix("p:").unwrap_or(raw).trim();
     let hit = book.values.keys().find(|key| key.eq_ignore_ascii_case(name))?;
     Some((format!("p:{hit}"), hit.clone(), "param"))
+}
+
+/// Buttons under the reply: the first four complete items, of either kind.
+fn suggestions(args: &Value) -> Value {
+    let complete: Vec<&Value> = args["items"].as_array().into_iter().flatten()
+        .filter(|item| matches!(item["kind"].as_str(), Some("ask" | "offer")))
+        .filter(|item| ["label", "prompt"].iter().all(|key| item[*key].as_str().is_some_and(|text| !text.trim().is_empty())))
+        .take(4)
+        .collect();
+    let pick = |kind: &str| -> Vec<Value> {
+        complete.iter().filter(|item| item["kind"].as_str() == Some(kind)).filter_map(|item| {
+            let label = item["label"].as_str().map(str::trim).filter(|text| !text.is_empty())?;
+            let prompt = item["prompt"].as_str().map(str::trim).filter(|text| !text.is_empty())?;
+            Some(json!({
+                "label": label.chars().take(60).collect::<String>(),
+                "prompt": prompt.chars().take(2_000).collect::<String>(),
+            }))
+        }).collect()
+    };
+    let ask = pick("ask");
+    let offer = pick("offer");
+    if ask.is_empty() && offer.is_empty() {
+        return json!({ "ok": false, "error": "items needs an ask or offer item with label and prompt" });
+    }
+    json!({ "ok": true, "ask": ask, "offer": offer, "note": "The buttons are under the reply. Nothing was sent." })
 }

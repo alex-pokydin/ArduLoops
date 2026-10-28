@@ -23,7 +23,7 @@ export type Chat = { id: string; title: string; updated_at: number; vehicle_key?
 export type Msg = { role: string; body: string; at: number };
 export type SavedDocItem = { id?: string; title: string; format: string; url: string };
 export type CloudDoc = { id?: string; title: string; format: string; body: string; shared?: boolean; views?: number; url?: string; updatedAt?: number };
-export type LiveTurn = { active: boolean; tool?: string; input?: string; thought?: string; reply?: string; note?: string; holds?: number; docs?: SavedDocItem[] };
+export type LiveTurn = { active: boolean; tool?: string; input?: string; thought?: string; reply?: string; note?: string; holds?: number; docs?: SavedDocItem[]; started_ms?: number; step_ms?: number };
 export type Proposal = {
   id: string;
   status: string;
@@ -43,7 +43,15 @@ export type AuditEvent = {
   source: string;
   detail?: string;
 };
-export type LocalLog = { id: string; bytes: number };
+export type LocalLog = {
+  id: string;
+  bytes: number;
+  saved_at?: string | null;
+  flight_utc?: string | null;
+  board?: string | null;
+  vehicle?: string;
+  original_name?: string;
+};
 
 async function json<T>(path: string, init?: RequestInit): Promise<T> {
   const r = await fetch(`${APP_HTTP}${path}`, {
@@ -63,12 +71,20 @@ export const ai = {
     json("/ai/chats/rename", { method: "POST", body: JSON.stringify({ id, title }) }),
   thread: (chat: string) => json<{ messages: Msg[]; proposals: Proposal[] }>(`/ai/messages?chat=${encodeURIComponent(chat)}`),
   live: (chat: string) => json<LiveTurn>(`/ai/live?chat=${encodeURIComponent(chat)}`),
-  send: (chat: string, text: string, lang: string, model: string, reasoning: string, log = "", script: LuaQuote | null = null, signal?: AbortSignal) =>
+  send: (chat: string, text: string, lang: string, model: string, reasoning: string, log = "", script: LuaQuote | null = null, signal?: AbortSignal, images: string[] = []) =>
     json<{ ok: boolean; status?: string; message?: string; proposal?: Proposal | null }>("/ai/send", {
       method: "POST",
-      body: JSON.stringify({ chat, text, lang, model, reasoning, log, ...(script ? { script } : {}) }),
+      body: JSON.stringify({ chat, text, lang, model, reasoning, log, ...(script ? { script } : {}), ...(images.length ? { images } : {}) }),
       signal,
     }),
+  /** Store one image on the bridge. The id goes into `send`. */
+  uploadImage: async (image: Blob) => {
+    const r = await fetch(`${APP_HTTP}/ai/image`, { method: "POST", headers: { "Content-Type": image.type }, body: image });
+    const body = (await r.json().catch(() => ({}))) as { id?: string; error?: string };
+    if (!r.ok || !body.id) throw new Error(body.error || "Could not add the image");
+    return body.id;
+  },
+  imageUrl: (id: string) => `${APP_HTTP}/ai/image?id=${encodeURIComponent(id)}`,
   stop: () => json("/ai/stop", { method: "POST", body: "{}" }),
   proposal: (id: string, decision: "approve" | "reject", lang: string, model: string, reasoning: string, log = "", batch = "", comment?: string) =>
     json<{ ok: boolean; status?: string; continued?: boolean }>("/ai/proposal", { method: "POST", body: JSON.stringify({ id, decision, lang, model, reasoning, log, batch, ...(comment != null ? { comment } : {}) }) }),
@@ -84,16 +100,30 @@ export const ai = {
       body: JSON.stringify({ changes }),
     }),
   logs: () => json<{ logs: LocalLog[] }>("/ai/logs"),
-  importLog: async (file: Blob) => {
-    const r = await fetch(`${APP_HTTP}/logs/import`, {
-      method: "POST",
-      headers: { "Content-Type": "application/octet-stream" },
-      body: file,
-    });
-    const body = (await r.json()) as { id?: string; error?: string; message?: string };
-    if (!r.ok || !body.id) throw new Error(body.error || body.message || "Could not load the log");
-    return { id: body.id };
-  },
+  /** XHR, because fetch does not report upload progress. `sent` reaches `total` before the bridge checks the file. */
+  importLog: (file: File, onProgress?: (sent: number, total: number) => void) =>
+    new Promise<{ id: string }>((resolve, reject) => {
+      const xhr = new XMLHttpRequest();
+      xhr.open("POST", `${APP_HTTP}/logs/import?name=${encodeURIComponent(file.name)}`);
+      xhr.setRequestHeader("Content-Type", "application/octet-stream");
+      xhr.upload.onprogress = (ev) => onProgress?.(ev.loaded, ev.lengthComputable ? ev.total : file.size);
+      xhr.upload.onload = () => onProgress?.(file.size, file.size);
+      xhr.onerror = () => reject(new Error("Could not load the log"));
+      xhr.onload = () => {
+        let body: { id?: string; error?: string; message?: string } = {};
+        try {
+          body = JSON.parse(xhr.responseText) as typeof body;
+        } catch {
+          // The message below covers a reply that is not JSON.
+        }
+        if (xhr.status < 200 || xhr.status >= 300 || !body.id) {
+          reject(new Error(body.error || body.message || "Could not load the log"));
+          return;
+        }
+        resolve({ id: body.id });
+      };
+      xhr.send(file);
+    }),
   saveProvider: (provider: string, api_key: string, op: "save" | "check" | "remove" | "disable" | "hosted") =>
     json<AiStatus & { ok?: boolean; status?: string }>("/ai/provider", {
       method: "POST",

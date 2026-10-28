@@ -10,13 +10,14 @@ fn converse(
     system: &str,
     lang: &str,
     prompt: &str,
+    images: Vec<genai::chat::Binary>,
     sample: &Sample,
     c: &Connection,
     tx: &Sender<Cmd>,
     chat: &str,
     log_id: &str,
 ) -> Result<String, String> {
-    let mut messages = vec![genai::chat::ChatMessage::user(prompt)];
+    let mut messages = vec![user_message(prompt, images)];
     let mut steer_after = latest_message_id(c, chat);
     let mut turn_id: Option<String> = None;
     let mut seen: HashMap<String, Value> = HashMap::new();
@@ -170,21 +171,72 @@ fn reply_language(lang: &str) -> &'static str {
     }
 }
 
-fn attached_log_note(log_id: &str) -> String {
+/// `earlier` is a log attached to a previous message of this chat, not to this one.
+fn attached_log_note(log_id: &str, earlier: bool) -> String {
     if log_id.is_empty() {
-        "No local log is selected.".to_string()
+        String::new()
+    } else if earlier {
+        format!("The user attached a local log earlier in this chat. file is {log_id}. That id is the file argument for the local log tools. A later request may not name it again.")
     } else {
         format!("The user attached a local log for this turn. file is {log_id}. That id is the file argument for the local log tools. The request text may not repeat it.")
     }
 }
 
-fn conversation_prompt(history: &str, log_id: &str) -> String {
-    format!("Conversation:\n{history}\n{}", xml_block("attached_log", &attached_log_note(log_id)))
+/// The board uid a stored log id carries in its directory. `imported` has none.
+fn log_board(log_id: &str) -> Option<String> {
+    let (dir, _) = log_id.rsplit_once(['/', '\\'])?;
+    let dir = dir.rsplit(['/', '\\']).next().unwrap_or(dir);
+    let key = board_key(dir);
+    (!key.is_empty() && dir != "imported").then_some(key)
 }
 
-fn system_prompt(lang: &str, sample: &Sample, bench: bool, log_id: &str) -> String {
+fn board_key(uid: &str) -> String {
+    uid.chars().filter(char::is_ascii_alphanumeric).collect::<String>().to_ascii_uppercase()
+}
+
+/// Whether the attached log and the vehicle the parameter tools read are the same board.
+/// `vehicle` is the linked board, or the board of the saved parameter set.
+fn attached_log_board_note(log_id: &str, vehicle: Option<(&str, &str)>) -> String {
+    let Some((what, uid)) = vehicle else { return String::new() };
+    let uid = board_key(uid);
+    let tools = format!("get_param, list_params, and vehicle_state read {what}");
+    match log_board(log_id) {
+        Some(log) if !uid.is_empty() && log == uid => format!("This log carries board uid {log}, the same board as {what}."),
+        Some(log) if !uid.is_empty() => format!(
+            "This log carries board uid {log}. The board uid of {what} is {uid}, a different board. {tools}, not the board that recorded this log. The parameters of this flight are log_params of this file."
+        ),
+        Some(log) => format!(
+            "This log carries board uid {log}. The board uid of {what} is unknown, so whether they are the same board is unknown. {tools}. The parameters of this flight are log_params of this file."
+        ),
+        None => format!(
+            "This log carries no board uid, so whether {what} recorded it is unknown. {tools}. The parameters of this flight are log_params of this file."
+        ),
+    }
+}
+
+fn conversation_prompt(history: &str, log_id: &str, earlier: bool) -> String {
+    let note = attached_log_note(log_id, earlier);
+    if note.is_empty() {
+        return format!("Conversation:\n{history}");
+    }
+    format!("Conversation:\n{history}\n{}", xml_block("attached_log", &note))
+}
+
+fn system_prompt(lang: &str, sample: &Sample, bench: bool, log_id: &str, earlier: bool) -> String {
     let language = reply_language(lang);
-    let log = attached_log_note(log_id);
+    let mut log = attached_log_note(log_id, earlier);
+    if !log_id.is_empty() {
+        let saved = if sample.ok { None } else { crate::db::latest_params().ok().flatten() };
+        let board = if sample.ok {
+            Some(("the linked vehicle", sample.boot_uid.as_str()))
+        } else {
+            saved.as_ref().map(|cache| ("the saved parameter set", cache.boot_uid.as_str()))
+        };
+        let note = attached_log_board_note(log_id, board);
+        if !note.is_empty() {
+            log = format!("{log} {note}");
+        }
+    }
     let vehicle = if !sample.ok {
         match crate::db::latest_params() {
             Ok(Some(cache)) => {
@@ -258,6 +310,10 @@ fn reasoning_effort(provider: &str, model: &str, reasoning: &str) -> Option<gena
     if (provider == "openai" || provider == "xai") && (model == "gpt-6-sol" || model == "gpt-6-luna") {
         return Some(genai::chat::ReasoningEffort::None);
     }
+    // gpt-6.1-sol rejects none with a 400. OpenAI names low as its replacement.
+    if provider == "openai" && model == "gpt-6.1-sol" {
+        return Some(genai::chat::ReasoningEffort::Low);
+    }
     if provider == "gemini" {
         return match reasoning {
             "low" => Some(genai::chat::ReasoningEffort::Low),
@@ -274,9 +330,6 @@ fn turn_options(provider: &str, model: &str, reasoning: &str) -> genai::chat::Ch
         .with_capture_content(true)
         .with_capture_tool_calls(true)
         .with_capture_reasoning_content(true);
-    if provider == "anthropic" {
-        options = options.with_max_tokens(1200);
-    }
     if let Some(effort) = reasoning_effort(provider, model, reasoning) {
         options = options.with_reasoning_effort(effort);
     }
@@ -521,6 +574,45 @@ fn apply_leaked_tools(turn: &mut ProviderTurn) {
     live_clear_reply();
 }
 
+/// Streams carry tool arguments as JSON text, and a cut stream leaves that text
+/// incomplete. Every provider accepts tool arguments back only as an object.
+fn tool_args(value: Value) -> Value {
+    match value {
+        Value::Object(_) => value,
+        Value::String(text) => match serde_json::from_str::<Value>(&text) {
+            Ok(Value::Object(map)) => Value::Object(map),
+            _ => json!({}),
+        },
+        _ => json!({}),
+    }
+}
+
+fn settled_call(mut call: genai::chat::ToolCall) -> genai::chat::ToolCall {
+    call.fn_arguments = tool_args(call.fn_arguments);
+    call
+}
+
+fn settled_message(mut message: genai::chat::ChatMessage) -> genai::chat::ChatMessage {
+    let parts = std::mem::replace(&mut message.content, genai::chat::MessageContent::from_parts(Vec::new()))
+        .into_parts()
+        .into_iter()
+        .map(|part| match part {
+            genai::chat::ContentPart::ToolCall(call) => genai::chat::ContentPart::ToolCall(settled_call(call)),
+            other => other,
+        })
+        .collect::<Vec<_>>();
+    message.content = genai::chat::MessageContent::from_parts(parts);
+    message
+}
+
+/// Each chunk repeats the call with all arguments so far. Keep the last one per call.
+fn keep_call_chunk(calls: &mut Vec<genai::chat::ToolCall>, chunk: genai::chat::ToolCall) {
+    match calls.iter_mut().find(|call| call.call_id == chunk.call_id) {
+        Some(call) => *call = chunk,
+        None => calls.push(chunk),
+    }
+}
+
 fn assistant_from_calls(calls: Vec<genai::chat::ToolCall>) -> genai::chat::ChatMessage {
     let signatures = calls.first().and_then(|call| call.thought_signatures.clone()).unwrap_or_default();
     genai::chat::ChatMessage::assistant_tool_calls_with_thoughts(calls, signatures)
@@ -536,7 +628,7 @@ fn provider_turn(
 ) -> Result<ProviderTurn, String> {
     let iden = provider_model(provider, model)?;
     let options = turn_options(provider, model, reasoning);
-    let request = genai::chat::ChatRequest::new(messages.to_vec())
+    let request = genai::chat::ChatRequest::new(messages.iter().cloned().map(settled_message).collect())
         .with_system(system)
         .with_tools(chat_tools());
     let client = provider_client(key, 90);
@@ -592,7 +684,7 @@ async fn stream_turn(
             }
             genai::chat::ChatStreamEvent::ThoughtSignatureChunk(_) => {}
             genai::chat::ChatStreamEvent::ToolCallChunk(chunk) => {
-                calls.push(chunk.tool_call);
+                keep_call_chunk(&mut calls, chunk.tool_call);
                 live_clear_reply();
             }
             genai::chat::ChatStreamEvent::End(end) => {
@@ -620,10 +712,11 @@ async fn stream_turn(
                 } else {
                     live_clear_reply();
                 }
-                assistant = end.into_assistant_message_for_tool_use();
+                assistant = end.into_assistant_message_for_tool_use().map(settled_message);
             }
         }
     }
+    let calls: Vec<genai::chat::ToolCall> = calls.into_iter().map(settled_call).collect();
     if assistant.is_none() && !calls.is_empty() {
         assistant = Some(assistant_from_calls(calls.clone()));
     }
@@ -635,10 +728,7 @@ fn call_provider(provider: &str, model: &str, key: &str, prompt: &str, _tools: &
         return hosted_complete(provider, model, prompt);
     }
     let iden = provider_model(provider, model)?;
-    let mut options = genai::chat::ChatOptions::default().with_capture_content(true);
-    if provider == "gemini" || provider == "anthropic" {
-        options = options.with_max_tokens(4096);
-    }
+    let options = genai::chat::ChatOptions::default().with_capture_content(true);
     let request = genai::chat::ChatRequest::from_user(prompt);
     let client = provider_client(key, 40);
     let response = block_on(client.exec_chat(iden, request, Some(&options))).map_err(|err| err.to_string())?;

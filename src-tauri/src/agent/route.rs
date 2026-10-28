@@ -43,7 +43,7 @@ fn save_secrets(map: &HashMap<String, String>) -> Result<(), String> {
 fn default_model(provider: &str) -> &'static str {
     match provider {
         "gemini" => "gemini-3.8-flash",
-        "openai" => "gpt-6-sol",
+        "openai" => "gpt-6.1-sol",
         "anthropic" => "claude-opus-5-5",
         "xai" => "grok-4.7",
         _ => "",
@@ -280,6 +280,8 @@ fn provider_failure(err: &str) -> &'static str {
         "model unavailable"
     } else if lower.contains("too many tools") {
         "paused_limit"
+    } else if lower.contains("credit balance") || lower.contains("insufficient_quota") || lower.contains("billing") {
+        "The provider account has no credit."
     } else if code_of(&lower) == 429 || lower.contains("resource_exhausted") || lower.contains("quota") {
         "quota exceeded"
     } else {
@@ -287,16 +289,61 @@ fn provider_failure(err: &str) -> &'static str {
     }
 }
 
+/// The HTTP status a provider error carries. genai writes it as `Status: 400`.
 fn code_of(lower: &str) -> u16 {
+    if let Some(at) = lower.find("status: ") {
+        let digits: String = lower[at + 8..].chars().take_while(char::is_ascii_digit).collect();
+        if let Ok(code) = digits.parse() {
+            return code;
+        }
+    }
     lower.split_whitespace().find_map(|word| word.parse::<u16>().ok()).unwrap_or(0)
 }
 
+/// The provider's own sentence from a JSON error body. Anthropic, OpenAI, and
+/// Google put it at `error.message`; the hosted API sends `message`.
+fn provider_message(err: &str) -> Option<String> {
+    let mut from = 0;
+    while let Some(at) = err[from..].find('{') {
+        let start = from + at;
+        if let Some(Ok(value)) = serde_json::Deserializer::from_str(&err[start..]).into_iter::<Value>().next() {
+            let text = value.pointer("/error/message").or_else(|| value.get("message")).and_then(Value::as_str);
+            if let Some(text) = text.map(str::trim).filter(|text| !text.is_empty()) {
+                return Some(text.to_string());
+            }
+        }
+        from = start + 1;
+    }
+    None
+}
+
+/// The provider named in a genai error: `(adapter: Anthropic)`.
+fn provider_name(err: &str) -> Option<&str> {
+    let at = err.find("(adapter: ")? + "(adapter: ".len();
+    let end = err[at..].find(')')?;
+    Some(&err[at..at + end])
+}
+
+/// First line is the notice the UI translates. The second line is what the
+/// provider said, in its words. The rest is the raw error for the details.
 fn failure_body(err: &str, kind: &str) -> String {
-    let detail: String = err.chars().take(300).collect();
-    if kind == "The model returned no text." || kind == "invalid key" || kind == "Sign in required." || detail == kind || detail.is_empty() {
+    if kind == "The model returned no text." || kind == "invalid key" || kind == "Sign in required." || err.trim().is_empty() || err == kind {
         return kind.to_string();
     }
-    format!("{kind}\n{detail}")
+    let code = code_of(&err.to_ascii_lowercase());
+    let said = provider_message(err).unwrap_or_else(|| err.lines().next().unwrap_or(err).trim().chars().take(300).collect());
+    let mut line = match provider_name(err) {
+        Some(name) => format!("{name}: {said}"),
+        None => said,
+    };
+    if code >= 400 && code < 600 && !line.contains(&code.to_string()) {
+        line.push_str(&format!(" (HTTP {code})"));
+    }
+    let raw: String = err.chars().take(600).collect();
+    if raw.trim() == line {
+        return format!("{kind}\n{line}");
+    }
+    format!("{kind}\n{line}\n\n{raw}")
 }
 
 const STOPPED_TURN: &str = "This turn stopped before a reply.";
@@ -317,7 +364,7 @@ fn note_stopped_turns_on(c: &Connection) {
     }
     for chat in chats {
         let last: Option<String> = c.query_row(
-            "SELECT role FROM ai_message WHERE chat_id=?1 AND role NOT IN ('held', 'compact', 'context', 'work', 'attach', 'quote', 'doc') ORDER BY id DESC LIMIT 1",
+            "SELECT role FROM ai_message WHERE chat_id=?1 AND role NOT IN ('held', 'compact', 'context', 'work', 'attach', 'image', 'quote', 'doc') ORDER BY id DESC LIMIT 1",
             [&chat],
             |row| row.get(0),
         ).ok();
@@ -487,6 +534,15 @@ fn messages(c: &Connection, chat: &str) -> Result<Value, (u16, String)> {
     Ok(json!({"messages": out, "proposals": props}))
 }
 
+/// The last log the user attached in this chat.
+fn latest_chat_log(c: &Connection, chat: &str) -> Option<String> {
+    c.query_row(
+        "SELECT body FROM ai_message WHERE chat_id=?1 AND role='attach' ORDER BY id DESC LIMIT 1",
+        [chat],
+        |row| row.get::<_, String>(0),
+    ).ok().map(|id| id.trim().to_string()).filter(|id| !id.is_empty())
+}
+
 fn store_script_quote(c: &Connection, chat: &str, body: &Value, t: i64) -> Result<(), (u16, String)> {
     let Some(stored) = script_quote_body(body) else {
         return Ok(());
@@ -524,6 +580,12 @@ fn send(c: &Connection, body: &Value, sample: &Sample, tx: &Sender<Cmd>) -> Resu
         c.execute(
             "INSERT INTO ai_message (chat_id, role, body, created_at) VALUES (?1, 'attach', ?2, ?3)",
             params![chat, log_id, t],
+        ).map_err(|e| (500, e.to_string()))?;
+    }
+    for id in image_ids(&body["images"]) {
+        c.execute(
+            "INSERT INTO ai_message (chat_id, role, body, created_at) VALUES (?1, 'image', ?2, ?3)",
+            params![chat, id, t],
         ).map_err(|e| (500, e.to_string()))?;
     }
     store_script_quote(c, chat, body, t)?;
@@ -581,9 +643,13 @@ fn complete_turn(
     claim_steers_through(c, chat, latest_message_id(c, chat));
     let history = prepare_context(c, chat);
     let reasoning = body["reasoning"].as_str().unwrap_or("");
-    let system = system_prompt(lang, sample, bench_left(c).is_some(), log_id);
-    let prompt = conversation_prompt(&history, log_id);
-    let reply = converse(&provider, &model, &key, reasoning, &system, lang, &prompt, sample, c, tx, chat, log_id);
+    // A follow-up without a new log keeps the log this chat already has.
+    let earlier = if log_id.is_empty() { latest_chat_log(c, chat) } else { None };
+    let log_id = earlier.as_deref().unwrap_or(log_id);
+    let system = system_prompt(lang, sample, bench_left(c).is_some(), log_id, earlier.is_some());
+    let prompt = conversation_prompt(&history, log_id, earlier.is_some());
+    let images = turn_images(&body["images"]);
+    let reply = converse(&provider, &model, &key, reasoning, &system, lang, &prompt, images, sample, c, tx, chat, log_id);
     save_work(c, chat, now_ms().saturating_sub(started));
     schedule_compact(chat, &provider, &model, &key);
     let reply = match reply {

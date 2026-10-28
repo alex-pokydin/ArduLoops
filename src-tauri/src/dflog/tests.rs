@@ -730,7 +730,7 @@ mod tests {
         assert!(named.ends_with("_20231114221320_6.bin"), "{named}");
         assert_eq!(named, downloaded_log_name(6, b"same", 1_700_000_000));
         assert_ne!(named, downloaded_log_name(6, b"other", 1_700_000_000));
-        let foreign = import_log(b"not a log").unwrap_err();
+        let foreign = import_log(b"not a log", "flight.bin").unwrap_err();
         assert_eq!(foreign, "This file is not a DataFlash log.");
         let mut named_log = Vec::new();
         push_fmt(&mut named_log, 160, "MSG", "QZ", "TimeUS,Message");
@@ -740,6 +740,29 @@ mod tests {
         push_fmt(&mut unnamed, 160, "MSG", "QZ", "TimeUS,Message");
         push_qz(&mut unnamed, 160, 1, "ArduCopter V4.7.1");
         assert_eq!(vehicle_dir(&unnamed), "imported");
+        let mut late = Vec::new();
+        push_fmt(&mut late, 160, "MSG", "QZ", "TimeUS,Message");
+        for n in 0..2000 {
+            push_qz(&mut late, 160, n, "PreArm: waiting");
+        }
+        push_qz(&mut late, 160, 2001, "JHEM_JHEF405 002F0035 4D535012 20303932");
+        assert_eq!(vehicle_dir(&late), "002F00354D53501220303932");
+    }
+
+    #[test]
+    fn imported_logs_keep_the_file_name() {
+        assert_eq!(imported_stem("00000045.BIN").as_deref(), Some("00000045"));
+        assert_eq!(imported_stem(r"C:\logs\політ 1.bin").as_deref(), Some("політ_1"));
+        assert_eq!(imported_stem("a/b:c?.bin").as_deref(), Some("b_c"));
+        assert_eq!(imported_stem("flight.tlog.bin").as_deref(), Some("flight.tlog"));
+        assert_eq!(imported_stem("").as_deref(), None);
+        assert_eq!(imported_stem("....bin").as_deref(), None);
+        let parts = stored_name_parts("imported/0123456789abcdef_00000045.bin");
+        assert_eq!(parts["sha256_16"], "0123456789abcdef");
+        assert_eq!(parts["original_name"], "00000045.bin");
+        let auto = stored_name_parts("002F/0123456789abcdef_20231114221320_6.bin");
+        assert_eq!(auto["flight_stamp"], "20231114221320");
+        assert!(auto.get("original_name").is_none());
     }
 
     #[test]

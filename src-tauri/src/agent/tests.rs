@@ -3,10 +3,32 @@
 
 #[cfg(test)]
 mod link_wait_tests {
-        use super::{admit_chart, append_steer, attached_log_note, batch_token, begin_live, call_again, call_provider, change_detail, chat_tools, claim_steers_through, compact_prompt, connect_already_up, conversation_prompt, default_model, drain_steers, end_live, failure_body, fit_result, halt_turn, link_fresh, live_buffer, live_fields, live_reply, live_status, live_thinking, live_thought, load_secrets, log_download_wait_s, next_fold_turn, note_stopped_turns_on, note_tool, outcome_item, plan_context, provider_failure, provider_model, provider_turn, reasoning_effort, render_context, scrub_chart, show_live, shown_reply, stamp_live, take_leaked_calls, tool_schema, tool_text, turn_halted, turn_is_live, turn_options, ui_notes, wizard_frame_ok, wizard_line, wizard_name_ok, wizard_vehicle, xml_block, ChartBook, ChartSlot, MsgRow, SKILL_ROOT};
+        use super::{admit_chart, append_steer, assistant_from_calls, attached_log_board_note, image_file, image_ids, store_image, turn_images, user_message, keep_call_chunk, settled_message, tool_args, attached_log_note, batch_token, begin_live, call_again, call_provider, change_detail, chat_tools, claim_steers_through, compact_prompt, connect_already_up, conversation_prompt, default_model, drain_steers, end_live, failure_body, fit_result, halt_turn, link_fresh, live_buffer, live_fields, live_reply, live_status, live_thinking, live_thought, load_secrets, log_download_wait_s, next_fold_turn, note_stopped_turns_on, note_tool, outcome_item, plan_context, provider_failure, provider_model, provider_turn, reasoning_effort, render_context, scrub_chart, show_live, shown_reply, stamp_live, take_leaked_calls, tool_schema, tool_text, turn_halted, turn_is_live, turn_options, ui_notes, wizard_frame_ok, wizard_line, wizard_name_ok, wizard_vehicle, xml_block, ChartBook, ChartSlot, MsgRow, SKILL_ROOT};
     use crate::link::Sample;
     use rusqlite::Connection;
-    use serde_json::json;
+    use serde_json::{json, Value};
+
+    #[test]
+    fn tool_arguments_go_back_as_objects() {
+        assert_eq!(tool_args(json!("{\"limit\":10}")), json!({"limit": 10}));
+        assert_eq!(tool_args(json!("{\"limit\":1")), json!({}));
+        assert_eq!(tool_args(json!("")), json!({}));
+        assert_eq!(tool_args(json!([1])), json!({}));
+        assert_eq!(tool_args(Value::Null), json!({}));
+        let chunk = |args: &str| genai::chat::ToolCall {
+            call_id: "toolu_1".into(),
+            fn_name: "recent_status".into(),
+            fn_arguments: json!(args),
+            thought_signatures: None,
+        };
+        let mut calls = Vec::new();
+        keep_call_chunk(&mut calls, chunk("{\"li"));
+        keep_call_chunk(&mut calls, chunk("{\"limit\":10}"));
+        assert_eq!(calls.len(), 1);
+        let message = settled_message(assistant_from_calls(calls));
+        let sent = message.content.tool_calls();
+        assert_eq!(sent[0].fn_arguments, json!({"limit": 10}));
+    }
 
     #[test]
     fn gemini_text_tool_calls_are_not_shown() {
@@ -544,13 +566,101 @@ mod link_wait_tests {
 
     #[test]
     fn an_attached_log_is_named_as_the_file_argument() {
-        let note = attached_log_note("002F/094d906674953735_20260929211739_3.bin");
+        let note = attached_log_note("002F/094d906674953735_20260929211739_3.bin", false);
         assert!(note.contains("file is 002F/094d906674953735_20260929211739_3.bin"));
         assert!(note.contains("may not repeat"));
-        let prompt = conversation_prompt("user: look at the rate loop", "002F/094d906674953735_20260929211739_3.bin");
+        let prompt = conversation_prompt("user: look at the rate loop", "002F/094d906674953735_20260929211739_3.bin", false);
         assert!(prompt.contains("<attached_log>"));
         assert!(prompt.contains("file is 002F/094d906674953735_20260929211739_3.bin"));
-        assert_eq!(attached_log_note(""), "No local log is selected.");
+        assert_eq!(attached_log_note("", false), "");
+        assert!(!conversation_prompt("user: hi", "", false).contains("attached_log"));
+        let later = attached_log_note("002F/094d906674953735_20260929211739_3.bin", true);
+        assert!(later.contains("earlier in this chat"), "{later}");
+        assert!(later.contains("file is 002F/094d906674953735_20260929211739_3.bin"), "{later}");
+        assert!(super::for_context("attach", "002F/x.bin").contains("attached local log 002F/x.bin"));
+    }
+
+    #[test]
+    fn suggestions_keep_the_first_four_complete_items() {
+        let out = super::suggestions(&json!({
+            "items": [
+                { "kind": "ask", "label": " Why? ", "prompt": "Why did the nose drop?" },
+                { "kind": "ask", "label": "", "prompt": "no label" },
+                { "kind": "offer", "label": "Report", "prompt": "Build an interactive HTML report." },
+                { "kind": "ask", "label": "GPS", "prompt": "What did GPS do?" },
+                { "kind": "ask", "label": "Third", "prompt": "Third question" },
+                { "kind": "other", "label": "X", "prompt": "Y" }
+            ]
+        }));
+        assert_eq!(out["ok"], true);
+        assert_eq!(out["ask"].as_array().unwrap().len(), 3);
+        assert_eq!(out["ask"][0]["label"], "Why?");
+        assert_eq!(out["ask"][1]["label"], "GPS");
+        assert_eq!(out["ask"][2]["label"], "Third");
+        assert_eq!(out["offer"][0]["prompt"], "Build an interactive HTML report.");
+        assert_eq!(super::suggestions(&json!({}))["ok"], false);
+        assert!(tool_schema().as_array().unwrap().iter().any(|tool| tool["name"] == "suggest_next"));
+    }
+
+    #[test]
+    fn attached_images_go_with_the_user_message() {
+        assert!(store_image(b"", "image/png").is_err());
+        assert!(store_image(b"text", "text/plain").is_err());
+        let id = store_image(b"\x89PNG test bytes for the image store", "image/png").unwrap();
+        assert!(id.ends_with(".png") && id.len() == 20, "{id}");
+        assert_eq!(store_image(b"\x89PNG test bytes for the image store", "image/png").unwrap(), id);
+        assert_eq!(image_file(&id).unwrap().1, "image/png");
+        assert!(image_file("../secret.png").is_none());
+        assert!(image_file("0123456789abcdef.exe").is_none());
+        let ids = image_ids(&json!([id, id, "nope.png", 7]));
+        assert_eq!(ids, vec![id.clone()]);
+        let images = turn_images(&json!([id]));
+        assert_eq!(images.len(), 1);
+        let message = user_message("look at this", images);
+        assert_eq!(message.content.texts(), vec!["look at this"]);
+        assert_eq!(message.content.binaries().len(), 1);
+        let wire = super::wire_message(&message);
+        assert_eq!(wire["images"][0]["media_type"], "image/png");
+        assert!(!wire["images"][0]["data"].as_str().unwrap().is_empty());
+        assert!(super::for_context("image", &id).contains("attached an image"));
+        assert_eq!(user_message("plain", Vec::new()).content.binaries().len(), 0);
+        let _ = std::fs::remove_file(crate::db::data_dir().join("ai-images").join(&id));
+    }
+
+    #[test]
+    fn an_attached_log_names_its_board_beside_the_vehicle() {
+        let log = "002F00354D53501220303932/0123456789abcdef_00000045.bin";
+        let same = attached_log_board_note(log, Some(("the linked vehicle", "002F0035 4D535012 20303932")));
+        assert!(same.contains("the same board"), "{same}");
+        assert!(!same.contains("log_params"), "{same}");
+        let other = attached_log_board_note(log, Some(("the saved parameter set", "1A2B0035")));
+        assert!(other.contains("a different board"), "{other}");
+        assert!(other.contains("not the board that recorded this log"), "{other}");
+        assert!(other.contains("log_params of this file"), "{other}");
+        let bare = attached_log_board_note("imported/0123456789abcdef_flight.bin", Some(("the linked vehicle", "1A2B")));
+        assert!(bare.contains("carries no board uid"), "{bare}");
+        let unknown = attached_log_board_note(log, Some(("the linked vehicle", "")));
+        assert!(unknown.contains("is unknown"), "{unknown}");
+        assert_eq!(attached_log_board_note(log, None), "");
+    }
+
+    #[test]
+    fn a_provider_error_shows_what_the_provider_said() {
+        let err = "Web stream error for model 'claude-opus-5-5 (adapter: Anthropic)'.\nCause: HTTP error.\nStatus: 400 Bad Request Bad Request\nBody: {\"type\":\"error\",\"error\":{\"type\":\"invalid_request_error\",\"message\":\"Your credit balance is too low to access the Anthropic API. Please go to Plans & Billing to upgrade or purchase credits.\"},\"request_id\":\"req_011\"}";
+        let kind = provider_failure(err);
+        assert_eq!(kind, "The provider account has no credit.");
+        let body = failure_body(err, kind);
+        let mut lines = body.lines();
+        assert_eq!(lines.next(), Some("The provider account has no credit."));
+        assert_eq!(
+            lines.next(),
+            Some("Anthropic: Your credit balance is too low to access the Anthropic API. Please go to Plans & Billing to upgrade or purchase credits. (HTTP 400)"),
+        );
+        assert!(body.contains("req_011"), "{body}");
+        let odd = "Web stream error for model 'claude-opus-5-5 (adapter: Anthropic)'.\nCause: HTTP error.\nStatus: 400 Bad Request\nBody: {\"type\":\"error\",\"error\":{\"type\":\"invalid_request_error\",\"message\":\"messages.7.content.0.tool_use.input: Input should be an object\"}}";
+        assert_eq!(provider_failure(odd), "The model request failed.");
+        assert!(failure_body(odd, "The model request failed.").contains("\nAnthropic: messages.7.content.0.tool_use.input: Input should be an object (HTTP 400)\n"));
+        assert_eq!(failure_body("timed out", "The model did not answer in time."), "The model did not answer in time.\ntimed out");
     }
 
     fn msg(id: i64, role: &str, body: &str) -> MsgRow {
@@ -735,13 +845,15 @@ mod link_wait_tests {
     #[test]
     fn quiet_models_keep_reasoning_effort_none() {
         assert!(matches!(reasoning_effort("openai", "gpt-6-sol", "high"), Some(genai::chat::ReasoningEffort::None)));
+        assert!(matches!(reasoning_effort("openai", "gpt-6.1-sol", ""), Some(genai::chat::ReasoningEffort::Low)));
+        assert_eq!(default_model("openai"), "gpt-6.1-sol");
         assert!(matches!(reasoning_effort("xai", "gpt-6-luna", ""), Some(genai::chat::ReasoningEffort::None)));
         assert!(reasoning_effort("openai", "gpt-4.1", "high").is_none());
         assert!(matches!(reasoning_effort("gemini", "gemini-3", "medium"), Some(genai::chat::ReasoningEffort::Medium)));
         assert!(reasoning_effort("gemini", "gemini-3", "").is_none());
         let quiet = turn_options("openai", "gpt-6-sol", "high");
         assert!(matches!(quiet.reasoning_effort, Some(genai::chat::ReasoningEffort::None)));
-        assert_eq!(turn_options("anthropic", "claude", "low").max_tokens, Some(1200));
+        assert_eq!(turn_options("anthropic", "claude", "low").max_tokens, None);
     }
 
     #[test]

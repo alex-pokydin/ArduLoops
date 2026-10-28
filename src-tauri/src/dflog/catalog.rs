@@ -22,6 +22,9 @@ pub fn list_logs() -> Value {
     let Ok(vehicles) = fs::read_dir(&root) else {
         return json!({ "source": "downloaded", "logs": rows });
     };
+    let before = read_facts();
+    let mut facts = before.clone();
+    let mut kept = serde_json::Map::new();
     for vehicle in vehicles.flatten() {
         let Ok(files) = fs::read_dir(vehicle.path()) else { continue };
         for file in files.flatten() {
@@ -33,20 +36,31 @@ pub fn list_logs() -> Value {
             let id = rel.to_string_lossy().replace('\\', "/");
             let meta = file.metadata().ok();
             let bytes = meta.as_ref().map(|m| m.len()).unwrap_or(0);
-            let saved_at = meta.as_ref().and_then(|m| m.modified().ok()).and_then(system_rfc3339);
-            let flight_utc = fs::read(&path).ok().as_deref().and_then(first_flight_utc);
+            let modified = meta.as_ref().and_then(|m| m.modified().ok());
+            let saved_at = modified.and_then(system_rfc3339);
+            let mtime = modified
+                .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+                .map(|d| d.as_secs())
+                .unwrap_or(0);
+            let fact = log_fact(&mut facts, &path, &id, bytes, mtime);
+            kept.insert(id.clone(), fact.clone());
             rows.push(json!({
                 "id": id,
                 "bytes": bytes,
                 "source": "downloaded",
                 "onboard_id": onboard_id(&id),
                 "saved_at": saved_at,
-                "flight_utc": flight_utc,
+                "flight_utc": fact["flight_utc"],
+                "board": fact["board"],
             }));
             if let Some(obj) = rows.last_mut().and_then(|row| row.as_object_mut()) {
                 merge_name_parts(obj, &id);
             }
         }
+    }
+    // `facts` already holds the new rows; compare with what was on disk.
+    if kept != before {
+        let _ = fs::write(facts_path(), Value::Object(kept).to_string());
     }
     rows.sort_by(|a, b| {
         b["saved_at"].as_str().unwrap_or("").cmp(a["saved_at"].as_str().unwrap_or(""))
@@ -61,6 +75,7 @@ pub fn list_logs() -> Value {
             "sha256_16 is the hash of the file contents when the name carries it. ",
             "vehicle is the directory, the boot uid used when the file was stored. ",
             "A file loaded from this computer uses the boot uid written in that log. ",
+            "A file loaded from this computer is named {sha256_16}_{its own file name}.bin, and original_name is that file name. ",
             "A log with no boot uid is stored under imported. ",
             "The stamp is the flight time in UTC, or the vehicle log time when the file has no GPS time. ",
             "onboard_id is the number on the vehicle, and the hash is the file contents, so the same onboard number does not replace a different recording. ",
@@ -68,6 +83,7 @@ pub fn list_logs() -> Value {
             "A log-##### name has no sha256_16. ",
             "saved_at is when it was stored here. ",
             "flight_utc is the first GPS time in the file, or null. ",
+            "board is the board name in the startup line of that log, or null. ",
             "This is not the on-board list; that is vehicle_logs.",
         ),
         "logs": rows,
@@ -76,19 +92,26 @@ pub fn list_logs() -> Value {
 
 const IMPORT_LIMIT: usize = 512 * 1024 * 1024;
 
-/// Store a DataFlash file the user picked. The same bytes keep the id they already have.
-pub fn import_log(bytes: &[u8]) -> Result<Value, String> {
+/// Store a DataFlash file the user picked as `{sha256_16}_{its own name}.bin`, so the
+/// user sees which file it is. SD cards reuse names like 00000045.BIN, and the hash
+/// keeps those apart. The same bytes keep the id they already have.
+pub fn import_log(bytes: &[u8], original: &str) -> Result<Value, String> {
     if bytes.len() < 3 || bytes[0] != HEAD1 || bytes[1] != HEAD2 {
         return Err("This file is not a DataFlash log.".into());
     }
     if bytes.len() > IMPORT_LIMIT {
         return Err("This log is larger than 512 MB.".into());
     }
-    let name = downloaded_log_name(0, bytes, 0);
-    let hash = name.split('_').next().unwrap_or("");
-    if let Some(id) = find_stored_hash(hash) {
+    let auto = downloaded_log_name(0, bytes, 0);
+    let hash = auto.split('_').next().unwrap_or("").to_string();
+    if let Some(id) = find_stored_hash(&hash) {
         return Ok(json!({ "ok": true, "id": id }));
     }
+    let name = match imported_stem(original) {
+        Some(stem) if stem.starts_with(&hash) => format!("{stem}.bin"),
+        Some(stem) => format!("{hash}_{stem}.bin"),
+        None => auto,
+    };
     let vehicle = vehicle_dir(bytes);
     let dir = logs_root().join(&vehicle);
     fs::create_dir_all(&dir).map_err(|err| err.to_string())?;
@@ -97,23 +120,75 @@ pub fn import_log(bytes: &[u8]) -> Result<Value, String> {
     Ok(json!({ "ok": true, "id": format!("{vehicle}/{name}") }))
 }
 
-/// Directory name for a file the user loaded. The boot uid is the one written
-/// in the log, the same line the board sends at startup.
-fn vehicle_dir(bytes: &[u8]) -> String {
+/// The picked file's name without its folder and .bin. Characters other than
+/// letters, digits, '-', '_' and '.' become '_'.
+fn imported_stem(original: &str) -> Option<String> {
+    let name = original.rsplit(['/', '\\']).next().unwrap_or("").trim();
+    let stem = match name.rsplit_once('.') {
+        Some((stem, ext)) if ext.eq_ignore_ascii_case("bin") => stem,
+        _ => name,
+    };
+    let clean: String = stem
+        .chars()
+        .map(|c| if c.is_alphanumeric() || matches!(c, '-' | '_' | '.') { c } else { '_' })
+        .take(80)
+        .collect();
+    let clean = clean.trim_matches(['.', '_']).to_string();
+    (!clean.is_empty()).then_some(clean)
+}
+
+/// The board name and boot uid of the startup line, such as
+/// `JHEM_JHEF405 002F0035 4D535012 20303932`. That line is not always near the
+/// start: stored logs have it anywhere from 80 KB to 10 MB in.
+fn boot_line(bytes: &[u8]) -> Option<(String, String)> {
     let formats = parse_formats(bytes);
-    let mut uid = String::new();
-    let mut incomplete = false;
-    walk(bytes, &formats, |fmt, _, values| {
-        if !uid.is_empty() || fmt.name != "MSG" {
-            return;
-        }
-        let Some(text) = field_str(fmt, values, "Message") else { return };
-        if let Some(found) = system_uid(&text) {
-            uid = found;
-        }
-    }, &mut incomplete);
+    let mut found = None;
+    find_record(bytes, &formats, "MSG", |fmt, values| {
+        let Some(text) = field_str(fmt, values, "Message") else { return false };
+        let Some(uid) = system_uid(&text) else { return false };
+        let name = text.split_whitespace().next().unwrap_or("").to_string();
+        found = Some((name, uid));
+        true
+    });
+    found
+}
+
+/// Directory name for a file the user loaded: the boot uid written in the log.
+fn vehicle_dir(bytes: &[u8]) -> String {
+    let uid = boot_line(bytes).map(|(_, uid)| uid).unwrap_or_default();
     let key: String = uid.chars().filter(|c| c.is_ascii_alphanumeric()).collect();
     if key.is_empty() { "imported".to_string() } else { key }
+}
+
+/// What the log list shows that needs a whole-file read: the first GPS time and
+/// the board name. Kept in `logs/.facts.json` while the size and mtime match.
+fn facts_path() -> PathBuf {
+    logs_root().join(".facts.json")
+}
+
+fn read_facts() -> serde_json::Map<String, Value> {
+    fs::read(facts_path())
+        .ok()
+        .and_then(|raw| serde_json::from_slice::<Value>(&raw).ok())
+        .and_then(|value| value.as_object().cloned())
+        .unwrap_or_default()
+}
+
+fn log_fact(facts: &mut serde_json::Map<String, Value>, path: &std::path::Path, id: &str, bytes: u64, mtime: u64) -> Value {
+    if let Some(hit) = facts.get(id) {
+        if hit["bytes"].as_u64() == Some(bytes) && hit["mtime"].as_u64() == Some(mtime) {
+            return hit.clone();
+        }
+    }
+    let data = fs::read(path).unwrap_or_default();
+    let fact = json!({
+        "bytes": bytes,
+        "mtime": mtime,
+        "flight_utc": first_flight_utc(&data),
+        "board": boot_line(&data).map(|(name, _)| name).filter(|name| !name.is_empty()),
+    });
+    facts.insert(id.to_string(), fact.clone());
+    fact
 }
 
 fn system_uid(message: &str) -> Option<String> {

@@ -235,6 +235,39 @@ fn tool_schema() -> Value {
             }
         },
         {
+            "name": "suggest_next",
+            "description": doc!(
+                "Show buttons under the reply for what the user may do next.",
+                "A button puts its full `prompt` into the message box. The user edits it or sends it; nothing is sent by the call.",
+                "Pass `items`, at most 4 in all.",
+                "`kind: ask` is a question the user may want to ask about what this reply found.",
+                "`kind: offer` is a next step you recommend, such as a further measurement.",
+                "A mix of both kinds usually serves the user best.",
+                "The buttons replace such questions at the end of the reply text.",
+                "For example, after a detailed analysis, an offer can be an interactive HTML report made with `save_document`, when that tool is in this conversation.",
+                "A later call in the same turn replaces the buttons.",
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "items": {
+                        "type": "array",
+                        "description": "The buttons, at most 4 in all.",
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "kind": { "type": "string", "enum": ["ask", "offer"], "description": "`ask` for a question the user may ask, `offer` for a next step you recommend." },
+                                "label": { "type": "string", "description": "A few words on the button, in the reply language." },
+                                "prompt": { "type": "string", "description": "The full request the button puts into the message box, in the reply language." }
+                            },
+                            "required": ["kind", "label", "prompt"]
+                        }
+                    }
+                },
+                "required": ["items"]
+            }
+        },
+        {
             "name": "show_chart",
             "description": doc!(
                 "Draw a chart under the reply for the user.",

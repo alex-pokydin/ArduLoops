@@ -1,4 +1,4 @@
-import { lazy, memo, Suspense, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore, type FormEvent, type PointerEvent as ReactPointerEvent } from "react";
+import { lazy, memo, Suspense, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore, type FormEvent, type PointerEvent as ReactPointerEvent, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 import type { Components } from "react-markdown";
 import Markdown from "react-markdown";
@@ -7,6 +7,7 @@ import remarkGfm from "remark-gfm";
 import remarkMath from "remark-math";
 import "katex/dist/katex.min.css";
 import { ai, type AiStatus, type Chat, type CloudDoc, type LiveTurn, type LocalLog, type Msg, type Proposal } from "../assistant/api";
+import { IMAGES_PER_MESSAGE, imageFiles, shrinkImage } from "../assistant/images";
 import { Disconnected } from "./Disconnected";
 import { WizardHost, type WizardAsk } from "./WizardHost";
 import type { WizardClose } from "../wizards/close";
@@ -51,7 +52,7 @@ type LinkFace = {
 let linkFaceCache: LinkFace = { ok: false, frame: "", mode: "", armed: false, boot_uid: "", board_name: "" };
 let linkFaceVehicle = "";
 
-type PendingOut = { role: "user" | "steer"; body: string; at: number; attach: string; quote: string };
+type PendingOut = { role: "user" | "steer"; body: string; at: number; attach: string; quote: string; images: string[] };
 
 function quotePayload(quoted: LuaQuote): string {
   return JSON.stringify({
@@ -82,6 +83,7 @@ function mergeOutgoing(list: Msg[], pendingRef: { current: PendingOut | null }):
   }
   const extra: Msg[] = [{ role: pending.role, body: pending.body, at: pending.at }];
   if (pending.attach) extra.push({ role: "attach", body: pending.attach, at: pending.at });
+  for (const id of pending.images) extra.push({ role: "image", body: id, at: pending.at });
   if (pending.quote) extra.push({ role: "quote", body: pending.quote, at: pending.at });
   return [...list, ...extra];
 }
@@ -89,7 +91,7 @@ function mergeOutgoing(list: Msg[], pendingRef: { current: PendingOut | null }):
 function sameLive(a: LiveTurn | null, b: LiveTurn | null): boolean {
   if (a === b) return true;
   if (!a || !b) return !a && !b;
-  return a.active === b.active && a.tool === b.tool && a.input === b.input && a.thought === b.thought && a.reply === b.reply && a.note === b.note;
+  return a.active === b.active && a.tool === b.tool && a.input === b.input && a.thought === b.thought && a.reply === b.reply && a.note === b.note && a.started_ms === b.started_ms && a.step_ms === b.step_ms;
 }
 
 function sameFlow(a?: Sample["log_download"], b?: Sample["log_download"]): boolean {
@@ -423,10 +425,10 @@ function ProposalCard({
 const EMPTY_CHECKS = { propellers: false, power: false, workspace: false, control: false };
 
 const MODELS: Record<string, string[]> = {
-  gemini: ["gemini-3.8-flash", "gemini-3.1-pro-preview", "gemini-3.5-flash-lite"],
-  openai: ["gpt-6-sol", "gpt-6-luna", "gpt-6-astra"],
-  anthropic: ["claude-opus-5-5", "claude-sonnet-5", "claude-haiku-4-5"],
-  xai: ["grok-4.7", "grok-4.6", "grok-4.3"],
+  gemini: ["gemini-4-argon", "gemini-3.8-flash", "gemini-3.5-flash-lite"],
+  openai: ["gpt-6.1-sol", "gpt-6.1-terra", "gpt-6-luna", "gpt-6-astra"],
+  anthropic: ["claude-opus-5-5", "claude-sonnet-5-5", "claude-haiku-5-5"],
+  xai: ["grok-4.7", "grok-4.6", "grok-4.5"],
 };
 
 export function Assistant({
@@ -467,6 +469,7 @@ export function Assistant({
   const [query, setQuery] = useState("");
   const [logs, setLogs] = useState<LocalLog[]>([]);
   const [logId, setLogId] = useState("");
+  const [images, setImages] = useState<string[]>([]);
   const [pos, setPos] = useState(() => placeFloat(true));
   const drag = useRef<{ dx: number; dy: number; w: number; h: number } | null>(null);
   const panel = useRef<HTMLElement>(null);
@@ -492,13 +495,14 @@ export function Assistant({
     setProposals(thread.proposals);
     return true;
   }
-  function paintOutgoing(role: "user" | "steer", text: string, attached: string, quoted: LuaQuote | null) {
+  function paintOutgoing(role: "user" | "steer", text: string, attached: string, quoted: LuaQuote | null, pics: string[] = []) {
     pendingOut.current = {
       role,
       body: text,
       at: Math.floor(Date.now() / 1000),
       attach: attached,
       quote: quoted ? quotePayload(quoted) : "",
+      images: pics,
     };
     setMessages((prev) => {
       const next = mergeOutgoing(prev, pendingOut);
@@ -630,7 +634,7 @@ export function Assistant({
     };
   }, [chatId, status?.configured]);
 
-  async function onSend(ev?: FormEvent, preset?: string) {
+  async function onSend(ev?: FormEvent, preset?: string, presetImages?: string[]) {
     ev?.preventDefault();
     const text = (preset ?? draft).trim();
     if (!text) return;
@@ -660,6 +664,9 @@ export function Assistant({
       }
       return;
     }
+    // Images go with a new turn. A note to a running turn leaves them in the composer.
+    // A retry sends the images of the failed message and leaves the composer as it is.
+    const pics = presetImages ?? images;
     setFollowUser(true);
     setBusy(true);
     setLive({ active: true });
@@ -667,8 +674,9 @@ export function Assistant({
     setNote("");
     setDraft("");
     setLogId("");
+    if (!presetImages) setImages([]);
     setLuaQuote(null);
-    paintOutgoing("user", text, attached, quoted);
+    paintOutgoing("user", text, attached, quoted, pics);
     const ctrl = new AbortController();
     sendAbort.current = ctrl;
     sending.current = true;
@@ -679,7 +687,7 @@ export function Assistant({
         id = created.id;
         setChatId(id);
       }
-      const res = await ai.send(id, text, getLang(), model, reasoning, attached, quoted, ctrl.signal);
+      const res = await ai.send(id, text, getLang(), model, reasoning, attached, quoted, ctrl.signal, pics);
       if (!res.ok) setNote(res.status || "network unavailable");
       const gen = openThread();
       const thread = await ai.thread(id);
@@ -691,6 +699,7 @@ export function Assistant({
       pendingOut.current = null;
       if (!preset) setDraft(text);
       setLogId(attached);
+      if (!presetImages) setImages(pics);
       if (quoted) setLuaQuote(quoted);
       setNote(err instanceof Error && err.message !== "Failed to fetch" ? err.message : "This turn stopped before a reply.");
       if (id) {
@@ -925,6 +934,7 @@ export function Assistant({
             onDraft={setDraft}
             onModel={setModel}
             onSend={(preset) => void onSend(undefined, preset)}
+            onRetry={(text, pics) => void onSend(undefined, text, pics)}
             onDecision={onDecision}
             onCancelWait={onCancelWait}
             onOpenWizard={(id, wizard) => setWizardAsk({ id, wizard })}
@@ -943,6 +953,8 @@ export function Assistant({
             logs={logs}
             logId={logId}
             onLog={setLogId}
+            images={images}
+            onImages={setImages}
             onImported={takeLog}
             onContinue={() => setDraft(t("Continue the investigation with a new tool budget."))}
             drone={vehicle}
@@ -1044,6 +1056,7 @@ export function Assistant({
               onDraft={setDraft}
               onModel={setModel}
               onSend={(preset) => void onSend(undefined, preset)}
+              onRetry={(text, pics) => void onSend(undefined, text, pics)}
               onDecision={onDecision}
               onCancelWait={onCancelWait}
               onOpenWizard={(id, wizard) => setWizardAsk({ id, wizard })}
@@ -1062,6 +1075,8 @@ export function Assistant({
             logs={logs}
             logId={logId}
             onLog={setLogId}
+            images={images}
+            onImages={setImages}
             onImported={takeLog}
             onContinue={() => setDraft(t("Continue the investigation with a new tool budget."))}
             drone={vehicle}
@@ -1117,25 +1132,45 @@ export function Assistant({
   );
 }
 
-const LOG_MENU = 10;
-
+/** A loaded file is stored as `{sha256_16}_{its own name}.bin`; show its own name. */
 function logName(id: string): string {
   const cut = Math.max(id.lastIndexOf("/"), id.lastIndexOf("\\"));
-  return cut >= 0 ? id.slice(cut + 1) : id;
+  const name = cut >= 0 ? id.slice(cut + 1) : id;
+  const own = /^[0-9a-f]{16}_(.+)$/i.exec(name);
+  return own && !/^\d{14}_\d+\.bin$/.test(own[1]) ? own[1] : name;
 }
 
-function logChoices(logs: LocalLog[], selected: string): LocalLog[] {
-  const recent = logs.slice(0, LOG_MENU);
-  if (!selected || recent.some((item) => item.id === selected)) return recent;
-  const kept = logs.find((item) => item.id === selected);
-  return kept ? [kept, ...recent] : recent;
+/** The name a person knows the log by: its own file name, the board, or where it came from. */
+function logTitle(item: LocalLog, t: (k: string, vars?: Record<string, string | number>) => string): string {
+  if (item.original_name) return item.original_name;
+  if (item.board) return item.board;
+  if (item.vehicle === "imported") return t("Loaded log");
+  if (item.vehicle) return t("Board {id}", { id: item.vehicle.slice(0, 8) });
+  return logName(item.id);
 }
+
+/** Flight time, or the time it was stored when the log has no GPS time. Local time. */
+function logWhen(item: LocalLog): string {
+  const raw = item.flight_utc || item.saved_at;
+  if (!raw) return "";
+  const at = new Date(raw);
+  if (Number.isNaN(at.getTime())) return "";
+  const two = (n: number) => String(n).padStart(2, "0");
+  const year = at.getFullYear() === new Date().getFullYear() ? "" : `.${at.getFullYear()}`;
+  return `${two(at.getDate())}.${two(at.getMonth() + 1)}${year} ${two(at.getHours())}:${two(at.getMinutes())}`;
+}
+
+function boardKey(uid: string | undefined): string {
+  return (uid || "").replace(/[^0-9a-z]/gi, "").toUpperCase();
+}
+
+const LOG_ROWS = 60;
 
 function ChatPane({
   t, chats, chatId, messages, proposals, draft, busy, followUser, note, model, models, bench, quota, compact,
-  onPick, onDraft, onModel, onSend, onDecision, onCancelWait, onOpenWizard, wizardOpenId, onNew, onBench, onStop,
+  onPick, onDraft, onModel, onSend, onRetry, onDecision, onCancelWait, onOpenWizard, wizardOpenId, onNew, onBench, onStop,
   query, onQuery, reasoning, onReasoning, provider, onRename, onCancel,
-  logs, logId, onLog, onImported, onContinue, drone, live, flow,
+  logs, logId, onLog, images, onImages, onImported, onContinue, drone, live, flow,
 }: {
   t: (k: string, vars?: Record<string, string | number>) => string;
   chats: Chat[];
@@ -1155,6 +1190,7 @@ function ChatPane({
   onDraft: (v: string) => void;
   onModel: (v: string) => void;
   onSend: (preset?: string) => void;
+  onRetry: (text: string, images: string[]) => void;
   onDecision: (decision: "approve" | "reject", ids?: string[], comment?: string) => void;
   onCancelWait: (id: string) => void;
   onOpenWizard: (id: string, wizard: string) => void;
@@ -1172,6 +1208,8 @@ function ChatPane({
   logs: LocalLog[];
   logId: string;
   onLog: (id: string) => void;
+  images: string[];
+  onImages: (update: (prev: string[]) => string[]) => void;
   onImported: (id: string) => void;
   onContinue: () => void;
   drone: { boot_uid?: string; board_name?: string; frame?: string; ok?: boolean };
@@ -1184,10 +1222,61 @@ function ChatPane({
   const pinning = useRef(false);
   const box = useRef<HTMLTextAreaElement>(null);
   const logFile = useRef<HTMLInputElement>(null);
+  const imageFile = useRef<HTMLInputElement>(null);
   const [plus, setPlus] = useState(false);
-  const [importing, setImporting] = useState(false);
+  const next = useMemo(() => nextSteps(messages), [messages]);
+  const nextButtons = !busy && (next.ask.length || next.offer.length) ? (
+    <div className="ai-suggest">
+      {next.ask.map((item) => (
+        <button key={`a-${item.label}`} type="button" className="ask" title={item.prompt} onClick={() => { onDraft(item.prompt); box.current?.focus(); }}>
+          {item.label}
+        </button>
+      ))}
+      {next.offer.map((item) => (
+        <button key={`o-${item.label}`} type="button" className="offer" title={item.prompt} onClick={() => { onDraft(item.prompt); box.current?.focus(); }}>
+          {item.label}
+        </button>
+      ))}
+    </div>
+  ) : null;
+  const lastAsk = useMemo(() => lastUserAsk(messages), [messages]);
+  const [adding, setAdding] = useState(0);
+  const [imageNote, setImageNote] = useState("");
+  const [dragging, setDragging] = useState(false);
+  const [zoom, setZoom] = useState("");
+  const room = IMAGES_PER_MESSAGE - images.length - adding;
+  function addImages(files: File[]) {
+    if (!files.length) return;
+    setImageNote(files.length > room ? "Up to 4 images per message." : "");
+    for (const file of files.slice(0, Math.max(0, room))) {
+      setAdding((n) => n + 1);
+      void shrinkImage(file)
+        .then((small) => ai.uploadImage(small))
+        .then((id) => onImages((prev) => (prev.includes(id) || prev.length >= IMAGES_PER_MESSAGE ? prev : [...prev, id])))
+        .catch((err: unknown) => setImageNote(err instanceof Error ? err.message : "Could not add the image"))
+        .finally(() => setAdding((n) => n - 1));
+    }
+  }
+  const [modelOpen, setModelOpen] = useState(false);
+  // A saved model that left the list stays visible, so the user sees what the next turn uses.
+  const shownModel = model || models[0] || "";
+  const modelList = shownModel && !models.includes(shownModel) ? [shownModel, ...models] : models;
+  const [importing, setImporting] = useState<{ name: string; sent: number; total: number } | null>(null);
   const [importNote, setImportNote] = useState("");
-  const logMenu = logChoices(logs, logId);
+  const [importDone, setImportDone] = useState("");
+  const [logQuery, setLogQuery] = useState("");
+  const thisBoard = boardKey(drone.boot_uid);
+  const [logScope, setLogScope] = useState<"board" | "all">("board");
+  const logRows = useMemo(() => {
+    const words = logQuery.trim().toLowerCase().split(/\s+/).filter(Boolean);
+    const scoped = logScope === "board" && thisBoard ? logs.filter((item) => boardKey(item.vehicle) === thisBoard) : logs;
+    const found = scoped.filter((item) => {
+      const hay = `${logTitle(item, t)} ${item.board || ""} ${item.vehicle || ""} ${logWhen(item)} ${item.id}`.toLowerCase();
+      return words.every((word) => hay.includes(word));
+    });
+    return found.slice(0, LOG_ROWS);
+  }, [logs, logQuery, logScope, thisBoard, t]);
+  const pickedLog = logs.find((item) => item.id === logId);
   const [renaming, setRenaming] = useState("");
   const [scope, setScope] = useState<"all" | "drone">("drone");
   const [filterOpen, setFilterOpen] = useState(false);
@@ -1290,6 +1379,22 @@ function ChatPane({
     return () => window.removeEventListener("pointerdown", close);
   }, [plus]);
   useEffect(() => {
+    if (!zoom) return;
+    const onKey = (ev: KeyboardEvent) => {
+      if (ev.key === "Escape") setZoom("");
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [zoom]);
+  useEffect(() => {
+    if (!modelOpen) return;
+    const close = (ev: PointerEvent) => {
+      if (!(ev.target instanceof Element) || !ev.target.closest(".ai-model-wrap")) setModelOpen(false);
+    };
+    window.addEventListener("pointerdown", close);
+    return () => window.removeEventListener("pointerdown", close);
+  }, [modelOpen]);
+  useEffect(() => {
     if (!filterOpen) return;
     const close = (ev: PointerEvent) => {
       if (!(ev.target instanceof Element) || !ev.target.closest(".ai-filter-wrap")) setFilterOpen(false);
@@ -1360,7 +1465,31 @@ function ChatPane({
       {narrow && chatsOpen ? (
         <button type="button" className="ai-chats-back" aria-label={t("Hide chats")} onClick={() => setChatsOpen(false)} />
       ) : null}
-      <div className="ai-thread">
+      <div
+        className={`ai-thread${dragging ? " dropping" : ""}`}
+        onDragOver={(ev) => {
+          if (!Array.from(ev.dataTransfer.types).includes("Files")) return;
+          ev.preventDefault();
+          setDragging(true);
+        }}
+        onDragLeave={(ev) => {
+          if (!ev.currentTarget.contains(ev.relatedTarget as Node | null)) setDragging(false);
+        }}
+        onDrop={(ev) => {
+          const files = imageFiles(ev.dataTransfer.files);
+          setDragging(false);
+          if (!files.length) return;
+          ev.preventDefault();
+          addImages(files);
+        }}
+      >
+        {dragging ? <div className="ai-drop" aria-hidden>{t("Drop images here")}</div> : null}
+        {zoom ? (
+          <div className="ai-zoom" role="dialog" aria-label={t("Image")} onClick={() => setZoom("")}>
+            <img src={ai.imageUrl(zoom)} alt="" />
+            <button type="button" aria-label={t("Close")} onClick={() => setZoom("")}>×</button>
+          </div>
+        ) : null}
         {!compact && !chatsOpen ? (
           <button type="button" className="ai-chats-toggle" aria-label={t("Show chats")} aria-expanded={false} title={t("Show chats")} onClick={() => setChatsOpen(true)}><ChatsIcon /></button>
         ) : null}
@@ -1401,13 +1530,22 @@ function ChatPane({
             ) : block.kind === "proposal" ? (
               <ProposalCard key={block.key} t={t} items={block.items} busy={busy} onDecision={onDecision} onCancelWait={onCancelWait} onOpenWizard={onOpenWizard} wizardOpenId={wizardOpenId} />
             ) : (
-              block.attach || block.quote ? (
+              block.attach || block.quote || block.images?.length ? (
                 <div key={block.key} className="ai-user-block">
                   <article className={block.msg.role}>
                     {block.msg.role === "steer" ? <span className="ai-steer-label">{t("Note for later")}</span> : null}
                     {block.msg.body}
                   </article>
-                  {block.attach ? <span className="ai-chip ai-chip-sent" title={block.attach}>{block.attach}</span> : null}
+                  {block.images?.length ? (
+                    <div className="ai-sent-images">
+                      {block.images.map((id) => (
+                        <button key={id} type="button" className="ai-thumb" aria-label={t("Image")} onClick={() => setZoom(id)}>
+                          <img src={ai.imageUrl(id)} alt="" loading="lazy" />
+                        </button>
+                      ))}
+                    </div>
+                  ) : null}
+                  {block.attach ? <span className="ai-chip ai-chip-sent" title={block.attach}>{logName(block.attach)}</span> : null}
                   {block.quote ? <span className="ai-chip ai-chip-line" title={block.quoteTitle}>{block.quote}</span> : null}
                 </div>
               ) : block.docs?.length && !block.msg.body ? (
@@ -1420,7 +1558,18 @@ function ChatPane({
                     <AssistantMarkdown text={shownNotice(block.msg.body, t)} />
                     <button type="button" disabled={busy} onClick={() => onSend(t("The tools above already returned. Continue from those results and do not call them again."))}>{t("Continue")}</button>
                   </div>
-                ) : block.msg.role === "assistant" ? <AssistantMarkdown text={shownNotice(block.msg.body, t)} /> : block.msg.body}
+                ) : block.msg.role === "assistant" ? (
+                  <>
+                    <FailureNotice
+                      body={block.msg.body}
+                      t={t}
+                      onRetry={index === held.length - 1 && !busy && lastAsk ? () => onRetry(lastAsk.text, lastAsk.images) : undefined}
+                    />
+                    {block.msg.body && !failureParts(block.msg.body) && !TURN_NOTICES.includes(block.msg.body) ? (
+                      <CopyReply t={t} text={block.msg.body} lead={index === held.length - 1 ? nextButtons : null} />
+                    ) : null}
+                  </>
+                ) : block.msg.body}
                 {block.msg.role === "assistant" && block.msg.at !== -1 ? <ChartStrip charts={chartsUnder(held, index)} /> : null}
                 {block.msg.role === "assistant" && (block.msg.at !== -1 || block.docs?.length) ? <DocStrip docs={[...(block.docs ?? []), ...(block.msg.at === -1 ? [] : docsUnder(held, index))]} /> : null}
                 {block.msg.role === "assistant" && block.msg.at !== -1 && liveView?.index === index ? <LiveView spec={liveView.spec} /> : null}
@@ -1432,10 +1581,12 @@ function ChatPane({
                 <p className="ai-tools ai-tools-status ai-thinking">
                   <span className="ai-think-spin" aria-hidden />
                   <span className="ai-tools-names">{live?.tool ? liveTitle(live, flow) : t("Thinking…")}</span>
+                  <LiveClock t={t} live={live} />
                 </p>
                 {live?.thought ? <ThoughtText text={live.thought} /> : null}
               </div>
             ) : null}
+            {nextButtons && !replyCarries(held.at(-1)) ? nextButtons : null}
             {busy ? <div className="ai-run-pad" /> : null}
             {quota ? <p className="ai-quota">{t("{left} of {limit} requests left today.", quota)}</p> : null}
           </div>
@@ -1454,7 +1605,25 @@ function ChatPane({
                 {note === "paused_limit" ? <button type="button" onClick={onContinue}>{t("Continue")}</button> : null}
               </p>
             ) : null}
-            {scriptQuote || logId || reasoning ? (
+            {images.length || adding ? (
+              <div className="ai-pending-images">
+                {images.map((id) => (
+                  <span key={id} className="ai-thumb">
+                    <button type="button" className="ai-thumb-open" aria-label={t("Image")} onClick={() => setZoom(id)}>
+                      <img src={ai.imageUrl(id)} alt="" />
+                    </button>
+                    <button type="button" className="ai-thumb-drop" aria-label={t("Remove image")} onClick={() => { setImageNote(""); onImages((prev) => prev.filter((item) => item !== id)); }}>×</button>
+                  </span>
+                ))}
+                {Array.from({ length: adding }, (_, index) => (
+                  <span key={`adding-${index}`} className="ai-thumb adding" role="status" aria-label={t("Adding the image…")}>
+                    <span className="lua-spin" aria-hidden />
+                  </span>
+                ))}
+              </div>
+            ) : null}
+            {imageNote ? <p className="ai-error">{t(imageNote)}</p> : null}
+            {scriptQuote || logId ? (
               <div className="ai-chips">
                 {scriptQuote ? (
                   <span className="ai-chip ai-chip-line" title={scriptQuote.selection}>
@@ -1463,10 +1632,7 @@ function ChatPane({
                   </span>
                 ) : null}
                 {logId ? (
-                  <span className="ai-chip">{logName(logId)}<button type="button" aria-label={t("Remove")} onClick={() => onLog("")}>×</button></span>
-                ) : null}
-                {reasoning ? (
-                  <span className="ai-chip">{t("Reasoning")} · {reasoning}<button type="button" aria-label={t("Remove")} onClick={() => onReasoning("")}>×</button></span>
+                  <span className="ai-chip" title={logId}>{pickedLog ? logTitle(pickedLog, t) : logName(logId)}<button type="button" aria-label={t("Remove")} onClick={() => onLog("")}>×</button></span>
                 ) : null}
               </div>
             ) : null}
@@ -1477,6 +1643,12 @@ function ChatPane({
               placeholder={waiting || busy ? t("Add a note for the next reply") : t("Ask about this vehicle")}
               aria-label={t("Message")}
               rows={1}
+              onPaste={(ev) => {
+                const files = imageFiles(ev.clipboardData.items);
+                if (!files.length) return;
+                ev.preventDefault();
+                addImages(files);
+              }}
               onKeyDown={(ev) => {
                 if (ev.key === "Enter" && !ev.shiftKey) {
                   ev.preventDefault();
@@ -1488,7 +1660,7 @@ function ChatPane({
               <div className="ai-plus-wrap">
                 <button
                   type="button"
-                  className={`ai-icon${plus || logId || reasoning ? " on" : ""}`}
+                  className={`ai-icon${plus || logId || images.length ? " on" : ""}${importing ? " busy" : ""}`}
                   aria-label={t("Add context")}
                   aria-expanded={plus}
                   onClick={() => setPlus((v) => !v)}
@@ -1497,17 +1669,85 @@ function ChatPane({
                 </button>
                 {plus ? (
                   <div className="ai-plus-menu">
-                    <label>
-                      {t("Local log")}
-                      <select aria-label={t("Local log")} value={logId} onChange={(ev) => onLog(ev.target.value)}>
-                        <option value="">{t("No downloaded log")}</option>
-                        {logId && !logMenu.some((item) => item.id === logId) ? <option value={logId}>{logName(logId)}</option> : null}
-                        {logMenu.map((item) => <option key={item.id} value={item.id}>{logName(item.id)}</option>)}
-                      </select>
-                    </label>
-                    <button type="button" className="ai-log-load" disabled={importing} onClick={() => logFile.current?.click()}>
-                      {t("Load a log")}
-                    </button>
+                    <div className="ai-log-pick">
+                      <span className="ai-log-head">{t("Local log")}</span>
+                      <input
+                        type="search"
+                        value={logQuery}
+                        placeholder={t("Search by name, board, or date")}
+                        aria-label={t("Search logs")}
+                        onChange={(ev) => setLogQuery(ev.target.value)}
+                      />
+                      {thisBoard ? (
+                        <div className="ai-log-scope" role="radiogroup" aria-label={t("Logs")}>
+                          <button type="button" role="radio" aria-checked={logScope === "board"} className={logScope === "board" ? "on" : ""} onClick={() => setLogScope("board")}>{t("This vehicle")}</button>
+                          <button type="button" role="radio" aria-checked={logScope === "all"} className={logScope === "all" ? "on" : ""} onClick={() => setLogScope("all")}>{t("All")}</button>
+                        </div>
+                      ) : null}
+                      <div className="ai-log-list" role="listbox" aria-label={t("Local log")}>
+                        <button type="button" role="option" aria-selected={!logId} className={!logId ? "on" : ""} onClick={() => { onLog(""); setPlus(false); }}>
+                          <b>{t("No downloaded log")}</b>
+                        </button>
+                        {pickedLog && !logRows.includes(pickedLog) ? (
+                          <button type="button" role="option" aria-selected className="on" onClick={() => setPlus(false)}>
+                            <b>{logTitle(pickedLog, t)}</b>
+                            <span>{[logWhen(pickedLog), t("{n} MB", { n: (pickedLog.bytes / 1048576).toFixed(1) }), pickedLog.original_name ? "" : logName(pickedLog.id)].filter(Boolean).join(" · ")}</span>
+                          </button>
+                        ) : null}
+                        {logRows.map((item) => (
+                          <button
+                            key={item.id}
+                            type="button"
+                            role="option"
+                            aria-selected={item.id === logId}
+                            className={item.id === logId ? "on" : ""}
+                            title={item.id}
+                            onClick={() => { onLog(item.id); setPlus(false); }}
+                          >
+                            <b>{logTitle(item, t)}</b>
+                            <span>
+                              {[
+                                logWhen(item),
+                                t("{n} MB", { n: (item.bytes / 1048576).toFixed(1) }),
+                                item.original_name && item.board ? item.board : "",
+                                item.vehicle === "imported" && item.original_name ? t("no board id") : "",
+                                item.original_name ? "" : logName(item.id),
+                              ].filter(Boolean).join(" · ")}
+                            </span>
+                          </button>
+                        ))}
+                        {!logRows.length ? <p>{logQuery ? t("No log matches this search.") : t("No logs from this vehicle.")}</p> : null}
+                      </div>
+                    </div>
+                    {importing ? (
+                      <div className="ai-log-progress" role="status" aria-live="polite">
+                        <span className="ai-log-progress-head">
+                          <span className="lua-spin" aria-hidden="true" />
+                          <b title={importing.name}>{importing.name}</b>
+                        </span>
+                        {importing.sent < importing.total ? (
+                          <>
+                            <i><b style={{ width: `${Math.round((importing.sent / importing.total) * 100)}%` }} /></i>
+                            <span>
+                              {t("Sending {pct}% · {sent} of {total} MB", {
+                                pct: Math.round((importing.sent / importing.total) * 100),
+                                sent: (importing.sent / 1048576).toFixed(1),
+                                total: (importing.total / 1048576).toFixed(1),
+                              })}
+                            </span>
+                          </>
+                        ) : (
+                          <>
+                            <i className="wait"><b /></i>
+                            <span>{t("Reading the log…")}</span>
+                          </>
+                        )}
+                      </div>
+                    ) : (
+                      <button type="button" className="ai-log-load" onClick={() => logFile.current?.click()}>
+                        {t("Load a log")}
+                      </button>
+                    )}
                     <input
                       ref={logFile}
                       type="file"
@@ -1518,28 +1758,40 @@ function ChatPane({
                         ev.target.value = "";
                         if (!file) return;
                         setImportNote("");
-                        setImporting(true);
-                        void ai.importLog(file).then((saved) => {
+                        setImportDone("");
+                        if (file.size > 512 * 1024 * 1024) {
+                          setImportNote("This log is larger than 512 MB.");
+                          return;
+                        }
+                        setImporting({ name: file.name, sent: 0, total: file.size || 1 });
+                        void ai.importLog(file, (sent, total) => {
+                          setImporting({ name: file.name, sent, total: total || 1 });
+                        }).then((saved) => {
                           onImported(saved.id);
+                          setImportDone(file.name);
                         }).catch((err: unknown) => {
-                          setImportNote(err instanceof Error ? err.message : t("Could not load the log"));
-                        }).finally(() => setImporting(false));
+                          setImportNote(err instanceof Error ? err.message : "Could not load the log");
+                        }).finally(() => setImporting(null));
+                      }}
+                    />
+                    <button type="button" className="ai-log-load" disabled={room <= 0} onClick={() => imageFile.current?.click()}>
+                      {t("Add an image")}
+                    </button>
+                    <input
+                      ref={imageFile}
+                      type="file"
+                      accept="image/png,image/jpeg,image/webp,image/gif"
+                      multiple
+                      hidden
+                      onChange={(ev) => {
+                        const files = imageFiles(ev.target.files);
+                        ev.target.value = "";
+                        setPlus(false);
+                        addImages(files);
                       }}
                     />
                     {importNote ? <p className="ai-log-note">{t(importNote)}</p> : null}
-                    {provider === "gemini" ? (
-                      <label>
-                        {t("Reasoning")}
-                        <select aria-label={t("Reasoning")} value={reasoning} onChange={(ev) => onReasoning(ev.target.value)}>
-                          <option value="">{t("Provider default")}</option>
-                          <option value="low">low</option>
-                          <option value="medium">medium</option>
-                          <option value="high">high</option>
-                        </select>
-                      </label>
-                    ) : (
-                      <p>{t("This model does not take a reasoning level. The provider default is used.")}</p>
-                    )}
+                    {importDone && !importing ? <p className="ai-log-done">{t("Loaded {name}. The chat now uses this log.", { name: importDone })}</p> : null}
                   </div>
                 ) : null}
               </div>
@@ -1547,9 +1799,54 @@ function ChatPane({
                 <button type="button" className="ai-safe" onClick={onBench}>{t("Safe mode")}</button>
               )}
               {models.length ? (
-                <select className="ai-model" aria-label={t("Model")} value={model || models[0]} onChange={(ev) => onModel(ev.target.value)}>
-                  {models.map((id) => <option key={id} value={id}>{id}</option>)}
-                </select>
+                <div className="ai-model-wrap">
+                  <button
+                    type="button"
+                    className={`ai-model${modelOpen ? " on" : ""}`}
+                    aria-label={t("Model")}
+                    aria-expanded={modelOpen}
+                    onClick={() => setModelOpen((v) => !v)}
+                  >
+                    <span className="ai-model-name">{shownModel}</span>
+                    {reasoning && provider === "gemini" ? <span className="ai-model-level">· {reasoning}</span> : null}
+                    <span className="ai-model-caret" aria-hidden>▾</span>
+                  </button>
+                  {modelOpen ? (
+                    <div className="ai-model-menu">
+                      <span className="ai-model-head">{t("Model")}</span>
+                      {modelList.map((id) => (
+                        <button
+                          key={id}
+                          type="button"
+                          aria-pressed={id === shownModel}
+                          className={id === shownModel ? "on" : ""}
+                          onClick={() => { onModel(id); setModelOpen(false); }}
+                        >
+                          {id}
+                        </button>
+                      ))}
+                      <span className="ai-model-head">{t("Reasoning")}</span>
+                      {provider === "gemini" ? (
+                        <div className="ai-model-levels" role="radiogroup" aria-label={t("Reasoning")}>
+                          {["", "low", "medium", "high"].map((level) => (
+                            <button
+                              key={level || "default"}
+                              type="button"
+                              role="radio"
+                              aria-checked={reasoning === level}
+                              className={reasoning === level ? "on" : ""}
+                              onClick={() => onReasoning(level)}
+                            >
+                              {level || t("Provider default")}
+                            </button>
+                          ))}
+                        </div>
+                      ) : (
+                        <p>{t("This model does not take a reasoning level. The provider default is used.")}</p>
+                      )}
+                    </div>
+                  ) : null}
+                </div>
               ) : null}
               {busy ? (
                 <>
@@ -1604,6 +1901,7 @@ const TURN_NOTICES = [
   "The model rejected this turn because the request was too long.",
   "The model did not answer in time.",
   "The model request failed.",
+  "The provider account has no credit.",
   "Paused at the tool limit. Continue to give a new budget.",
   "Stopped.",
   "invalid key",
@@ -1611,6 +1909,144 @@ const TURN_NOTICES = [
   "quota exceeded",
   "network unavailable",
 ];
+
+/** Provider failures. Saved as the notice, the provider's own sentence, a blank line, and the raw error. */
+const FAILURES = new Set([
+  "The model rejected this turn because the request was too long.",
+  "The model did not answer in time.",
+  "The model request failed.",
+  "The provider account has no credit.",
+  "invalid key",
+  "model unavailable",
+  "quota exceeded",
+  "network unavailable",
+]);
+
+function failureParts(body: string): { kind: string; said: string; raw: string } | null {
+  const cut = body.indexOf("\n");
+  const kind = cut < 0 ? body : body.slice(0, cut);
+  if (!FAILURES.has(kind)) return null;
+  const rest = cut < 0 ? "" : body.slice(cut + 1);
+  const gap = rest.indexOf("\n\n");
+  if (gap >= 0) return { kind, said: rest.slice(0, gap).trim(), raw: rest.slice(gap + 2).trim() };
+  // Older chats saved only the raw error, cut at 300 characters.
+  const said = /"message"\s*:\s*"((?:[^"\\]|\\.)*)/.exec(rest);
+  const provider = /\(adapter: ([^)]+)\)/.exec(rest);
+  if (!said) return { kind, said: rest.trim(), raw: "" };
+  const closed = rest.charAt(said.index + said[0].length) === '"';
+  const text = said[1].replace(/\\(.)/g, "$1") + (closed ? "" : "…");
+  return { kind, said: provider ? `${provider[1]}: ${text}` : text, raw: rest.trim() };
+}
+
+function FailureNotice({ body, t, onRetry }: { body: string; t: (k: string) => string; onRetry?: () => void }) {
+  const parts = failureParts(body);
+  if (!parts) return <AssistantMarkdown text={shownNotice(body, t)} />;
+  const kind = t(parts.kind);
+  return (
+    <>
+      <div className="ai-fail" role="alert">
+        <b>{kind.charAt(0).toUpperCase() + kind.slice(1)}</b>
+        {parts.said ? <p>{parts.said}</p> : null}
+        {parts.raw ? (
+          <details>
+            <summary>{t("Details")}</summary>
+            <pre>{parts.raw}</pre>
+          </details>
+        ) : null}
+      </div>
+      {onRetry ? (
+        <div className="ai-reply-tools lead">
+          <button type="button" aria-label={t("Retry")} title={t("Retry")} onClick={onRetry}>
+            <RetryIcon />
+          </button>
+        </div>
+      ) : null}
+    </>
+  );
+}
+
+type NextStep = { label: string; prompt: string };
+
+/** Buttons from the last suggest_next of the latest turn. */
+function nextSteps(messages: Msg[]): { ask: NextStep[]; offer: NextStep[] } {
+  const none = { ask: [], offer: [] };
+  for (let i = messages.length - 1; i >= 0; i--) {
+    const msg = messages[i];
+    if (msg.role === "user") return none;
+    if (msg.role !== "tool") continue;
+    const parsed = parseToolJson(msg.body.trim());
+    if (parsed?.name !== "suggest_next") continue;
+    try {
+      const value = JSON.parse(parsed.output) as { ok?: boolean; ask?: NextStep[]; offer?: NextStep[] };
+      if (!value.ok) continue;
+      const keep = (list?: NextStep[]) => (list || []).filter((item) => item?.label && item?.prompt).slice(0, 4);
+      return { ask: keep(value.ask), offer: keep(value.offer) };
+    } catch {
+      return none;
+    }
+  }
+  return none;
+}
+
+/** The last message the user sent and the images that went with it, for a retry. */
+function lastUserAsk(messages: Msg[]): { text: string; images: string[] } | null {
+  for (let i = messages.length - 1; i >= 0; i--) {
+    if (messages[i].role !== "user") continue;
+    const images: string[] = [];
+    for (let j = i + 1; j < messages.length && messages[j].role !== "user"; j++) {
+      if (messages[j].role === "image") images.push(messages[j].body);
+    }
+    return { text: messages[i].body, images };
+  }
+  return null;
+}
+
+/** The clipboard API needs a focused, permitted page; the older copy command covers the rest. */
+async function copyText(text: string): Promise<boolean> {
+  try {
+    await navigator.clipboard.writeText(text);
+    return true;
+  } catch {
+    const area = document.createElement("textarea");
+    area.value = text;
+    area.style.position = "fixed";
+    area.style.opacity = "0";
+    document.body.appendChild(area);
+    area.select();
+    const ok = document.execCommand("copy");
+    area.remove();
+    return ok;
+  }
+}
+
+/** Whether this block is a reply whose copy row shows the buttons. */
+function replyCarries(block: ThreadBlock | undefined): boolean {
+  if (!block || block.kind !== "msg" || block.msg.role !== "assistant" || !block.msg.body) return false;
+  return !failureParts(block.msg.body) && !TURN_NOTICES.includes(block.msg.body);
+}
+
+function CopyReply({ t, text, lead }: { t: (k: string) => string; text: string; lead?: ReactNode }) {
+  const [done, setDone] = useState(false);
+  useEffect(() => {
+    if (!done) return;
+    const id = window.setTimeout(() => setDone(false), 1500);
+    return () => window.clearTimeout(id);
+  }, [done]);
+  return (
+    <div className={`ai-reply-tools${lead ? " lead" : ""}`}>
+      {lead}
+      <button
+        type="button"
+        className="ai-icon-btn"
+        aria-label={done ? t("Copied") : t("Copy")}
+        title={done ? t("Copied") : t("Copy")}
+        onClick={() => void copyText(text).then((ok) => setDone(ok))}
+      >
+        {done ? <CheckIcon /> : <CopyIcon />}
+      </button>
+    </div>
+  );
+}
 
 function shownNotice(body: string, t: (k: string) => string): string {
   for (const key of TURN_NOTICES) {
@@ -1631,7 +2067,7 @@ const AssistantMarkdown = memo(function AssistantMarkdown({ text }: { text: stri
 
 type ToolItem = { key: string; name: string; input?: string; output: string };
 type ThreadBlock =
-  | { kind: "msg"; key: string; msg: Msg; at: number; attach?: string; quote?: string; quoteTitle?: string; docs?: SavedDoc[] }
+  | { kind: "msg"; key: string; msg: Msg; at: number; attach?: string; images?: string[]; quote?: string; quoteTitle?: string; docs?: SavedDoc[] }
   | { kind: "tools"; key: string; items: ToolItem[]; workedMs?: number; note?: string; at: number }
   | { kind: "proposal"; key: string; items: Proposal[]; at: number };
 
@@ -1739,6 +2175,13 @@ function groupMessages(messages: Msg[]): ThreadBlock[] {
       }
       continue;
     }
+    if (msg.role === "image") {
+      const prev = out.at(-1);
+      if (prev?.kind === "msg" && prev.msg.role === "user") {
+        out[out.length - 1] = { ...prev, images: [...(prev.images ?? []), msg.body] };
+      }
+      continue;
+    }
     if (msg.role === "quote") {
       const chip = quoteChip(msg.body);
       const prev = out.at(-1);
@@ -1768,7 +2211,8 @@ function groupMessages(messages: Msg[]): ThreadBlock[] {
     noteMs = undefined;
     while (i < messages.length && messages[i].role === "tool") {
       const parsed = parseTool(messages[i].body);
-      items.push({ key: `${messages[i].at}-${i}`, ...parsed });
+      // suggest_next is shown as buttons under the reply, not as a tool row.
+      if (parsed.name !== "suggest_next") items.push({ key: `${messages[i].at}-${i}`, ...parsed });
       i += 1;
     }
     let workedMs: number | undefined;
@@ -2615,6 +3059,29 @@ function SizeWarn({ title }: { title: string }) {
   );
 }
 
+function clock(ms: number): string {
+  const total = Math.max(0, Math.floor(ms / 1000));
+  return `${Math.floor(total / 60)}:${String(total % 60).padStart(2, "0")}`;
+}
+
+/** How long the current step and the whole turn have run. Ticks on its own, so the thread does not re-render. */
+function LiveClock({ t, live }: { t: (k: string, vars?: Record<string, string | number>) => string; live: LiveTurn | null }) {
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    const id = window.setInterval(() => setNow(Date.now()), 1000);
+    return () => window.clearInterval(id);
+  }, []);
+  if (!live?.step_ms || !live.started_ms) return null;
+  const step = now - live.step_ms;
+  const total = now - live.started_ms;
+  return (
+    <span className="ai-clock" aria-hidden>
+      {clock(step)}
+      {total - step >= 1000 ? <span className="ai-clock-total">{t("{t} in total", { t: clock(total) })}</span> : null}
+    </span>
+  );
+}
+
 function workedLabel(t: (k: string, vars?: Record<string, string | number>) => string, ms: number): string {
   const total = Math.max(0, Math.round(ms / 1000));
   const m = Math.floor(total / 60);
@@ -2669,6 +3136,7 @@ const ToolGroup = memo(function ToolGroup({
       <summary>
         {live && !live.tool ? <span className="ai-think-spin" aria-hidden /> : null}
         <span className="ai-tools-names">{live ? running : workedMs != null ? workedLabel(t, workedMs) : t("Tools")}</span>
+        {live ? <LiveClock t={t} live={live} /> : null}
         {heavyCount > 0 ? <SizeWarn title={t("Large results in this turn: {n}. They are kept whole.", { n: heavyCount })} /> : null}
       </summary>
       <ul>
@@ -2774,6 +3242,32 @@ function SendIcon() {
   return (
     <svg viewBox="0 0 16 16" width="16" height="16" aria-hidden="true">
       <path d="M8 13.2V3.4M3.6 7.2 8 2.8l4.4 4.4" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" />
+    </svg>
+  );
+}
+
+function CopyIcon() {
+  return (
+    <svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true">
+      <rect x="5.4" y="5.4" width="7.8" height="7.8" rx="1.6" fill="none" stroke="currentColor" strokeWidth="1.4" />
+      <path d="M10.6 5.4V4.2a1.4 1.4 0 0 0-1.4-1.4H4.2a1.4 1.4 0 0 0-1.4 1.4v5a1.4 1.4 0 0 0 1.4 1.4h1.2" fill="none" stroke="currentColor" strokeWidth="1.4" />
+    </svg>
+  );
+}
+
+function CheckIcon() {
+  return (
+    <svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true">
+      <path d="M3.4 8.4 6.6 11.4 12.6 4.8" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" />
+    </svg>
+  );
+}
+
+function RetryIcon() {
+  return (
+    <svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true">
+      <path d="M12.8 8a4.8 4.8 0 1 1-1.4-3.4" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
+      <path d="M12.2 2.4v2.8H9.4" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
     </svg>
   );
 }

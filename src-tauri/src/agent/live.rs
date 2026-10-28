@@ -25,6 +25,9 @@ struct LiveTurn {
     reply: String,
     note: String,
     docs: Vec<Value>,
+    /// Unix ms when the turn began, and when the current tool or thinking step began.
+    started_ms: i64,
+    step_ms: i64,
 }
 
 static LIVE: Mutex<Option<LiveTurn>> = Mutex::new(None);
@@ -47,6 +50,8 @@ fn begin_live(chat: &str) -> u64 {
             reply: String::new(),
             note: String::new(),
             docs: Vec::new(),
+            started_ms: now_ms(),
+            step_ms: now_ms(),
         });
     }
     gen
@@ -122,6 +127,9 @@ fn live_mut(f: impl FnOnce(&mut LiveTurn)) {
 fn live_thinking() {
     live_mut(|live| {
         seal_step(live);
+        if !live.tool.is_empty() {
+            live.step_ms = now_ms();
+        }
         live.tool.clear();
         live.input.clear();
         live.reply.clear();
@@ -183,6 +191,9 @@ fn live_tool(name: &str, args: &Value) {
     let name = name.to_string();
     let input = live_args(args);
     live_mut(|live| {
+        if live.tool != name || live.input != input {
+            live.step_ms = now_ms();
+        }
         live.tool = name;
         live.input = input;
     });
@@ -268,5 +279,5 @@ fn live_status(chat: &str) -> Value {
     if live.chat != chat {
         return json!({ "active": false });
     };
-    json!({ "active": true, "tool": live.tool, "input": live.input, "thought": thought_text(live), "reply": live.reply, "note": live.note, "docs": live.docs, "holds": HOLD_SEQ.load(Ordering::Relaxed) })
+    json!({ "active": true, "tool": live.tool, "input": live.input, "thought": thought_text(live), "reply": live.reply, "note": live.note, "docs": live.docs, "holds": HOLD_SEQ.load(Ordering::Relaxed), "started_ms": live.started_ms, "step_ms": live.step_ms, "now_ms": now_ms() })
 }

@@ -110,6 +110,30 @@ fn handle(stream: TcpStream, latest: Arc<Mutex<Sample>>, tx: Sender<Cmd>) -> std
         return tlog_reply(reader, &method, &headers);
     }
 
+    if path == "/ai/image" && method == "POST" {
+        let len = headers.get("content-length").and_then(|v| v.parse::<usize>().ok()).unwrap_or(0);
+        let kind = headers.get("content-type").cloned().unwrap_or_default();
+        if len > 8 * 1024 * 1024 {
+            let mut socket = reader.into_inner();
+            return reply(&mut socket, 400, "application/json", br#"{"error":"This image is larger than 8 MB."}"#);
+        }
+        let mut raw = vec![0u8; len];
+        reader.read_exact(&mut raw)?;
+        let mut socket = reader.into_inner();
+        return match crate::agent::store_image(&raw, &kind) {
+            Ok(id) => reply(&mut socket, 200, "application/json", &serde_json::to_vec(&serde_json::json!({ "id": id }))?),
+            Err(error) => reply(&mut socket, 400, "application/json", &serde_json::to_vec(&serde_json::json!({ "error": error }))?),
+        };
+    }
+    if path == "/ai/image" && method == "GET" {
+        let id = query.get("id").map(String::as_str).unwrap_or("");
+        let mut socket = reader.into_inner();
+        return match crate::agent::image_file(id) {
+            Some((bytes, mime)) => reply(&mut socket, 200, mime, &bytes),
+            None => reply(&mut socket, 404, "text/plain", b"not found"),
+        };
+    }
+
     if path.starts_with("/ai") {
         let len = headers.get("content-length").and_then(|v| v.parse::<usize>().ok()).unwrap_or(0).min(65_536);
         let mut raw = vec![0u8; len];
@@ -352,7 +376,8 @@ fn handle(stream: TcpStream, latest: Arc<Mutex<Sample>>, tx: Sender<Cmd>) -> std
         let mut body = vec![0u8; len];
         reader.read_exact(&mut body)?;
         let mut socket = reader.into_inner();
-        return match crate::dflog::import_log(&body) {
+        let original = query.get("name").map(String::as_str).unwrap_or("");
+        return match crate::dflog::import_log(&body, original) {
             Ok(value) => reply(&mut socket, 200, "application/json", &serde_json::to_vec(&value)?),
             Err(error) => reply(
                 &mut socket,
@@ -1530,33 +1555,34 @@ fn split_query(raw: &str) -> (String, HashMap<String, String>) {
     (path.to_string(), query)
 }
 
+/// Escapes are UTF-8 bytes, so a Cyrillic file name comes through intact.
 fn url_decode(s: &str) -> String {
-    let mut out = String::new();
+    let mut out = Vec::new();
     let b = s.as_bytes();
     let mut i = 0;
     while i < b.len() {
         match b[i] {
             b'+' => {
-                out.push(' ');
+                out.push(b' ');
                 i += 1;
             }
-            b'%' if i + 2 < b.len() => {
+            b'%' if i + 3 <= b.len() => {
                 let hex = String::from_utf8_lossy(&b[i + 1..i + 3]);
                 if let Ok(v) = u8::from_str_radix(&hex, 16) {
-                    out.push(v as char);
+                    out.push(v);
                     i += 3;
                 } else {
-                    out.push('%');
+                    out.push(b'%');
                     i += 1;
                 }
             }
             c => {
-                out.push(c as char);
+                out.push(c);
                 i += 1;
             }
         }
     }
-    out
+    String::from_utf8_lossy(&out).into_owned()
 }
 
 pub fn glob_match(pat: &str, name: &str) -> bool {

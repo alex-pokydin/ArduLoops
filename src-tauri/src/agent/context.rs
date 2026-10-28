@@ -327,6 +327,12 @@ fn for_context(role: &str, body: &str) -> String {
     if role == "doc" {
         return format!("A document link was saved for this account: {body}");
     }
+    if role == "attach" {
+        return format!("The user attached local log {body} to this message.");
+    }
+    if role == "image" {
+        return format!("The user attached an image, {body}. The picture goes only with the request of the turn it was sent in.");
+    }
     if role != "tool" {
         return body.to_string();
     }

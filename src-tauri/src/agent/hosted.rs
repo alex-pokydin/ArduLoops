@@ -379,16 +379,24 @@ fn wire_message(message: &genai::chat::ChatMessage) -> Value {
     let tools: Vec<Value> = message.content.tool_calls().into_iter().map(|call| json!({
         "id": call.call_id,
         "name": call.fn_name,
-        "arguments": call.fn_arguments,
+        "arguments": tool_args(call.fn_arguments.clone()),
     })).collect();
     let results: Vec<Value> = message.content.tool_responses().into_iter().map(|item| json!({
         "id": item.call_id,
         "name": item.fn_name,
         "text": item.content,
     })).collect();
+    let images: Vec<Value> = message.content.binaries().into_iter().filter_map(|item| match &item.source {
+        genai::chat::BinarySource::Base64(data) if item.is_image() => Some(json!({
+            "media_type": item.content_type,
+            "data": data.as_ref(),
+        })),
+        _ => None,
+    }).collect();
     json!({
         "role": role,
         "text": message.content.texts().join(""),
+        "images": images,
         "tools": tools,
         "thought_signatures": message.content.thought_signatures(),
         "tool_results": results,
@@ -434,7 +442,7 @@ fn tool_from_event(value: &Value) -> ToolCall {
     ToolCall {
         call_id: value["id"].as_str().unwrap_or("call").to_string(),
         fn_name: value["name"].as_str().unwrap_or("").to_string(),
-        fn_arguments: value["arguments"].clone(),
+        fn_arguments: tool_args(value["arguments"].clone()),
         thought_signatures: signatures,
     }
 }

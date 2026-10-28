@@ -64,6 +64,30 @@ fn walk(bytes: &[u8], formats: &BTreeMap<u8, Fmt>, mut on: impl FnMut(&Fmt, &[u8
     }, incomplete);
 }
 
+/// Decodes only the records of one message, and stops when `on` returns true.
+/// A whole-log scan for one message stays fast because the rest are only skipped.
+fn find_record(bytes: &[u8], formats: &BTreeMap<u8, Fmt>, name: &str, mut on: impl FnMut(&Fmt, &[Value]) -> bool) -> bool {
+    let mut i = 0;
+    while i + 3 <= bytes.len() {
+        if bytes[i] != HEAD1 || bytes[i + 1] != HEAD2 {
+            i += 1;
+            continue;
+        }
+        let Some(fmt) = formats.get(&bytes[i + 2]) else {
+            i += 1;
+            continue;
+        };
+        if i + fmt.length > bytes.len() {
+            break;
+        }
+        if fmt.name == name && on(fmt, &decode_body(&fmt.format, &bytes[i + 3..i + fmt.length])) {
+            return true;
+        }
+        i += fmt.length;
+    }
+    false
+}
+
 fn walk_until(bytes: &[u8], formats: &BTreeMap<u8, Fmt>, mut on: impl FnMut(&Fmt, &[u8], &[Value]) -> bool, incomplete: &mut bool) -> bool {
     let mut i = 0;
     while i + 3 <= bytes.len() {
@@ -289,6 +313,13 @@ pub fn stored_name_parts(id: &str) -> Value {
         out.insert("flight_stamp".into(), json!(pieces[1]));
         return Value::Object(out);
     }
+    if let Some((hash, rest)) = stem.split_once('_') {
+        if is_hex16(hash) && !rest.is_empty() {
+            out.insert("sha256_16".into(), json!(hash));
+            out.insert("original_name".into(), json!(format!("{rest}.bin")));
+            return Value::Object(out);
+        }
+    }
     if let Some((hash, _)) = stem.split_once('-') {
         if is_hex16(hash) && !stem.starts_with("log-") {
             out.insert("sha256_16".into(), json!(hash));
@@ -506,11 +537,7 @@ fn firmware_line(text: &str) -> bool {
 fn first_flight_utc(bytes: &[u8]) -> Option<String> {
     let formats = parse_formats(bytes);
     let mut found = None;
-    let mut incomplete = false;
-    walk_until(bytes, &formats, |fmt, _, values| {
-        if fmt.name != "GPS" {
-            return false;
-        }
+    find_record(bytes, &formats, "GPS", |fmt, values| {
         let week = field_u64(fmt, values, "GWk").unwrap_or(0);
         let gms = field_u64(fmt, values, "GMS").unwrap_or(0);
         if let Some(text) = gps_rfc3339(week, gms) {
@@ -518,7 +545,7 @@ fn first_flight_utc(bytes: &[u8]) -> Option<String> {
             return true;
         }
         false
-    }, &mut incomplete);
+    });
     found
 }
 
