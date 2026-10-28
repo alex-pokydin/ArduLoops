@@ -59,6 +59,29 @@ fn decide(c: &Connection, body: &Value, sample: &Sample, tx: &Sender<Cmd>) -> Re
         audit_detail(c, &format!("{kind} {param}"), &reason, "applied", "agent", &stored);
         return finish_and_continue(c, body, sample, tx, &chat, lang, log_id, "applied");
     }
+    if kind == "profile" {
+        // The card sends back what the user saved: the edited profile and the whole note.
+        let mut args: Value = serde_json::from_str(&payload).unwrap_or_else(|_| json!({}));
+        if let Some(edited) = body.get("comment").and_then(|v| v.as_str()).and_then(|text| serde_json::from_str::<Value>(text).ok()) {
+            if let Some(profile) = edited.get("profile") {
+                args["profile"] = profile.clone();
+            }
+            if let Some(note) = edited.get("comment").and_then(|v| v.as_str()) {
+                args["comment"] = json!(note);
+            }
+        }
+        let result = bridge_post("/firmware-library/profile", &args, 15);
+        if action_failed(&result) {
+            let error = result.get("error").and_then(|v| v.as_str()).unwrap_or("Could not save the profile");
+            mark_failed(c, id, &args.to_string(), error);
+            audit_detail(c, &format!("{kind} {param}"), &reason, "failed", "agent", &args.to_string());
+            return finish_and_continue(c, body, sample, tx, &chat, lang, log_id, "failed");
+        }
+        let stored = merge_payload(&args.to_string(), "result", result);
+        c.execute("UPDATE ai_proposal SET status='applied', payload=?1 WHERE id=?2", params![stored, id]).ok();
+        audit_detail(c, &format!("{kind} {param}"), &reason, "applied", "agent", &stored);
+        return finish_and_continue(c, body, sample, tx, &chat, lang, log_id, "applied");
+    }
     if matches!(kind.as_str(), "connect" | "disconnect" | "reboot") {
         if kind != "connect" && !sample.ok {
             mark_failed(c, id, &payload, "Disconnected");

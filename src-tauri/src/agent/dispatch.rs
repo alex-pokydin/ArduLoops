@@ -616,6 +616,7 @@ fn run_tool(
         "vehicle_state" => {
             let book = param_book(sample);
             let (controller_key, vehicle_comment) = crate::db::controller_note(sample);
+            let (_, vehicle_profile) = crate::db::controller_profile(sample);
             json!({
                 "linked": sample.ok,
                 "detail": sample.detail,
@@ -638,8 +639,9 @@ fn run_tool(
                 "params_saved_at": book.saved_at,
                 "controller_key": controller_key,
                 "vehicle_comment": vehicle_comment,
+                "vehicle_profile": vehicle_profile,
                 "sitl": sample.is_simulator(),
-                "note": "`linked: false` means a change cannot be sent. `detail` is the url while the link is up. `vehicle_comment` is the local note on this vehicle. Empty means none is stored. `controller_key` is the id for the `vehicle_comment` tool. `sitl` is true when this link is a simulator. A null `controller_key` is not that signal.",
+                "note": "`linked: false` means a change cannot be sent. `detail` is the url while the link is up. `vehicle_comment` is the local note on this vehicle. Empty means none is stored. `vehicle_profile` is what the user saved about the airframe: `props_in` (inches), `blades`, `cells`, `chemistry`, `cell_v_max` and `cell_v_min` (per cell, only when they differ from the chemistry's usual pair), `capacity_mah`, `weight_g` (ready to fly), `span_mm` (plane wingspan, copter motor-to-motor diagonal), `motors`, `style` (copter), `plane_type`; null means no profile and a null field means not given. `controller_key` is the id for the `vehicle_comment` tool. `sitl` is true when this link is a simulator. A null `controller_key` is not that signal.",
             })
         }
         "get_param" => {
@@ -770,6 +772,20 @@ fn run_tool(
             };
             let payload = json!({ "controller_key": key, "comment": comment }).to_string();
             hold_change(c, chat, "comment", "Vehicle comment", None, 0.0, "", &payload)
+        }
+        "profile_widget" => {
+            let key = args.get("controller_key").and_then(|v| v.as_str()).map(str::trim).filter(|s| !s.is_empty());
+            let Some(key) = key else {
+                return json!({ "ok": false, "error": "controller_key is required" });
+            };
+            // The card starts from what the model filled in; the user edits it before anything is stored.
+            let start = args.get("profile").cloned().unwrap_or_else(|| json!({}));
+            let profile = match crate::db::clean_profile(&start) {
+                Ok(profile) => profile,
+                Err(error) => return json!({ "ok": false, "error": error }),
+            };
+            let payload = json!({ "controller_key": key, "profile": profile }).to_string();
+            hold_change(c, chat, "profile", "Vehicle profile", None, 0.0, "", &payload)
         }
         "firmware_flash" => {
             let action = args["action"].as_str().unwrap_or("");

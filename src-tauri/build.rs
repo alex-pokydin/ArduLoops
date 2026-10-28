@@ -68,10 +68,10 @@ fn embed_migrations() {
     fs::write(&dest, code).unwrap_or_else(|error| panic!("write {}: {error}", dest.display()));
 }
 
-/// Plain SQL becomes `execute_batch`. The baseline also adds columns that an
+/// The SQL runs one statement at a time (`run_sql`). The baseline also adds columns that an
 /// older table may already lack, so those ALTERs are not in the SQL file.
 fn function_body(version: i64, sql_const: &str) -> String {
-    let mut body = format!("    conn.execute_batch({sql_const}).map_err(|e| e.to_string())?;\n");
+    let mut body = format!("    run_sql(conn, {sql_const})?;\n");
     if version == 1 {
         body.push_str("    repair_baseline(conn)?;\n");
     }

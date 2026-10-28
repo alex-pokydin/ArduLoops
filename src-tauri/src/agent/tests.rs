@@ -346,7 +346,7 @@ mod link_wait_tests {
         assert!(SKILL_ROOT.contains("It does not say the controller delayed by that time."));
         assert!(SKILL_ROOT.contains("A large `d_share` is the D column following faster changes."));
         assert!(SKILL_ROOT.contains("A span is not a scale for an altitude error."));
-        assert!(SKILL_ROOT.contains("`firmware_library` returns the same text as `controller.comment`."));
+        assert!(SKILL_ROOT.contains("`firmware_library` returns the same as `controller.profile` and `controller.comment`."));
         assert!(SKILL_ROOT.contains("Do not ask when neither result is in this conversation."));
         assert!(!SKILL_ROOT.contains("SIM_FRM_"));
         assert!(!SKILL_ROOT.contains("Ask for the span, the mass, and the propeller size"));

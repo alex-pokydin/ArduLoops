@@ -10,6 +10,7 @@ import { ai, type AiStatus, type Chat, type CloudDoc, type LiveTurn, type LocalL
 import { DEFAULT_MODELS, formatTokens, formatUsd, loadCachedModels, syncModelsDev } from "../assistant/models";
 import { IMAGES_PER_MESSAGE, imageFiles, shrinkImage } from "../assistant/images";
 import { Disconnected } from "./Disconnected";
+import { ProfileCard } from "./ProfileForm";
 import { WizardHost, wizardScope, type WizardAsk } from "./WizardHost";
 import type { WizardClose } from "../wizards/close";
 import { ChartStrip, chartsFromTools } from "./FindingCharts";
@@ -201,7 +202,7 @@ function proposalTitle(tr: typeof import("../i18n/i18n").t, p: Proposal): string
   if (p.kind === "disconnect") return tr("Disconnect");
   if (p.kind === "erase_logs") return tr("Erase on-board logs");
   if (p.kind === "flash") return tr("Flash firmware");
-  if (p.kind === "comment") return tr(p.param);
+  if (p.kind === "comment" || p.kind === "profile") return tr(p.param);
   return p.param;
 }
 
@@ -217,7 +218,8 @@ function waitTitle(tr: typeof import("../i18n/i18n").t, p: Proposal): string {
 
 function sameAddition(group: Proposal[], item: Proposal): boolean {
   const kind = item.kind || "param";
-  if (kind === "wizard" || kind === "comment" || (group[0].kind || "param") === "wizard" || (group[0].kind || "param") === "comment") return false;
+  const alone = (k: string) => k === "wizard" || k === "comment" || k === "profile";
+  if (alone(kind) || alone(group[0].kind || "param")) return false;
   if (kind === (group[0].kind || "param") && item.at != null && item.at === group[0].at) return true;
   return group.some((have) => changeKey(have) === changeKey(item));
 }
@@ -364,6 +366,9 @@ function ProposalIcon({ kind }: { kind: string }) {
   if (kind === "script") {
     return <svg {...common}><path d="M5.2 4.2 2.4 8l2.8 3.8M10.8 4.2 13.6 8l-2.8 3.8M9 3.2 7 12.8" fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round" /></svg>;
   }
+  if (kind === "profile") {
+    return <svg {...common}><path d="M3 3v10M8 3v10M13 3v10" fill="none" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" /><rect x="1.5" y="9" width="3" height="2" rx=".5" fill="none" stroke="currentColor" strokeWidth="1.3" /><rect x="6.5" y="5" width="3" height="2" rx=".5" fill="none" stroke="currentColor" strokeWidth="1.3" /><rect x="11.5" y="7" width="3" height="2" rx=".5" fill="none" stroke="currentColor" strokeWidth="1.3" /></svg>;
+  }
   if (kind === "comment") {
     return <svg {...common}><rect x="2.4" y="2.2" width="11.2" height="11.6" rx="1.4" fill="none" stroke="currentColor" strokeWidth="1.4" /><path d="M4.6 5.4h6.8M4.6 8h6.8M4.6 10.6h4.2" fill="none" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" /></svg>;
   }
@@ -405,17 +410,18 @@ function ProposalCard({
   const kind = cardKind(items);
   const wizardNote = kind === "wizard" ? shown[0]?.reason.trim() ?? "" : "";
   const comment = kind === "comment";
+  const profile = kind === "profile";
   const [draft, setDraft] = useState(() => commentText(shown[0]));
-  const expandable = kind === "script" || (!wizardNote && !comment && (shown.length > 1 || shown.some((item) => item.reason.trim().length > 0)));
+  const expandable = kind === "script" || (!wizardNote && !comment && !profile && (shown.length > 1 || shown.some((item) => item.reason.trim().length > 0)));
   const ids = uniqueChanges(pending).map((item) => item.id);
   return (
-    <article className={`proposal${waiting.length && !pending.length ? " wait" : ""}${outcome ? " done" : ""}`}>
+    <article className={`proposal${waiting.length && !pending.length ? " wait" : ""}${outcome ? " done" : ""}${profile ? " profile" : ""}`}>
       <header className="proposal-head">
         <span className="proposal-icon"><ProposalIcon kind={kind} /></span>
         <b>{cardTitle(t, shown)}</b>
         <div className="proposal-actions">
           {pending.length ? (
-            kind === "wizard" ? (
+            profile ? null : kind === "wizard" ? (
               <>
                 <button type="button" disabled={busy} onClick={() => onDecision("reject", ids)}>{t("Cancel")}</button>
                 <button
@@ -438,7 +444,15 @@ function ProposalCard({
           ) : outcome ? <span className="proposal-status">{outcome}</span> : null}
         </div>
       </header>
-      {comment ? (
+      {profile ? (
+        <ProfileCard
+          payload={shown[0]?.payload ?? ""}
+          pending={pending.length > 0}
+          busy={busy}
+          onSave={(answer) => onDecision("approve", ids, answer)}
+          onSkip={() => onDecision("reject", ids)}
+        />
+      ) : comment ? (
         pending.length ? (
           <textarea className="proposal-comment" value={draft} maxLength={2000} aria-label={t("Comment")} onChange={(ev) => setDraft(ev.target.value)} />
         ) : (

@@ -639,7 +639,7 @@ fn source_read(frame: &str, args: &Value) -> Value {
 fn runs_in_parallel(name: &str, args: &Value) -> bool {
     match name {
         "set_param" | "set_mode" | "arm" | "disarm" | "reboot" | "erase_vehicle_logs" | "connect"
-        | "disconnect" | "vehicle_comment" | "download_vehicle_log" | "show_live"
+        | "disconnect" | "vehicle_comment" | "profile_widget" | "download_vehicle_log" | "show_live"
         | "script_list" | "script_read" | "script_write" | "script_delete" | "script_restart"
         | "mav_command" | "wait" | "rc_stick" => false,
         "firmware_build" => !matches!(args["action"].as_str(), Some("submit") | Some("status") | Some("logs") | Some("download")),

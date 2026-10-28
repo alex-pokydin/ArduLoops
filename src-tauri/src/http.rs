@@ -644,6 +644,32 @@ fn handle(stream: TcpStream, latest: Arc<Mutex<Sample>>, tx: Sender<Cmd>) -> std
         };
     }
 
+    if method == "POST" && path == "/firmware-library/profile" {
+        let len = headers
+            .get("content-length")
+            .and_then(|value| value.parse::<usize>().ok())
+            .unwrap_or(0)
+            .min(32_768);
+        let mut body = vec![0u8; len];
+        if len > 0 {
+            reader.read_exact(&mut body)?;
+        }
+        let args: serde_json::Value = serde_json::from_slice(&body).unwrap_or(serde_json::Value::Null);
+        let result = match args.get("controller_key").and_then(serde_json::Value::as_str) {
+            Some(key) => crate::db::set_controller_profile(
+                key,
+                args.get("profile").unwrap_or(&serde_json::Value::Null),
+                args.get("comment").and_then(serde_json::Value::as_str),
+            ),
+            None => Err("controller_key is required".into()),
+        };
+        let mut socket = reader.into_inner();
+        return match result {
+            Ok(value) => reply(&mut socket, 200, "application/json", &serde_json::to_vec(&value)?),
+            Err(error) => reply(&mut socket, 400, "application/json", &serde_json::to_vec(&serde_json::json!({"error": error}))?),
+        };
+    }
+
     if method == "POST" && path == "/params/restore" {
         let len = headers
             .get("content-length")

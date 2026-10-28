@@ -211,6 +211,47 @@ fn record(conn: &Connection, step: &MigrationFn) -> Result<(), String> {
     Ok(())
 }
 
+/// Runs a migration file statement by statement. `ALTER TABLE … ADD COLUMN` for a column that is
+/// already there is skipped, so a re-run of the latest file under `--migrate-force` works like
+/// `ADD COLUMN IF NOT EXISTS`. Any other error stops the migration.
+fn run_sql(conn: &Connection, sql: &str) -> Result<(), String> {
+    for statement in statements(sql) {
+        match conn.execute_batch(statement) {
+            Ok(()) => {}
+            Err(error) if adds_column(statement) && error.to_string().contains("duplicate column name") => {}
+            Err(error) => return Err(error.to_string()),
+        }
+    }
+    Ok(())
+}
+
+/// Splits SQL at each `;` that ends a complete statement, as the sqlite3 shell does,
+/// so semicolons inside strings, comments and trigger bodies stay in their statement.
+fn statements(sql: &str) -> Vec<&str> {
+    let mut out = Vec::new();
+    let mut start = 0;
+    for (end, _) in sql.match_indices(';') {
+        let piece = &sql[start..=end];
+        let Ok(text) = std::ffi::CString::new(piece) else {
+            continue;
+        };
+        // SAFETY: `text` is a NUL-terminated string that outlives the call; sqlite3_complete only reads it.
+        if unsafe { rusqlite::ffi::sqlite3_complete(text.as_ptr()) } != 0 {
+            out.push(piece);
+            start = end + 1;
+        }
+    }
+    if !sql[start..].trim().is_empty() {
+        out.push(&sql[start..]);
+    }
+    out
+}
+
+fn adds_column(statement: &str) -> bool {
+    let upper = statement.to_ascii_uppercase();
+    upper.contains("ALTER TABLE") && upper.contains("ADD COLUMN")
+}
+
 fn add_column(conn: &Connection, table: &str, column: &str, decl: &str) -> Result<(), String> {
     let n: i64 = conn
         .query_row(
@@ -284,6 +325,22 @@ mod tests {
         assert_eq!(stale, 0);
         let artifact: String = conn.query_row("SELECT artifact_id FROM firmware_artifacts", [], |row| row.get(0)).unwrap();
         assert_eq!(artifact, "keep");
+    }
+
+    #[test]
+    fn a_rerun_skips_a_column_that_is_already_there() {
+        let conn = Connection::open_in_memory().unwrap();
+        let sql = "CREATE TABLE IF NOT EXISTS t (a TEXT);
+             -- a comment; with a semicolon
+             ALTER TABLE t ADD COLUMN b TEXT NOT NULL DEFAULT 'x;y';
+             CREATE TRIGGER IF NOT EXISTS t_ai AFTER INSERT ON t BEGIN UPDATE t SET a='z'; END;";
+        assert_eq!(super::statements(sql).len(), 3);
+        super::run_sql(&conn, sql).unwrap();
+        super::run_sql(&conn, sql).unwrap();
+        let error = super::run_sql(&conn, "ALTER TABLE missing ADD COLUMN b TEXT;").unwrap_err();
+        assert!(error.contains("no such table"), "{error}");
+        let error = super::run_sql(&conn, "CREATE TABLE t (a TEXT);").unwrap_err();
+        assert!(error.contains("already exists"), "{error}");
     }
 
     #[test]

@@ -399,19 +399,118 @@ fn upsert_controller(conn: &Connection, controller: &Controller) -> Result<Value
         params![controller.key, at],
     )
     .map_err(|e| e.to_string())?;
-    let comment: String = conn
+    let (comment, profile): (String, String) = conn
         .query_row(
-            "SELECT comment FROM controllers WHERE controller_key=?1",
+            "SELECT comment, profile FROM controllers WHERE controller_key=?1",
             [&controller.key],
-            |row| row.get(0),
+            |row| Ok((row.get(0)?, row.get(1)?)),
         )
         .map_err(|e| e.to_string())?;
     Ok(
         json!({"key": controller.key, "board_id": controller.board_id, "vehicle_id": controller.vehicle,
         "system_id": controller.system_id, "component_id": controller.component_id, "vendor_id": controller.vendor_id,
         "product_id": controller.product_id, "uid": controller.uid, "flight_version": controller.flight_version, "board_name": controller.board_name,
-        "git_identity": controller.git_identity, "last_seen": at, "comment": comment}),
+        "git_identity": controller.git_identity, "last_seen": at, "comment": comment,
+        "profile": profile_value(&profile)}),
     )
+}
+
+/// The stored profile JSON as a value; null when nothing is saved.
+fn profile_value(text: &str) -> Value {
+    serde_json::from_str(text).unwrap_or(Value::Null)
+}
+
+/// The vehicle profile saved for a controller, or null.
+fn stored_profile(conn: &Connection, key: &str) -> Value {
+    conn.query_row("SELECT profile FROM controllers WHERE controller_key=?1", [key], |row| row.get::<_, String>(0))
+        .map(|text| profile_value(&text))
+        .unwrap_or(Value::Null)
+}
+
+/// The profile for the linked vehicle, next to its note: (controller_key, profile).
+pub fn controller_profile(sample: &Sample) -> (Option<String>, Value) {
+    let Ok(conn) = open() else {
+        return (None, Value::Null);
+    };
+    let Some(board) = connected_board(sample, &conn) else {
+        return (None, Value::Null);
+    };
+    let profile = stored_profile(&conn, &board.key);
+    (Some(board.key), profile)
+}
+
+const STYLES: &[&str] = &["freestyle", "cinematic", "long_range", "racing", "heavy_lift"];
+const CHEMISTRY: &[&str] = &["lipo", "lihv", "liion"];
+const PLANE_TYPES: &[&str] = &["trainer", "sport", "glider", "fpv_wing", "vtol"];
+
+fn ranged(value: &Value, key: &str, min: f64, max: f64) -> Result<Value, String> {
+    match value.get(key) {
+        None | Some(Value::Null) => Ok(Value::Null),
+        Some(v) => match v.as_f64() {
+            Some(n) if n.is_finite() && n >= min && n <= max => Ok(json!(n)),
+            _ => Err(format!("{key} must be between {min} and {max}")),
+        },
+    }
+}
+
+/// Keeps only the known profile fields, each checked; anything else is dropped.
+pub(crate) fn clean_profile(value: &Value) -> Result<Value, String> {
+    if !value.is_object() {
+        return Err("profile must be an object".into());
+    }
+    let chemistry = match value.get("chemistry").and_then(Value::as_str) {
+        None => Value::Null,
+        Some(c) if CHEMISTRY.contains(&c) => json!(c),
+        Some(_) => return Err("chemistry must be lipo, lihv or liion".into()),
+    };
+    let plane_type = match value.get("plane_type").and_then(Value::as_str) {
+        None => Value::Null,
+        Some(k) if PLANE_TYPES.contains(&k) => json!(k),
+        Some(_) => return Err("plane_type must be trainer, sport, glider, fpv_wing or vtol".into()),
+    };
+    let style: Vec<&str> = value
+        .get("style")
+        .and_then(Value::as_array)
+        .map(|list| list.iter().filter_map(Value::as_str).filter(|s| STYLES.contains(s)).collect())
+        .unwrap_or_default();
+    let motors = value.get("motors").and_then(Value::as_str).unwrap_or("").trim();
+    if motors.chars().count() > 80 {
+        return Err("motors must contain at most 80 characters".into());
+    }
+    Ok(json!({
+        "props_in": ranged(value, "props_in", 1.0, 40.0)?,
+        "blades": ranged(value, "blades", 2.0, 8.0)?,
+        "cells": ranged(value, "cells", 1.0, 16.0)?,
+        "chemistry": chemistry,
+        "cell_v_max": ranged(value, "cell_v_max", 3.5, 4.5)?,
+        "cell_v_min": ranged(value, "cell_v_min", 2.5, 3.8)?,
+        "capacity_mah": ranged(value, "capacity_mah", 50.0, 100_000.0)?,
+        "weight_g": ranged(value, "weight_g", 10.0, 100_000.0)?,
+        "span_mm": ranged(value, "span_mm", 50.0, 10_000.0)?,
+        "motors": motors,
+        "style": style,
+        "plane_type": plane_type,
+    }))
+}
+
+/// Saves the profile and, when given, the whole note in one go.
+pub fn set_controller_profile(key: &str, profile: &Value, comment: Option<&str>) -> Result<Value, String> {
+    let mut conn = open()?;
+    let profile = clean_profile(profile)?;
+    let comment = comment.map(user_comment).transpose()?;
+    let tx = conn.transaction().map_err(|e| e.to_string())?;
+    let changed = tx
+        .execute("UPDATE controllers SET profile=?1 WHERE controller_key=?2", params![profile.to_string(), key])
+        .map_err(|e| e.to_string())?;
+    if changed == 0 {
+        return Err("Controller is not in the local catalog".into());
+    }
+    if let Some(comment) = &comment {
+        tx.execute("UPDATE controllers SET comment=?1 WHERE controller_key=?2", params![comment, key])
+            .map_err(|e| e.to_string())?;
+    }
+    tx.commit().map_err(|e| e.to_string())?;
+    Ok(json!({"key": key, "profile": profile, "comment": comment}))
 }
 
 pub fn database_path() -> String {
@@ -659,6 +758,23 @@ mod tests {
             .query_row("SELECT flashed_artifact_id FROM controllers WHERE controller_key='abc'", [], |row| row.get(0))
             .unwrap();
         assert_eq!(stored, "artifact-a");
+    }
+
+    #[test]
+    fn a_profile_keeps_known_fields_and_rejects_bad_numbers() {
+        let clean = super::clean_profile(&serde_json::json!({
+            "props_in": 5, "cells": 6, "chemistry": "lipo", "weight_g": 650, "style": ["freestyle", "dance"], "extra": 1,
+        }))
+        .unwrap();
+        assert_eq!(clean["props_in"], 5.0);
+        assert_eq!(clean["style"], serde_json::json!(["freestyle"]));
+        assert!(clean.get("extra").is_none());
+        assert!(super::clean_profile(&serde_json::json!({ "cells": 40 })).is_err());
+        assert!(super::clean_profile(&serde_json::json!({ "chemistry": "nimh" })).is_err());
+        let plane = super::clean_profile(&serde_json::json!({ "span_mm": 1200, "plane_type": "glider", "cell_v_min": 2.8 })).unwrap();
+        assert_eq!(plane["span_mm"], 1200.0);
+        assert_eq!(plane["plane_type"], "glider");
+        assert!(super::clean_profile(&serde_json::json!({ "cell_v_max": 5.0 })).is_err());
     }
 
     #[test]

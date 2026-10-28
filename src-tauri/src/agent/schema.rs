@@ -747,6 +747,41 @@ fn tool_schema() -> Value {
             "parameters": { "type": "object", "properties": {} }
         },
         {
+            "name": "profile_widget",
+            "description": doc!(
+                "Show the vehicle profile form as a card: props and blades, battery cells, chemistry, per-cell voltages and capacity, ready-to-fly weight, span (plane wingspan or copter frame size), motors, and how it flies.",
+                "Pass `controller_key` from `vehicle_state` and `profile` with the facts the user already gave in this chat; the card fills the rest from the board.",
+                "This always stops the turn, including while safe mode is on.",
+                "Nothing is stored until the user saves the card. The user can edit every field, and the note, before it is stored.",
+                "The saved profile comes back in `vehicle_state` as `vehicle_profile`.",
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "controller_key": { "type": "string", "description": "The `controller_key` from `vehicle_state`." },
+                    "profile": {
+                        "type": "object",
+                        "description": "Facts the user stated. Leave out what was not said.",
+                        "properties": {
+                            "props_in": { "type": "number", "description": "Propeller diameter in inches, decimals allowed. An `8330` prop is 8.3." },
+                            "blades": { "type": "integer", "description": "Blades per propeller." },
+                            "cells": { "type": "integer", "description": "Battery cells in series." },
+                            "chemistry": { "type": "string", "enum": ["lipo", "lihv", "liion"], "description": "Battery chemistry: LiPo, high-voltage LiPo, or Li-ion." },
+                            "cell_v_max": { "type": "number", "description": "Full voltage per cell, only when the user gave one." },
+                            "cell_v_min": { "type": "number", "description": "Empty voltage per cell, only when the user gave one." },
+                            "span_mm": { "type": "number", "description": "Plane: wingspan in mm. Copter: frame size, motor to motor across the diagonal, in mm." },
+                            "plane_type": { "type": "string", "enum": ["trainer", "sport", "glider", "fpv_wing", "vtol"], "description": "Plane only: what kind of plane." },
+                            "capacity_mah": { "type": "number", "description": "Battery capacity in mAh." },
+                            "weight_g": { "type": "number", "description": "Ready-to-fly weight with the battery, in grams." },
+                            "motors": { "type": "string", "description": "Motor size and KV as the user wrote it, such as `2207 1950KV`." },
+                            "style": { "type": "array", "items": { "type": "string", "enum": ["freestyle", "cinematic", "long_range", "racing", "heavy_lift"] }, "description": "Copter only: how it is flown, one or more." }
+                        }
+                    }
+                },
+                "required": ["controller_key"]
+            }
+        },
+        {
             "name": "vehicle_comment",
             "description": doc!(
                 "Replace the local note on this vehicle.",

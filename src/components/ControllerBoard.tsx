@@ -6,6 +6,8 @@ import { APP_HTTP } from "../mav/link";
 import { downloadParamBackup } from "../mav/paramBackup";
 import { openSetupOverview } from "../lib/setupNav";
 import { FixButton } from "./HardwareSetup";
+import { ProfileForm, useProfileStart } from "./ProfileForm";
+import { hasProfile, profileChips, readProfile, type VehicleProfile } from "../lib/vehicleProfile";
 import type { Sample } from "../mav/types";
 import { usePicked, useVehicle } from "../mav/view";
 import { NOTE_TITLE_MAX, flightVersion, genericMark, joinNote, markShape, preArmState, splitNote, type MarkShape } from "../lib/vehicleHeader";
@@ -20,6 +22,7 @@ type Controller = {
   uid?: string | null;
   key?: string | null;
   comment?: string;
+  profile?: unknown;
 };
 
 const NOTE_MAX = 2000;
@@ -150,22 +153,22 @@ function PreArmFailing({ lines }: { lines: string[] }) {
   }, [open]);
   const more = lines.length > 1 ? ` · +${lines.length - 1}` : "";
   return (
-    <div className="vb-pop-wrap" ref={wrap}>
+    <div className="vb-pa-wrap" ref={wrap}>
       <button type="button" className="vb-tile vb-open hot wide" aria-expanded={open} aria-haspopup="dialog" title={lines.join("\n")} onClick={() => setOpen((v) => !v)}>
         <span className="vb-tl"><i />{t("Pre-arm")}</span>
         <b>{t("{n} failing", { n: lines.length })}</b>
         <span className="vb-ts">{`${lines[0]}${more}`}</span>
       </button>
       {open ? (
-        <div className="vb-pop" role="dialog" aria-label={t("Pre-arm checks")}>
-          <div className="vb-pop-head">{t("Pre-arm · {n} failing", { n: lines.length })}</div>
+        <div className="vb-pa" role="dialog" aria-label={t("Pre-arm checks")}>
+          <div className="vb-pa-head">{t("Pre-arm · {n} failing", { n: lines.length })}</div>
           {lines.map((line) => (
-            <div className="vb-pop-row" key={line}>
+            <div className="vb-pa-row" key={line}>
               <span>{line.replace(/^PreArm:\s*/, "")}</span>
               <FixButton small text={t("Fix: {line}", { line: /^PreArm:/.test(line) ? line : `PreArm: ${line}` })} focus={line.slice(0, 32)} onSent={() => setOpen(false)} />
             </div>
           ))}
-          <button type="button" className="vb-pop-more" onClick={() => { setOpen(false); openSetupOverview(); }}>{t("Open the Setup overview")} →</button>
+          <button type="button" className="vb-pa-more" onClick={() => { setOpen(false); openSetupOverview(); }}>{t("Open the Setup overview")} →</button>
         </div>
       ) : null}
     </div>
@@ -309,6 +312,60 @@ function NoteEditor({ initial, focus, onClose, onSaved, controllerKey }: { initi
   );
 }
 
+/** The vehicle profile form under the header. Save stores the profile and the note body; the name line stays. */
+function ProfileEditor({ controller, onClose, onSaved, blocked }: { controller: Controller | null; onClose: () => void; onSaved: () => void; blocked: string }) {
+  const t = useT();
+  const comment = controller?.comment ?? "";
+  const start = useProfileStart(readProfile(controller?.profile), comment);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+  const box = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    function away(event: MouseEvent) {
+      if (box.current && !box.current.contains(event.target as Node)) onClose();
+    }
+    function esc(event: KeyboardEvent) {
+      if (event.key === "Escape") onClose();
+    }
+    document.addEventListener("mousedown", away);
+    document.addEventListener("keydown", esc);
+    return () => {
+      document.removeEventListener("mousedown", away);
+      document.removeEventListener("keydown", esc);
+    };
+  }, [onClose]);
+  async function save(profile: VehicleProfile, note: string) {
+    if (!controller?.key) return;
+    setBusy(true);
+    setError("");
+    try {
+      const response = await fetch(`${APP_HTTP}/firmware-library/profile`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ controller_key: controller.key, profile, comment: joinNote(splitNote(comment).title, note) }),
+      });
+      const value: unknown = await response.json();
+      if (!response.ok) throw new Error((value as { error?: string })?.error ?? `HTTP ${response.status}`);
+      addLog(t("Vehicle profile saved"), "ok");
+      onSaved();
+      onClose();
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : t("Could not save the profile"));
+    } finally {
+      setBusy(false);
+    }
+  }
+  return (
+    <div ref={box} className="vb-pop vb-prof" role="dialog" aria-label={t("Vehicle profile")}>
+      <div className="vb-prof-head">
+        <b>{t("Vehicle profile")}</b>
+        <span>{t("A few facts the board cannot tell: they set the starting values and help the assistant.")}</span>
+      </div>
+      <ProfileForm start={start} blocked={blocked} busy={busy} error={error} onSave={(p, n) => void save(p, n)} onSkip={onClose} />
+    </div>
+  );
+}
+
 function Actions({ controller }: { controller: Controller | null }) {
   const t = useT();
   const link = usePicked((s) => `${s.ok ? 1 : 0}${s.armed ? 1 : 0}${s.rebooting ? 1 : 0}`);
@@ -386,6 +443,7 @@ export function ControllerBoard() {
   );
   const [controller, setController] = useState<Controller | null>(null);
   const [editing, setEditing] = useState<"name" | "note" | null>(null);
+  const [profileOpen, setProfileOpen] = useState(false);
 
   const load = useCallback(() => {
     const ac = new AbortController();
@@ -446,6 +504,13 @@ export function ControllerBoard() {
     ? (shape.quad ? "QuadPlane" : shape.layout === "wing" ? t("Flying wing") : shape.layout === "vtail" ? t("V-tail") : t("Conventional"))
     : shape.kind === "copter" ? shape.title : "";
   const frameSource = shape.kind === "plane" ? t("SERVOn_FUNCTION and Q_ENABLE") : "FRAME_CLASS · FRAME_TYPE";
+  const profile = readProfile(controller?.profile);
+  const profiled = hasProfile(profile);
+  const chips = profile ? profileChips(profile, vehicle, t) : [];
+  // The board's BATT_CAPACITY wins; the profile's capacity shows only when the board has none.
+  const shownCapacity = capacity != null && capacity > 0 ? capacity : profile?.capacity_mah ?? null;
+  const capacityFromBoard = capacity != null && capacity > 0;
+  const profileBlocked = canEdit ? "" : t("Simulators have no board id yet, so a profile cannot be saved.");
 
   return (
     <div className="vboard">
@@ -468,9 +533,26 @@ export function ControllerBoard() {
             {note.body ? <p className="vb-note" title={note.body}>{note.body}</p> : !note.title && canEdit ? <p className="vb-note ghost">{t("Add a note: what this vehicle is, what changed, what to watch.")}</p> : null}
             <div className="vb-chips">
               {frameName ? <span className="vb-chip board" title={t("From the board: {src}", { src: frameSource })}>{frameName}</span> : null}
-              {capacity != null && capacity > 0 ? <span className="vb-chip board" title={t("From the board: {src}", { src: "BATT_CAPACITY" })}>{capacity} mAh</span> : null}
+              {chips.slice(0, 2).map((text) => (
+                <button type="button" key={text} className="vb-chip prof" title={t("From your vehicle profile")} onClick={() => setProfileOpen(true)}>{text}</button>
+              ))}
+              {shownCapacity != null ? (
+                capacityFromBoard
+                  ? <span className="vb-chip board" title={t("From the board: {src}", { src: "BATT_CAPACITY" })}>{shownCapacity} mAh</span>
+                  : <button type="button" className="vb-chip prof" title={t("From your vehicle profile")} onClick={() => setProfileOpen(true)}>{shownCapacity} mAh</button>
+              ) : null}
+              {chips.slice(2).map((text) => (
+                <button type="button" key={text} className="vb-chip prof" title={t("From your vehicle profile")} onClick={() => setProfileOpen(true)}>{text}</button>
+              ))}
+              {profiled ? null : (
+                <button type="button" className="vb-chip add" title={t("Props, cells, weight and how it flies")} onClick={() => setProfileOpen(true)}>
+                  <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M8 1.5l1.6 4.9 4.9 1.6-4.9 1.6L8 14.5l-1.6-4.9L1.5 8l4.9-1.6z" /></svg>
+                  {t("Vehicle profile")}
+                </button>
+              )}
             </div>
           </div>
+          {profileOpen ? <ProfileEditor controller={controller} blocked={profileBlocked} onClose={() => setProfileOpen(false)} onSaved={load} /> : null}
           {editing && controller?.key ? <NoteEditor initial={controller.comment ?? ""} focus={editing} controllerKey={controller.key} onClose={() => setEditing(null)} onSaved={load} /> : null}
         </div>
         <div className="vb-tiles">
