@@ -1384,43 +1384,47 @@ fn handle_msg(st: &mut LinkState, header: &MavHeader, msg: MavMessage) {
             if name.is_empty() {
                 return;
             }
-            let val = param_value as f64;
-            st.sample.params.insert(name.clone(), val);
-            st.sample.param_received.insert(name.clone(), wall_time());
-            st.sample.param_count = param_count;
-            if param_index < param_count {
-                st.sample.param_indices.insert(param_index);
-            }
-            store_received_param(st, &name, val);
-            match name.as_str() {
-                "ATC_RAT_RLL_P" => st.sample.gain_p = Some(val),
-                "ATC_RAT_RLL_I" => st.sample.gain_i = Some(val),
-                "ATC_RAT_RLL_D" => st.sample.gain_d = Some(val),
-                "ANGLE_MAX" | "ATC_ANGLE_MAX" => {
-                    if val > 50.0 {
-                        st.angle_max = val / 100.0;
-                    } else {
-                        st.angle_max = val;
-                    }
-                }
-                "RCMAP_ROLL" => {
-                    st.rcmap.insert("roll", val as u8);
-                }
-                "RCMAP_PITCH" => {
-                    st.rcmap.insert("pitch", val as u8);
-                }
-                "RCMAP_THROTTLE" => {
-                    st.rcmap.insert("thr", val as u8);
-                }
-                "RCMAP_YAW" => {
-                    st.rcmap.insert("yaw", val as u8);
-                }
-                "ATC_INPUT_TC" => st.sample.input_tc = Some(val),
-                "ATC_ACC_R_MAX" => st.sample.acc_max = Some(val),
-                "ATC_RATE_R_MAX" => st.sample.rate_max = Some(val),
-                _ => {}
+            apply_param(st, &name, param_value as f64, param_index, param_count);
+        }
+        _ => {}
+    }
+}
+
+/// One parameter value from the vehicle, by `PARAM_VALUE` or from the packed file.
+fn apply_param(st: &mut LinkState, name: &str, val: f64, index: u16, count: u16) {
+    st.sample.params.insert(name.to_string(), val);
+    st.sample.param_received.insert(name.to_string(), wall_time());
+    st.sample.param_count = count;
+    if index < count {
+        st.sample.param_indices.insert(index);
+    }
+    store_received_param(st, name, val);
+    match name {
+        "ATC_RAT_RLL_P" => st.sample.gain_p = Some(val),
+        "ATC_RAT_RLL_I" => st.sample.gain_i = Some(val),
+        "ATC_RAT_RLL_D" => st.sample.gain_d = Some(val),
+        "ANGLE_MAX" | "ATC_ANGLE_MAX" => {
+            if val > 50.0 {
+                st.angle_max = val / 100.0;
+            } else {
+                st.angle_max = val;
             }
         }
+        "RCMAP_ROLL" => {
+            st.rcmap.insert("roll", val as u8);
+        }
+        "RCMAP_PITCH" => {
+            st.rcmap.insert("pitch", val as u8);
+        }
+        "RCMAP_THROTTLE" => {
+            st.rcmap.insert("thr", val as u8);
+        }
+        "RCMAP_YAW" => {
+            st.rcmap.insert("yaw", val as u8);
+        }
+        "ATC_INPUT_TC" => st.sample.input_tc = Some(val),
+        "ATC_ACC_R_MAX" => st.sample.acc_max = Some(val),
+        "ATC_RATE_R_MAX" => st.sample.rate_max = Some(val),
         _ => {}
     }
 }

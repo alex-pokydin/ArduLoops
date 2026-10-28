@@ -485,3 +485,283 @@ mod reboot_wait {
         assert!(!rebooting());
     }
 }
+
+#[cfg(test)]
+mod param_file {
+    use super::{parse_param_pack, ParamPack, PCK_MAGIC, PCK_MAGIC_DEFAULTS};
+
+    /// Packs like AP_Filesystem_Param::pack_param, with pad bytes so no value crosses a read.
+    fn pack(params: &[(&str, u8, f64)], defaults: bool, read_size: usize) -> Vec<u8> {
+        let magic = if defaults { PCK_MAGIC_DEFAULTS } else { PCK_MAGIC };
+        let mut out = Vec::new();
+        out.extend_from_slice(&magic.to_le_bytes());
+        out.extend_from_slice(&(params.len() as u16).to_le_bytes());
+        out.extend_from_slice(&(params.len() as u16 + 3).to_le_bytes());
+        let mut last = String::new();
+        for (name, kind, value) in params {
+            let mut common = name.bytes().zip(last.bytes()).take_while(|(a, b)| a == b).count().min(15);
+            if common == name.len() {
+                common -= 1;
+            }
+            let rest = &name[common..];
+            let raw: Vec<u8> = match kind {
+                1 => vec![*value as i8 as u8],
+                2 => (*value as i16).to_le_bytes().to_vec(),
+                3 => (*value as i32).to_le_bytes().to_vec(),
+                _ => (*value as f32).to_le_bytes().to_vec(),
+            };
+            let with_default = defaults && *kind == 4;
+            let len = raw.len() + rest.len() + 2 + if with_default { raw.len() } else { 0 };
+            let m = (out.len() + len) % read_size;
+            if raw.len() > 1 && m > 0 && m < raw.len() {
+                out.extend(std::iter::repeat(0).take(raw.len() - m));
+            }
+            out.push(kind | if with_default { 1 << 4 } else { 0 });
+            out.push(common as u8 | ((rest.len() as u8 - 1) << 4));
+            out.extend_from_slice(rest.as_bytes());
+            out.extend_from_slice(&raw);
+            if with_default {
+                out.extend_from_slice(&raw);
+            }
+            last = name.to_string();
+        }
+        out
+    }
+
+    #[test]
+    fn a_packed_file_gives_every_value_in_index_order() {
+        let params = [
+            ("ATC_RAT_RLL_D", 4, 0.0036),
+            ("ATC_RAT_RLL_I", 4, 0.135),
+            ("ATC_RAT_RLL_P", 4, 0.135),
+            ("FRAME_CLASS", 1, 1.0),
+            ("FRAME_TYPE", 1, 1.0),
+            ("SERVO1_FUNCTION", 2, 33.0),
+            ("SERVO1_MAX", 2, 1900.0),
+            ("SYSID_THISMAV", 2, 1.0),
+            ("LOG_BITMASK", 3, 176126.0),
+            ("TRIM_THROTTLE", 1, -5.0),
+        ];
+        for read_size in [7usize, 16, 239] {
+            for defaults in [false, true] {
+                let ParamPack { total, values } = parse_param_pack(&pack(&params, defaults, read_size)).unwrap();
+                assert_eq!(total, params.len() as u16 + 3);
+                assert_eq!(values.len(), params.len());
+                for ((name, value), (want, _, want_value)) in values.iter().zip(params.iter()) {
+                    assert_eq!(name, want);
+                    assert!((value - want_value).abs() < 1e-6, "{name}: {value} != {want_value}");
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn a_short_or_foreign_file_is_not_trusted() {
+        assert!(parse_param_pack(&[0x1b, 0x67]).is_err());
+        assert!(parse_param_pack(&[1, 2, 0, 0, 0, 0]).is_err());
+        let full = pack(&[("A_ONE", 4, 1.0), ("A_TWO", 4, 2.0)], false, 239);
+        // A cut file keeps what arrived whole; the by-index path fills the rest.
+        let cut = parse_param_pack(&full[..full.len() - 2]).unwrap();
+        assert_eq!(cut.values, vec![("A_ONE".to_string(), 1.0)]);
+    }
+}
+
+/// Live check against a running SITL: `PCK_URL=tcpout:127.0.0.1:5790 cargo test --lib param_file_live -- --ignored --nocapture`.
+/// Downloads every parameter as one file, then again one index at a time, and compares.
+#[cfg(test)]
+mod param_file_live {
+    use super::*;
+
+    fn link(url: &str) -> (Box<dyn MavConnection<MavMessage> + Send + Sync>, LinkState) {
+        let conn = open_conn(url).ok().expect("connect");
+        let mut st = LinkState::new();
+        let deadline = Instant::now() + Duration::from_secs(20);
+        while Instant::now() < deadline {
+            if let Ok((hdr, msg)) = conn.recv() {
+                let hb = matches!(msg, MavMessage::HEARTBEAT(_)) && hdr.component_id == 1;
+                handle_msg(&mut st, &hdr, msg);
+                if hb {
+                    st.target_system = hdr.system_id;
+                    st.target_component = hdr.component_id;
+                    return (conn, st);
+                }
+            }
+        }
+        panic!("no heartbeat");
+    }
+
+    fn complete(st: &LinkState) -> bool {
+        st.sample.param_count > 0 && st.sample.param_indices.len() >= st.sample.param_count as usize
+    }
+
+    #[test]
+    #[ignore]
+    fn param_file_live() {
+        let url = std::env::var("PCK_URL").unwrap_or_else(|_| "tcpout:127.0.0.1:5790".into());
+        let on_sample: OnSample = Arc::new(|_| {});
+        let latest = Mutex::new(Sample::empty());
+        let sitl = crate::sitl::SitlCtl::new();
+
+        let (conn, mut st) = link(&url);
+        let started = Instant::now();
+        let budget = std::env::var("PCK_BUDGET_MS").ok().and_then(|v| v.parse().ok()).map(Duration::from_millis).unwrap_or(PARAM_FILE_BUDGET);
+        let (n, singles) = download_param_file(&*conn, &mut st, &on_sample, &latest, &sitl, budget).expect("param file");
+        let file_ms = started.elapsed().as_millis();
+        println!("file: {n} of {} params in {file_ms} ms, {singles} single reads, complete={}", st.sample.param_count, complete(&st));
+        if std::env::var("PCK_BUDGET_MS").is_ok() {
+            // A cut download keeps its first values; the by-index path fills the rest on the same link.
+            assert!(n > 0 && !complete(&st));
+            let started = Instant::now();
+            while !complete(&st) && started.elapsed() < Duration::from_secs(180) {
+                fill_missing_params(&*conn, &mut st, Instant::now(), true);
+                if let Ok((hdr, msg)) = conn.recv() {
+                    handle_msg(&mut st, &hdr, msg);
+                }
+            }
+            println!("rest by index: {} of {} in {} ms", st.sample.param_indices.len(), st.sample.param_count, started.elapsed().as_millis());
+            assert!(complete(&st));
+            return;
+        }
+        assert!(complete(&st));
+        let by_file = st.sample.params.clone();
+        if std::env::var("PCK_COMPARE").is_err() {
+            return;
+        }
+
+        // SITL takes one TCP client, so the same link starts over with nothing known.
+        let (target_system, target_component) = (st.target_system, st.target_component);
+        let mut st = LinkState::new();
+        st.target_system = target_system;
+        st.target_component = target_component;
+        st.sample.heartbeat_at = wall_time();
+        let started = Instant::now();
+        while !complete(&st) && started.elapsed() < Duration::from_secs(180) {
+            fill_missing_params(&*conn, &mut st, Instant::now(), true);
+            if let Ok((hdr, msg)) = conn.recv() {
+                handle_msg(&mut st, &hdr, msg);
+            }
+        }
+        let index_ms = started.elapsed().as_millis();
+        println!("by index: {} of {} params in {index_ms} ms", st.sample.param_indices.len(), st.sample.param_count);
+        assert!(complete(&st));
+
+        // These change on their own after boot. The by-index path also reads a few names that
+        // the list hides (SCR_HEAP_SIZE while scripting is off).
+        let moves = |name: &str| {
+            name.starts_with("STAT_") || name.ends_with("_GND_PRESS") || name == "COMPASS_DEC" || name == "MIS_TOTAL"
+        };
+        let mut differ = Vec::new();
+        for (name, value) in &st.sample.params {
+            if moves(name) || PRIORITY_PARAMS.contains(&name.as_str()) && !by_file.contains_key(name) {
+                continue;
+            }
+            match by_file.get(name) {
+                Some(v) if (*v as f32) == (*value as f32) => {}
+                other => differ.push(format!("{name}: index {value} file {other:?}")),
+            }
+        }
+        println!("values that differ: {}", differ.len());
+        for line in differ.iter().take(10) {
+            println!("  {line}");
+        }
+        assert!(differ.is_empty());
+    }
+}
+
+#[cfg(test)]
+mod param_file_pieces {
+    use super::Burst;
+
+    #[test]
+    fn pieces_join_up_to_the_first_gap() {
+        let mut file = Burst::default();
+        file.pieces.insert(0, vec![1, 2, 3]);
+        file.pieces.insert(6, vec![7, 8]);
+        assert_eq!(file.first_gap(), 3);
+        assert_eq!(file.bytes(), vec![1, 2, 3]);
+        // A restarted burst overlaps what arrived; the gap closes and the rest joins on.
+        file.pieces.insert(2, vec![3, 4, 5, 6]);
+        assert_eq!(file.first_gap(), 8);
+        assert_eq!(file.bytes(), vec![1, 2, 3, 4, 5, 6, 7, 8]);
+    }
+}
+
+/// The whole connection loop against a running SITL:
+/// `PCK_URL=tcpout:127.0.0.1:5790 cargo test --lib param_file_session_live -- --ignored --nocapture`.
+#[cfg(test)]
+mod param_file_session_live {
+    use super::*;
+
+    #[test]
+    #[ignore]
+    fn param_file_session_live() {
+        let url = std::env::var("PCK_URL").unwrap_or_else(|_| "tcpout:127.0.0.1:5790".into());
+        let (tx, rx) = std::sync::mpsc::channel::<Cmd>();
+        let seen: Arc<Mutex<Vec<(Instant, Sample)>>> = Arc::new(Mutex::new(Vec::new()));
+        let sink = Arc::clone(&seen);
+        let on_sample: OnSample = Arc::new(move |s: &Sample| {
+            if let Ok(mut g) = sink.lock() {
+                g.push((Instant::now(), s.clone()));
+            }
+        });
+        let latest = Arc::new(Mutex::new(Sample::empty()));
+        let started = Instant::now();
+        let link_url = Arc::new(Mutex::new(url));
+        std::thread::spawn(move || run_loop(on_sample, rx, latest, link_url, crate::sitl::SitlCtl::new()));
+
+        let deadline = Instant::now() + Duration::from_secs(180);
+        loop {
+            std::thread::sleep(Duration::from_millis(100));
+            let g = seen.lock().unwrap();
+            if let Some((t, s)) = g.last() {
+                if t.duration_since(started).as_secs() % 10 == 0 && t.elapsed() < Duration::from_millis(150) {
+                    println!("{} s: ok={} {} of {} params, file \"{}\", att_hz {}, {}", t.duration_since(started).as_secs(), s.ok, s.params.len(), s.param_count, s.param_file, s.att_hz, s.detail);
+                }
+            }
+            assert!(Instant::now() < deadline, "parameters did not complete");
+            if let Some((_, s)) = g.last() {
+                if s.ok && s.param_count > 0 && s.params.len() >= s.param_count as usize {
+                    break;
+                }
+            }
+        }
+        drop(tx);
+        let g = seen.lock().unwrap();
+        let at = |pick: &dyn Fn(&Sample) -> bool| g.iter().find(|(_, s)| pick(s)).map(|(t, _)| t.duration_since(started).as_millis());
+        let linked = at(&|s| s.ok);
+        let attitude = at(&|s| s.att_hz > 0);
+        let file = at(&|s| !s.param_file.is_empty());
+        let done = at(&|s| s.param_count > 0 && s.params.len() >= s.param_count as usize);
+        let (_, last) = g.last().unwrap();
+        // The longest stretch with no new attitude while linked: what the download costs the live view.
+        let mut pause = 0u128;
+        let mut prev: Option<(Instant, f64)> = None;
+        for (t, s) in g.iter().filter(|(_, s)| s.ok) {
+            if let Some((pt, proll)) = prev {
+                if s.roll != proll {
+                    pause = pause.max(t.duration_since(pt).as_millis());
+                    prev = Some((*t, s.roll));
+                }
+            } else {
+                prev = Some((*t, s.roll));
+            }
+        }
+        println!(
+            "linked {linked:?} ms, attitude {attitude:?} ms, file \"{}\" at {file:?} ms, complete {done:?} ms ({} params), longest attitude pause {pause} ms",
+            last.param_file,
+            last.params.len()
+        );
+        // Parameter counts the page saw on the way, as the link chip's bar would show them.
+        let mut steps: Vec<usize> = Vec::new();
+        for (_, s) in g.iter() {
+            let n = s.params.len();
+            if s.ok && n > 0 && steps.last() != Some(&n) {
+                steps.push(n);
+            }
+        }
+        println!("parameter counts on the way: {steps:?}");
+        let hz: Vec<u32> = g.iter().filter(|(_, s)| s.ok).map(|(_, s)| s.att_hz).collect();
+        println!("att_hz from {} to {}", hz.iter().min().unwrap_or(&0), hz.iter().max().unwrap_or(&0));
+        assert!(last.param_file.contains(" in "), "file download did not run: {}", last.param_file);
+    }
+}

@@ -504,7 +504,9 @@ pub fn remember_params(
     if params.is_empty() {
         return Ok(());
     }
-    let conn = open()?;
+    let mut conn = open()?;
+    // One commit for the whole set: a commit per row costs seconds for a full download.
+    let conn = conn.transaction().map_err(|e| e.to_string())?;
     let key = vehicle_cache_key(frame, board_name, boot_uid);
     let at = now();
     if replace_all {
@@ -530,7 +532,7 @@ pub fn remember_params(
         params![key, frame, board_name, boot_uid, at, count],
     )
     .map_err(|e| e.to_string())?;
-    Ok(())
+    conn.commit().map_err(|e| e.to_string())
 }
 
 /// One parameter changed after the full set was saved.

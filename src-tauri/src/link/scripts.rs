@@ -91,6 +91,16 @@ struct Ftp<'a> {
     seq: u16,
     session: u8,
     last_emit: Instant,
+    /// Keep the link alive while waiting: every message is read as the main loop would, and
+    /// the heartbeat and stick overrides keep going. Script transfers leave this off.
+    live: bool,
+    /// ATTITUDE messages in the current second while live, for `att_hz` as the main loop counts it.
+    atts: u32,
+    atts_from: Instant,
+    last_hb: Instant,
+    last_rc: Instant,
+    /// No reply is waited for past this.
+    until: Option<Instant>,
 }
 
 fn next_session() -> u8 {
@@ -124,45 +134,82 @@ impl<'a> Ftp<'a> {
                 payload,
             }),
         );
-        let deadline = Instant::now() + Duration::from_millis(2500);
+        // A busy radio link delays replies, so the parameter download waits longer, but never
+        // past its own time budget.
+        let mut deadline = Instant::now() + Duration::from_millis(if self.live { 5000 } else { 2500 });
+        if let Some(until) = self.until {
+            deadline = deadline.min(until);
+        }
         while Instant::now() < deadline {
-            match self.conn.recv() {
-                Ok((hdr, msg)) => {
-                    let ftp = match &msg {
-                        MavMessage::FILE_TRANSFER_PROTOCOL(v) => Some(v.payload),
-                        _ => None,
-                    };
-                    // High-rate telemetry must not be decoded here. That copy
-                    // falls behind the socket, and the file-transfer reply
-                    // stays stuck behind it until this wait gives up.
-                    if matches!(
-                        &msg,
-                        MavMessage::STATUSTEXT(_) | MavMessage::HEARTBEAT(_) | MavMessage::COMMAND_ACK(_)
-                    ) {
-                        handle_msg(self.st, &hdr, msg);
-                    }
-                    if self.last_emit.elapsed() >= Duration::from_millis(200) {
-                        emit_sample(self.on_sample, self.latest, self.st, self.sitl);
-                        self.last_emit = Instant::now();
-                    }
-                    if let Some(payload) = ftp {
-                        let got = u16::from_le_bytes([payload[0], payload[1]]);
-                        if payload[2] == self.session && got == seq.wrapping_add(1) {
-                            let size = payload[4] as usize;
-                            return Ok(Reply {
-                                opcode: payload[3],
-                                data: payload[12..12 + size.min(DATA_MAX)].to_vec(),
-                            });
-                        }
-                    }
+            if let Some(payload) = self.next_payload()? {
+                let got = u16::from_le_bytes([payload[0], payload[1]]);
+                // A late reply from a burst can carry this sequence number too; the reply also
+                // names the request it answers.
+                if got == seq.wrapping_add(1) && payload[5] == opcode {
+                    let size = payload[4] as usize;
+                    return Ok(Reply {
+                        opcode: payload[3],
+                        data: payload[12..12 + size.min(DATA_MAX)].to_vec(),
+                    });
                 }
-                Err(mavlink::error::MessageReadError::Io(err))
-                    if err.kind() == std::io::ErrorKind::TimedOut
-                        || err.kind() == std::io::ErrorKind::WouldBlock => {}
-                Err(_) => return Err("Connection lost during file transfer".into()),
             }
         }
         Err("The vehicle did not answer file transfer".into())
+    }
+
+    /// One message off the link: a file-transfer payload for this session, or `None`.
+    fn next_payload(&mut self) -> Result<Option<[u8; 251]>, String> {
+        match self.conn.recv() {
+            Ok((hdr, msg)) => {
+                let ftp = match &msg {
+                    MavMessage::FILE_TRANSFER_PROTOCOL(v) => Some(v.payload),
+                    _ => None,
+                };
+                // High-rate telemetry must not be decoded here. That copy
+                // falls behind the socket, and the file-transfer reply
+                // stays stuck behind it until this wait gives up.
+                if self.live {
+                    if matches!(msg, MavMessage::ATTITUDE(_)) {
+                        self.atts += 1;
+                    }
+                    if !matches!(msg, MavMessage::FILE_TRANSFER_PROTOCOL(_)) {
+                        handle_msg(self.st, &hdr, msg);
+                    }
+                } else if matches!(
+                    &msg,
+                    MavMessage::STATUSTEXT(_) | MavMessage::HEARTBEAT(_) | MavMessage::COMMAND_ACK(_)
+                ) {
+                    handle_msg(self.st, &hdr, msg);
+                }
+                if self.live {
+                    if self.atts_from.elapsed() >= Duration::from_secs(1) {
+                        self.st.sample.att_hz = self.atts;
+                        self.atts = 0;
+                        self.atts_from = Instant::now();
+                    }
+                    if self.last_rc.elapsed() >= Duration::from_millis(50) {
+                        send_rc(self.conn, self.st);
+                        self.last_rc = Instant::now();
+                    }
+                    if self.last_hb.elapsed() >= Duration::from_secs(1) {
+                        send_msg(self.conn, &gcs_heartbeat());
+                        self.last_hb = Instant::now();
+                    }
+                }
+                let every = Duration::from_millis(if self.live { 40 } else { 200 });
+                if self.last_emit.elapsed() >= every {
+                    emit_sample(self.on_sample, self.latest, self.st, self.sitl);
+                    self.last_emit = Instant::now();
+                }
+                Ok(ftp.filter(|payload| payload[2] == self.session))
+            }
+            Err(mavlink::error::MessageReadError::Io(err))
+                if err.kind() == std::io::ErrorKind::TimedOut || err.kind() == std::io::ErrorKind::WouldBlock =>
+            {
+                Ok(None)
+            }
+            Err(_) => Err("Connection lost during file transfer".into()),
+        }
     }
 
     fn reset(&mut self) -> Result<(), String> {
@@ -350,6 +397,12 @@ fn run_script_job(
         seq: 1,
         session: next_session(),
         last_emit: Instant::now(),
+        live: false,
+        atts: 0,
+        atts_from: Instant::now(),
+        last_hb: Instant::now(),
+        last_rc: Instant::now(),
+        until: None,
     };
     match job {
         ScriptJob::List => {

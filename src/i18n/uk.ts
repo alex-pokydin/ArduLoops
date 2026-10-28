@@ -2455,4 +2455,6 @@ export const uk: Record<string, string> = {
   "free": "вільний",
   "Output of {name}": "Вихід для: {name}",
   "Also on {list}, listed under Other outputs.": "Також на {list}, див. «Інші виходи».",
+  "Loaded as one file in {s} s": "Завантажено одним файлом за {s} с",
+  "Loading one by one: the parameter file was not available": "Завантаження по одному: файл параметрів недоступний",
 };

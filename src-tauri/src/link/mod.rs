@@ -43,6 +43,9 @@ include!("session.rs");
 // Lua scripts over MAVLink file transfer.
 include!("scripts.rs");
 
+// All parameters in one file over MAVLink file transfer.
+include!("param_file.rs");
+
 // The minute of live samples the assistant reads.
 include!("buffer.rs");
 

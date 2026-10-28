@@ -586,6 +586,26 @@ pub fn run_loop(
                 let streams_ok = last_att
                     .map(|t| now.duration_since(t) < Duration::from_millis(800))
                     .unwrap_or(false);
+                // ATTITUDE flows first; then the whole set in one file. Telemetry, the heartbeat
+                // and stick overrides keep going while it arrives.
+                let full = st.sample.param_count > 0 && st.sample.param_indices.len() >= st.sample.param_count as usize;
+                if streams_ok && !st.params_file_tried && !full && st.active_log_download.is_none() {
+                    st.params_file_tried = true;
+                    let started = Instant::now();
+                    st.sample.param_file = match download_param_file(&*conn, &mut st, &on_sample, &latest, &sitl, PARAM_FILE_BUDGET) {
+                        Ok((n, singles)) => {
+                            let total = st.sample.param_count;
+                            let got = if n < total as usize { format!("{n} of {total}") } else { n.to_string() };
+                            let again = if singles > 0 { format!(", {singles} pieces read again") } else { String::new() };
+                            format!("{got} in {} ms{again}", started.elapsed().as_millis())
+                        }
+                        Err(why) => why,
+                    };
+                    last_att = Some(Instant::now());
+                    last_hb = Instant::now();
+                    emit_sample(&on_sample, &latest, &st, &sitl);
+                    last_emit = Instant::now();
+                }
                 fill_missing_params(&*conn, &mut st, now, streams_ok);
             }
 

@@ -83,6 +83,8 @@ export type Sample = {
   params: Record<string, number>;
   /** PARAM_VALUE count announced by the vehicle. The backup is full only when `params` reaches it. */
   param_count?: number;
+  /** Parameter file download: empty until tried, then "<n> in <ms> ms" or why it failed. */
+  param_file?: string;
   /** Unix seconds of the last HEARTBEAT. Optional on older samples. */
   heartbeat_at?: number;
   /** A reboot this app sent is still waiting for the board to come back. */

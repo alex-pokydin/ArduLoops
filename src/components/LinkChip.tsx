@@ -48,10 +48,10 @@ function shortReason(detail: string, t: ReturnType<typeof useT>): string {
   return tDetail(detail);
 }
 
-type Telemetry = { hz: number; got: number; total: number };
+type Telemetry = { hz: number; got: number; total: number; file: string };
 
 function sameTelemetry(a: Telemetry, b: Telemetry): boolean {
-  return a.hz === b.hz && a.got === b.got && a.total === b.total;
+  return a.hz === b.hz && a.got === b.got && a.total === b.total && a.file === b.file;
 }
 
 export function LinkChip({
@@ -106,6 +106,7 @@ export function LinkChip({
       hz: s.ok ? s.att_hz || 0 : 0,
       got: s.ok ? Object.keys(s.params || {}).length : 0,
       total: s.ok ? s.param_count || 0 : 0,
+      file: s.ok ? s.param_file || "" : "",
     }),
     sameTelemetry,
   );
@@ -125,6 +126,13 @@ export function LinkChip({
   const [port, baud = "115200"] = value.split("@");
   const loading = linked && tel.total > 0 && tel.got < tel.total;
   const pct = loading ? Math.min(100, (100 * tel.got) / tel.total) : 0;
+  // "1427 in 329 ms" when the set came as one file; anything else is why it did not.
+  const fileMs = /^\d+(?: of \d+)? in (\d+) ms/.exec(tel.file)?.[1];
+  const paramsHow = fileMs
+    ? t("Loaded as one file in {s} s", { s: (Number(fileMs) / 1000).toFixed(1) })
+    : tel.file
+      ? t("Loading one by one: the parameter file was not available")
+      : "";
   const source = sourceKnown ? (sitl ? t("SITL") : t("board")) : null;
 
   useLayoutEffect(() => {
@@ -275,7 +283,7 @@ export function LinkChip({
                       <span>{t("Attitude")}</span>
                       <b>{tel.hz ? `${tel.hz} Hz` : "—"}</b>
                     </div>
-                    <div>
+                    <div title={paramsHow || undefined}>
                       <span>{t("Params")}</span>
                       <b>{tel.total ? (loading ? `${tel.got}/${tel.total}` : tel.total) : tel.got || "—"}</b>
                     </div>

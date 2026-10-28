@@ -233,6 +233,9 @@ pub struct Sample {
     #[serde(skip)]
     pub param_indices: HashSet<u16>,
     pub param_count: u16,
+    /// The parameter file download: empty until tried, then "<n> in <ms> ms" or why it failed.
+    #[serde(default)]
+    pub param_file: String,
     pub heartbeat_at: f64,
     /// A reboot we sent is still waiting for the board to come back.
     #[serde(default)]
@@ -354,6 +357,7 @@ impl Sample {
             param_received: HashMap::new(),
             param_indices: HashSet::new(),
             param_count: 0,
+            param_file: String::new(),
             heartbeat_at: 0.0,
             rebooting: false,
             telemetry: HashMap::new(),
@@ -611,6 +615,7 @@ struct LinkState {
     params_cache_key: String,
     params_fill_at: Instant,
     params_priority_tries: u8,
+    params_file_tried: bool,
 }
 
 impl LinkState {
@@ -647,6 +652,7 @@ impl LinkState {
             params_cache_key: String::new(),
             params_fill_at: Instant::now(),
             params_priority_tries: 0,
+            params_file_tried: false,
         }
     }
 }
