@@ -88,7 +88,8 @@ function motorStop() {
   void fetch(`${APP_HTTP}/motor-test?stop=1`, { method: "POST" }).catch(() => {});
 }
 
-const Icon = {
+/** Wizard icons, shared with the accelerometer wizards. */
+export const Icon = {
   check: (c = "currentColor", s = 14) => (
     <svg width={s} height={s} viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="M3.5 8.5l3 3 6-7" stroke={c} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" /></svg>
   ),
@@ -1089,7 +1090,7 @@ export function MotorSetup({ onClose, scope, fromAssistant = false }: { onClose:
   );
 }
 
-function Toggle({ on, icon, label, sub, onToggle }: { on: boolean; icon: ReactNode; label: string; sub: string; onToggle: () => void }) {
+export function Toggle({ on, icon, label, sub, onToggle }: { on: boolean; icon: ReactNode; label: string; sub: string; onToggle: () => void }) {
   return (
     <button type="button" role="checkbox" aria-checked={on} aria-label={label} className={on ? "mw-tile on" : "mw-tile"} onClick={onToggle}>
       <span className="mw-tile-ic">{icon}</span>

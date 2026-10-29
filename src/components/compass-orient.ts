@@ -22,6 +22,9 @@ const NAMED: [number, number, number, number][] = [
   [40, 90, 315, 0], [42, 45, 0, 0], [43, 315, 0, 0],
 ];
 
+/** Every named MAV_SENSOR_ORIENTATION value, for an orientation picker. */
+export const ORIENT_IDS = NAMED.map((row) => row[0]);
+
 const DEG = 180 / Math.PI;
 
 export function orientLabel(value: number): string {
@@ -184,4 +187,34 @@ export function fitMount(points: V3[], north: V3, current: M3, downPositive: boo
     nearestId,
     nearestDeg,
   };
+}
+
+export type BoardFit = { id: number; level: number; nose: number };
+
+function apply(m: M3, v: V3): V3 {
+  return [dot(m[0], v), dot(m[1], v), dot(m[2], v)];
+}
+
+/**
+ * AHRS_ORIENTATION from two still poses of the vehicle: level, then nose down. Both are body-frame specific force
+ * (SCALED_IMU accel, already turned by `current`), so the sensor frame is current⁻¹ × sample. Level reads (0, 0, −g);
+ * nose down tips that toward −x. Each named orientation is scored on both; level fixes roll and pitch, nose down the yaw.
+ * `level` and `nose` are the cosines of the remaining errors (1 is a perfect fit).
+ */
+export function fitBoard(levelBody: V3, noseBody: V3, current: M3): BoardFit | null {
+  const back = transpose(current);
+  const levelSensor = apply(back, levelBody);
+  const noseSensor = apply(back, noseBody);
+  let best: BoardFit | null = null;
+  for (const row of NAMED) {
+    const m = fromEuler(row[1], row[2], row[3]);
+    const up = norm(apply(m, levelSensor));
+    if (!up) continue;
+    const nose = apply(m, noseSensor);
+    const tilt = norm(sub(nose, scale(up, dot(nose, up))));
+    if (!tilt) continue;
+    const fit = { id: row[0], level: -up[2], nose: -tilt[0] };
+    if (!best || fit.level + fit.nose > best.level + best.nose) best = fit;
+  }
+  return best;
 }

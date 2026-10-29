@@ -5,7 +5,10 @@ import { send as sendCmd } from "../mav/cmd";
 import { APP_HTTP } from "../mav/link";
 import { getLatest, subscribe } from "../mav/store";
 import { paramNum, type WizardClose } from "../wizards/close";
-import { orientLabel } from "./compass-orient";
+import { describeDevice } from "../lib/sensorIds";
+import { ORIENT_IDS, orientLabel } from "./compass-orient";
+import { NumField, SelectField, StepFooter, Switch, useParamDraft } from "./OutputSetup";
+import { StepPreArm } from "./StepPreArm";
 import { CompassOrient, type OrientHandle } from "./CompassOrient";
 import { CompassMot } from "./CompassMot";
 
@@ -206,122 +209,213 @@ type MagSlot = {
   autosaved: number | null;
 };
 
+/** Tilt-compensated heading of one compass from its body-frame field, in degrees from magnetic north. */
+function headingOf(field: [number, number, number], rollDeg: number, pitchDeg: number): number {
+  const r = rollDeg * (Math.PI / 180);
+  const p = pitchDeg * (Math.PI / 180);
+  const [mx, my, mz] = field;
+  const xh = mx * Math.cos(p) + my * Math.sin(r) * Math.sin(p) + mz * Math.cos(r) * Math.sin(p);
+  const yh = my * Math.cos(r) - mz * Math.sin(r);
+  return ((Math.atan2(-yh, xh) * 180) / Math.PI + 360) % 360;
+}
+
+function angleGap(a: number, b: number): number {
+  const d = Math.abs(a - b) % 360;
+  return d > 180 ? 360 - d : d;
+}
+
+function bodyField(live: Record<string, number> | undefined, message: string): [number, number, number] | null {
+  if (!live) return null;
+  const v = [live[`${message}.xmag`], live[`${message}.ymag`], live[`${message}.zmag`]];
+  return v.every((x) => typeof x === "number" && Number.isFinite(x)) && Math.hypot(...v) >= 1 ? (v as [number, number, number]) : null;
+}
+
+const AUTO_ROT: [number, string][] = [[0, "Off"], [1, "Check only"], [2, "Check and fix"], [3, "Check and fix, 45° steps too"]];
+const ORIENT_OPTIONS: [number, string][] = ORIENT_IDS.map((id) => [id, orientLabel(id)]);
+const GUIDE = "https://ardupilot.org/copter/docs/common-compass-calibration-in-mission-planner.html";
+
+/**
+ * Compass: one row per compass in priority order (what it is, where, orientation, use, calibration, live field),
+ * then the calibration with its live progress and the live headings checked against each other, the EKF and the GPS course.
+ * Edits are a draft; calibrations open their wizards.
+ */
 export function CompassPanel() {
   const t = useT();
   const sample = useSyncExternalStore(subscribe, getLatest, getLatest);
+  const armed = !!sample.armed;
   const [calOpen, setCalOpen] = useState(false);
   const [motOpen, setMotOpen] = useState(false);
   const orientRef = useRef<OrientHandle>(null);
   const params = sample.params ?? {};
+  const draft = useParamDraft(params);
+  const fresh = typeof sample.heartbeat_at === "number" && Date.now() / 1000 - sample.heartbeat_at < 3;
+  const ready = sample.ok && !sample.armed && fresh;
   const slots = (sample.mag_cal ?? []) as MagSlot[];
   const running = slots.some((slot) => slot.status === 1 || slot.status === 2 || slot.status === 3);
   const mags = MAG_MSG.map((message) => fieldMag(sample.live_nums, message));
   noteMags(mags, poseMoving(sample.roll, sample.pitch, sample.yaw, sample.t, sample.ok), sample.ok);
   const variance = sample.live_nums?.["EKF_STATUS_REPORT.compass_variance"];
   const loaded = Object.keys(params).length > 0;
-  const compasses = [1, 2, 3].filter((n) => n === 1 || (num(params, indexed("DEV_ID", n)) ?? 0) !== 0);
-  const orientTarget = compasses.find((n) => {
-    const dev = num(params, indexed("DEV_ID", n));
-    const external = num(params, indexed("EXTERNAL", n));
-    return dev != null && dev !== 0 && external != null && external !== 0;
-  }) ?? null;
+  const offsMax = num(params, "COMPASS_OFFS_MAX");
+  const compasses = [1, 2, 3].filter((n) => (num(params, indexed("DEV_ID", n)) ?? 0) !== 0);
+  const orientTarget = compasses.find((n) => (num(params, indexed("EXTERNAL", n)) ?? 0) !== 0) ?? null;
+  const used = compasses.filter((n) => draft.value(indexed("USE", n)) === 1);
+  const allStored = used.length > 0 && used.every((n) => deviceStored(params, n));
+
+  // Live headings: each compass tilt-compensated with the vehicle's roll and pitch. Magnetic, because automatic
+  // declination is set in memory and not saved, so COMPASS_DEC as read can be stale; EKF and GPS course are true.
+  const headings = compasses.map((n) => {
+    const field = bodyField(sample.live_nums, MAG_MSG[n - 1]);
+    return field && sample.ok ? headingOf(field, sample.roll, sample.pitch) : null;
+  });
+  const usedHeadings = compasses.flatMap((n, i) => (used.includes(n) && headings[i] != null ? [headings[i] as number] : []));
+  const spread = usedHeadings.length > 1 ? Math.max(...usedHeadings.flatMap((a) => usedHeadings.map((b) => angleGap(a, b)))) : null;
+  const ekfYaw = sample.ok && Number.isFinite(sample.yaw) ? (sample.yaw + 360) % 360 : null;
+  const speed = sample.live_nums?.["GPS_RAW_INT.vel"];
+  const cog = sample.live_nums?.["GPS_RAW_INT.cog"];
+  const course = typeof speed === "number" && speed > 300 && typeof cog === "number" && cog !== 65535 ? cog / 100 : null;
+
   return (
-    <div className="mag">
-      <div className="mag-block">
-        <b className="work-cal-label">{t("Stored calibration")}</b>
-        {!loaded || num(params, "COMPASS_DEV_ID") == null ? (
-          <p className="mag-line">{t(loaded ? "No compass parameters." : "Compass parameters have not arrived.")}</p>
-        ) : compasses.map((n) => {
-          const dev = num(params, indexed("DEV_ID", n));
-          const use = num(params, indexed("USE", n));
-          const external = num(params, indexed("EXTERNAL", n));
-          const orient = num(params, indexed("ORIENT", n));
-          const ofs = triple(params, "OFS", n);
-          const dia = triple(params, "DIA", n);
-          const odi = triple(params, "ODI", n);
-          const scale = num(params, indexed("SCALE", n));
-          const offsetLength = lengthOf(ofs);
-          if (dev == null || dev === 0) {
-            return <p key={n} className="mag-card"><b>{t("Compass {n}", { n })}</b>{t("Not detected")}</p>;
-          }
-          return (
-            <div key={n} className="mag-card">
-              <b>
-                {t("Compass {n}", { n })}
-                {" · "}
-                {t(use === 1 ? "In use" : "Not in use")}
-                {external == null ? "" : ` · ${t(external === 0 ? "Internal" : "External")}`}
-                {orient == null ? "" : n === orientTarget ? (
-                  <>
-                    {" · "}
-                    <button type="button" className="mag-orient" onClick={() => orientRef.current?.open()}>
-                      {t("Orientation {n}", { n: orientLabel(Math.round(orient)) })}
-                    </button>
-                  </>
-                ) : ` · ${t("Orientation {n}", { n: orientLabel(Math.round(orient)) })}`}
-              </b>
-              <p className="mag-line">
-                <button type="button" className="mag-orient" onClick={() => setCalOpen(true)}>
-                  {factoryDefaults(params, n)
-                    ? t("Offsets, diagonals, and off-diagonals are still the factory defaults.")
-                    : t("Offsets {x}. Length {length}.", { x: fmtTriple(ofs, 1), length: fmt(offsetLength, 0) })}
-                </button>
-              </p>
-              {factoryDefaults(params, n) ? null : (
-                <>
-                  <p className="mag-line">{t("Diagonals {x}", { x: fmtTriple(dia, 3) })}</p>
-                  <p className="mag-line">{t("Off-diagonals {x}", { x: fmtTriple(odi, 3) })}</p>
-                  {scale != null && scale !== 0 && Math.abs(scale - 1) > 0.001
-                    ? <p className="mag-line">{t("Scale {n}", { n: scale.toFixed(3) })}</p>
-                    : null}
-                </>
-              )}
-              {mags[n - 1] == null ? (
-                <p className="mag-line">{t("No magnetometer frames yet.")}</p>
-              ) : (
-                <p className="mag-line">
-                  {t("Field {n} mG", { n: Math.round(mags[n - 1] as number) })}
-                  {fieldShape(n - 1) === "steady" ? ` · ${t("Field length stayed steady while the board moved.")}` : ""}
-                  {fieldShape(n - 1) === "changed" ? ` · ${t("Field length changed while the board moved.")}` : ""}
-                  {fieldShape(n - 1) === "turn" ? ` · ${t("Turn the board to see whether the field length stays steady.")}` : ""}
-                </p>
-              )}
+    <div className="frs">
+      <StepPreArm step="compass" />
+      {!sample.ok ? <div className="frs-note info">{t("Connect a vehicle to read its compasses.")}</div> : null}
+      {sample.ok && loaded && num(params, "COMPASS_DEV_ID") == null ? <div className="frs-note info">{t("No compass parameters.")}</div> : null}
+      {sample.ok && !loaded ? <div className="frs-note info">{t("Compass parameters have not arrived.")}</div> : null}
+
+      {compasses.length ? (
+        <div className="cps-table" role="table">
+          <div className="cps-tr head" role="row">
+            <span>#</span><span>{t("Sensor")}</span><span>{t("Orientation")}</span><span>{t("Use")}</span><span>{t("Calibration")}</span><span>{t("Field")}</span>
+          </div>
+          {compasses.map((n) => {
+            const dev = describeDevice(num(params, indexed("DEV_ID", n)), "compass");
+            const external = (num(params, indexed("EXTERNAL", n)) ?? 0) !== 0;
+            const use = draft.value(indexed("USE", n));
+            const ofs = triple(params, "OFS", n);
+            const length = lengthOf(ofs);
+            const defaults = factoryDefaults(params, n);
+            const tooBig = length != null && offsMax != null && length > offsMax;
+            const shape = fieldShape(n - 1);
+            const calState = defaults ? "todo" : tooBig ? "warn" : "done";
+            return (
+              <div key={n} className={`cps-tr${use === 0 ? " off" : ""}`} role="row">
+                <span className="cps-n">{n}</span>
+                <span className="cps-sensor">
+                  <b>{dev?.name ?? t("Compass {n}", { n })}{n === used[0] ? <em>{t("primary")}</em> : null}</b>
+                  <span>{t(external ? "External" : "Internal")}{dev?.where ? ` · ${dev.where}` : ""}</span>
+                </span>
+                <span className="cps-orient">
+                  {external ? (
+                    <>
+                      <select
+                        aria-label={t("Orientation of compass {n}", { n })}
+                        value={Math.round(draft.value(indexed("ORIENT", n)) ?? 0)}
+                        onChange={(e) => draft.set(indexed("ORIENT", n), Number(e.target.value))}
+                      >
+                        {ORIENT_OPTIONS.map(([v, label]) => <option key={v} value={v}>{label}</option>)}
+                      </select>
+                      {n === orientTarget ? (
+                        <button type="button" className="frs-btn link" disabled={!ready} onClick={() => orientRef.current?.open()}>{t("Detect")}</button>
+                      ) : null}
+                    </>
+                  ) : <span className="cps-dim">{t("Follows the board")}</span>}
+                </span>
+                <span>{use != null ? <Switch on={use === 1} label={t("Use compass {n}", { n })} onChange={(on) => draft.set(indexed("USE", n), on ? 1 : 0)} /> : null}</span>
+                <span className="cps-cal" title={defaults ? undefined : `${t("Offsets {x}. Length {length}.", { x: fmtTriple(ofs, 1), length: fmt(length, 0) })} ${t("Diagonals {x}", { x: fmtTriple(triple(params, "DIA", n), 3) })} · ${t("Off-diagonals {x}", { x: fmtTriple(triple(params, "ODI", n), 3) })}`}>
+                  <span className={`ms-dot ${calState === "done" ? "done" : calState === "warn" ? "warn" : ""}`} />
+                  <span>
+                    {defaults
+                      ? t("Not calibrated")
+                      : tooBig
+                        ? t("Offsets {n} · over the {max} limit", { n: fmt(length, 0), max: offsMax?.toFixed(0) ?? "" })
+                        : t("Offsets {n}", { n: fmt(length, 0) })}
+                  </span>
+                </span>
+                <span className="cps-field" title={shape === "steady" ? t("Field length stayed steady while the board moved.") : shape === "changed" ? t("Field length changed while the board moved.") : t("Turn the board to see whether the field length stays steady.")}>
+                  {mags[n - 1] == null ? "—" : (
+                    <>
+                      <span className={`ms-dot ${shape === "steady" ? "done" : shape === "changed" ? "warn" : ""}`} />
+                      {t("{n} mG", { n: Math.round(mags[n - 1] as number) })}
+                      <span className="cps-dim">{shape === "steady" ? t("steady") : shape === "changed" ? t("changes as it turns") : t("turn it")}</span>
+                    </>
+                  )}
+                </span>
+              </div>
+            );
+          })}
+        </div>
+      ) : null}
+
+      <div className="acs-row">
+        <div className="ms-card acs-grow">
+          <div className="ms-card-head">
+            <b>{t("Calibration")}</b>
+            {compasses.length ? (
+              <span className={`acs-pill ${running ? "cyan" : allStored ? "ok" : "hot"}`}><i />{t(running ? "Running" : allStored ? "Calibrated" : "Not calibrated")}</span>
+            ) : null}
+          </div>
+          <span className="acs-text">{t("Outside, away from steel and cars. Turn the vehicle slowly on every side until all bars fill. About a minute.")}</span>
+          {slots.length ? slots.map((slot) => (
+            <div key={slot.id} className="cps-bar">
+              <span>{t("Compass {n}", { n: slot.id + 1 })}</span>
+              <i><b style={{ width: `${Math.max(0, Math.min(100, slot.pct))}%` }} className={slot.status >= 5 ? "bad" : slot.status === 4 ? "ok" : ""} /></i>
+              <span className="cps-dim">{slot.status >= 4 ? t(statusKey(slot.status), { n: slot.status }) : `${slot.pct}%`}</span>
             </div>
-          );
-        })}
-        {typeof variance === "number" && Number.isFinite(variance) ? (
-          <p className={variance >= 0.5 ? "mag-line warn" : "mag-line"}>
-            {t(
-              variance < 0.5
-                ? "EKF compass variance {n}. Consistent."
-                : variance < 0.8
-                  ? "EKF compass variance {n}. Watch it."
-                  : "EKF compass variance {n}. Inconsistent.",
-              { n: variance.toFixed(2) },
-            )}
-          </p>
-        ) : null}
-        {num(params, "COMPASS_DEV_ID") == null ? null : (
-          <>
-            <p className="mag-line">{t(motorKey(num(params, "COMPASS_MOTCT")))}</p>
-            <p className="mag-line">
-              <button type="button" className="mag-orient" onClick={() => setMotOpen(true)}>{t("Compensate for motor current")}</button>
-            </p>
-            <p className="mag-line">{t(learnKey(num(params, "COMPASS_LEARN")))}</p>
-          </>
-        )}
+          )) : null}
+          <span className="acs-text">{t(motorKey(num(params, "COMPASS_MOTCT")))} {t(learnKey(num(params, "COMPASS_LEARN")))}</span>
+          <div className="acs-actions">
+            <button type="button" className={`frs-btn ${allStored ? "quiet" : "primary sm"}`} disabled={!ready && !running} onClick={() => setCalOpen(true)}>
+              {t(running ? "Show calibration" : allStored ? "Recalibrate" : "Start calibration")}
+            </button>
+            <button type="button" className="frs-btn quiet" disabled={!ready} onClick={() => setMotOpen(true)}>{t("Motor interference")}</button>
+          </div>
+        </div>
+        <div className="ms-card acs-grow">
+          <b className="acs-title">{t("Live heading")}</b>
+          <div className="cps-heads">
+            {compasses.map((n, i) => (
+              <div key={n} className={`cps-head${used.includes(n) ? "" : " off"}`}>
+                <span>{t("Compass {n} · magnetic", { n })}</span>
+                <b>{headings[i] == null ? "—" : `${Math.round(headings[i] as number)}°`}</b>
+              </div>
+            ))}
+            <div className="cps-head ref">
+              <span>{t("EKF · true")}</span>
+              <b>{ekfYaw == null ? "—" : `${Math.round(ekfYaw)}°`}</b>
+            </div>
+            <div className="cps-head ref">
+              <span>{t("GPS course")}</span>
+              <b>{course == null ? "—" : `${Math.round(course)}°`}</b>
+            </div>
+          </div>
+          {spread != null ? (
+            <span className={`acs-text${spread > 15 ? " warn" : ""}`}>
+              {spread > 15
+                ? t("The compasses disagree by {n}°. Check the orientation of the external one.", { n: Math.round(spread) })
+                : t("The compasses agree within {n}°.", { n: Math.max(1, Math.round(spread)) })}
+            </span>
+          ) : null}
+          {course == null ? (
+            <span className="acs-text">{t("GPS course needs more than 3 m/s.")}</span>
+          ) : ekfYaw != null ? (
+            <span className={`acs-text${angleGap(ekfYaw, course) > 30 ? " warn" : ""}`}>
+              {t(angleGap(ekfYaw, course) > 30 ? "Moving straight, the EKF heading should match the GPS course." : "The EKF heading matches the GPS course.")}
+            </span>
+          ) : null}
+          {typeof variance === "number" && Number.isFinite(variance) ? (
+            <span className={`acs-text${variance >= 0.5 ? " warn" : ""}`}>
+              {t(variance < 0.5 ? "EKF compass variance {n}. Consistent." : variance < 0.8 ? "EKF compass variance {n}. Watch it." : "EKF compass variance {n}. Inconsistent.", { n: variance.toFixed(2) })}
+            </span>
+          ) : null}
+          <NumField draft={draft} name="COMPASS_OFFS_MAX" label="Max offsets" width={80} />
+          <SelectField draft={draft} name="COMPASS_AUTO_ROT" label="Auto-rotate on calibration" options={AUTO_ROT} />
+        </div>
       </div>
 
       <CompassOrient ref={orientRef} />
       {motOpen ? <CompassMot onClose={() => setMotOpen(false)} /> : null}
-
-      {running && !calOpen ? (
-        <p className="mag-line">
-          <button type="button" className="mag-orient" onClick={() => setCalOpen(true)}>{t("Calibration is running")}</button>
-        </p>
-      ) : null}
-
       {calOpen ? <CompassCalWizard onClose={() => setCalOpen(false)} /> : null}
+      <StepFooter draft={draft} armed={armed} ok={sample.ok} guide={GUIDE} guideLabel="Compass calibration" rebootNames={[]} />
     </div>
   );
 }

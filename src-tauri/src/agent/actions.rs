@@ -112,6 +112,7 @@ struct WizardSpec {
 
 const WIZARDS: &[WizardSpec] = &[
     WizardSpec { name: "accel", copter: true, plane: true },
+    WizardSpec { name: "board_orientation", copter: true, plane: true },
     WizardSpec { name: "compass", copter: true, plane: true },
     WizardSpec { name: "compass_mot", copter: true, plane: false },
     WizardSpec { name: "motors", copter: true, plane: false },

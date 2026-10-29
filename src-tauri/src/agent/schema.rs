@@ -1119,7 +1119,7 @@ fn tool_schema() -> Value {
             "description": doc!(
                 "Show a button that opens one setup wizard.",
                 "Each name is for a copter, a plane, or both. The call fails when the heartbeat is missing or is the other vehicle.",
-                "Copter and plane: `accel` (six-face accelerometer), `compass` (offsets and diagonals), `radio` (live channels, stick ends, and channel reverse), `modes` (flight-mode switch channel and the six positions; the list follows the heartbeat), `battery` (monitor, capacity, voltage match, and current zero), `failsafe` (radio-loss and low-battery actions; the parameters follow the heartbeat).",
+                "Copter and plane: `accel` (six-face accelerometer: the gyros, then the six resting faces in ArduPilot's order, each taken once the vehicle rests in it; ArduPilot needs a reboot after it), `board_orientation` (finds `AHRS_ORIENTATION` from two still poses, level then nose down; it writes nothing), `compass` (offsets and diagonals), `radio` (live channels, stick ends, and channel reverse), `modes` (flight-mode switch channel and the six positions; the list follows the heartbeat), `battery` (monitor, capacity, voltage match, and current zero), `failsafe` (radio-loss and low-battery actions; the parameters follow the heartbeat).",
                 "Copter only: `compass_mot` (motor-current compensation), `motors` (which output drives which motor, spin direction, and idle; any matrix frame or Tri).",
                 "For `motors`, `steps` limits the run to some of `order`, `direction`, and `idle`, and `motors` limits order and direction to those motor numbers. Without them the whole setup runs. The window always starts with a safety check, ends with a summary, and adds `order` when a listed motor has no output.",
                 "Plane only: `servos` (four surfaces, reverse, and free outputs), `airspeed` (no sensor, or leave the sensor that is already set).",
@@ -1127,7 +1127,7 @@ fn tool_schema() -> Value {
                 "Pass `title` and `description` in the user's language. The card shows the title, then why this run is needed.",
                 "The turn stops until the user finishes that wizard or cancels the card. Safe mode does not skip this and does not start the wizard.",
                 "The button only opens the window. The user presses every step inside it, including any step that spins a motor.",
-                "`completed` means they reached the end. `result.measures` holds the values that screen can read, such as offsets, fitness, idle, compensation, or the six flight modes. For `motors` it lists the steps that ran, the outputs (`output:motor`), each direction answer, motors still waiting for a wire swap, and whether the board rebooted.",
+                "`completed` means they reached the end. `result.measures` holds the values that screen can read, such as offsets, fitness, idle, compensation, or the six flight modes. For `accel` it holds the new `INS_ACCOFFS_*` and `INS_ACCSCAL_*` and whether the board rebooted. For `board_orientation` it holds `current` and `detected` (`AHRS_ORIENTATION` values with names) and the fit error of each pose in degrees; `detected` is null when no named orientation fits within about 18°, and `closest` is then the nearest. For `motors` it lists the steps that ran, the outputs (`output:motor`), each direction answer, motors still waiting for a wire swap, and whether the board rebooted.",
                 "`cancelled` means they closed the window or rejected the card before the end. Measures may still show the current values.",
                 "`failed` means the procedure ended in failure, the heartbeat is the wrong vehicle, or this frame has no motor wizard.",
             ),
@@ -1136,8 +1136,8 @@ fn tool_schema() -> Value {
                 "properties": {
                     "wizard": {
                         "type": "string",
-                        "enum": ["accel", "compass", "compass_mot", "motors", "radio", "modes", "battery", "failsafe", "servos", "airspeed"],
-                        "description": "Which wizard window to open. Copter and plane: `accel`, `compass`, `radio`, `modes`, `battery`, `failsafe`. Copter only: `compass_mot`, `motors`. Plane only: `servos`, `airspeed`."
+                        "enum": ["accel", "board_orientation", "compass", "compass_mot", "motors", "radio", "modes", "battery", "failsafe", "servos", "airspeed"],
+                        "description": "Which wizard window to open. Copter and plane: `accel`, `board_orientation`, `compass`, `radio`, `modes`, `battery`, `failsafe`. Copter only: `compass_mot`, `motors`. Plane only: `servos`, `airspeed`."
                     },
                     "title": {
                         "type": "string",

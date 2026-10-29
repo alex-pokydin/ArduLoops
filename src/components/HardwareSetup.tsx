@@ -3,7 +3,7 @@ import { useT } from "../i18n/i18n";
 import { getSetupSnapshot, subscribe } from "../mav/store";
 import { useStorePicked, useVehicle } from "../mav/view";
 import { BatteryWizard } from "./BatterySetup";
-import { CalibrationPanel } from "./CalibrationPanel";
+import { AccelStep } from "./AccelStep";
 import { CompassPanel } from "./CompassPanel";
 import { FrameStep } from "./FrameStep";
 import { PlaneAirframeStep } from "./PlaneAirframeStep";
@@ -109,17 +109,17 @@ const BATTERY: Step = {
 const LEVEL: Step = {
   id: "level",
   title: "Accelerometer",
-  body: "Propellers off. Pick a sensor, match the picture, then start.",
+  body: "Teach the board which way is down, then where level is on this frame.",
   kind: "level",
   group: "Sensors",
-  params: ["AHRS_ORIENTATION", "INS_ACC*"],
+  params: ["AHRS_ORIENTATION", "AHRS_TRIM_*", "INS_ACC*", "INS_USE*", "INS_GYR_CAL", "ARMING_ACCTHRESH"],
   wizard: "accel",
 };
 
 const COMPASS: Step = {
   id: "compass",
   title: "Compass",
-  body: "Stored offsets are the last calibration. Start runs a new one: turn the vehicle until every compass fills.",
+  body: "Which compasses to trust, which way they face, and their calibration.",
   kind: "compass",
   group: "Sensors",
   params: ["COMPASS_*"],
@@ -548,7 +548,7 @@ function waitingOn(steps: Step[], cards: WaitingCard[]): Set<string> {
   const ids = new Set<string>();
   for (const card of cards) {
     if (card.kind === "wizard") {
-      const wizard = card.name === "compass_mot" ? "compass" : card.name;
+      const wizard = card.name === "compass_mot" ? "compass" : card.name === "board_orientation" ? "accel" : card.name;
       const step = steps.find((item) => item.wizard === wizard);
       if (step) ids.add(step.id);
     } else {
@@ -776,7 +776,7 @@ export const HardwareSetup = memo(function HardwareSetup() {
               {step.kind === "frame" ? <FrameStep /> : null}
               {step.kind === "motors" ? <MotorsStep /> : null}
               {step.kind === "radio" ? <><RcLive /><RadioWizard /></> : null}
-              {step.kind === "level" ? <CalibrationPanel /> : null}
+              {step.kind === "level" ? <AccelStep /> : null}
               {step.kind === "compass" ? <CompassPanel /> : null}
               {step.kind === "modes" ? <ModeWizard frame={frame} /> : null}
               {step.kind === "failsafe" ? <FailsafeWizard frame={frame} /> : null}

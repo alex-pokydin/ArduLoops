@@ -1,5 +1,6 @@
 import { useEffect, useRef, useSyncExternalStore, type ReactNode } from "react";
 import { createPortal } from "react-dom";
+import { AccelOrient } from "./AccelOrient";
 import { AccelWizard } from "./CalibrationPanel";
 import { CompassMot } from "./CompassMot";
 import { CompassCalWizard } from "./CompassPanel";
@@ -77,7 +78,11 @@ export function WizardHost({
 
   const fresh = typeof sample.heartbeat_at === "number" && Date.now() / 1000 - sample.heartbeat_at < 3;
   const ready = sample.ok && !sample.armed && fresh;
-  if (ask.wizard === "accel") return <AccelWizard ready={ready} onClose={finish} />;
+  if (ask.wizard === "accel") return <AccelWizard ready={ready} onClose={finish} fromAssistant />;
+  if (ask.wizard === "board_orientation") {
+    const orient = sample.params?.AHRS_ORIENTATION;
+    return <AccelOrient current={typeof orient === "number" ? Math.round(orient) : 0} onClose={finish} fromAssistant />;
+  }
   if (ask.wizard === "compass") return <CompassCalWizard onClose={finish} />;
   if (ask.wizard === "compass_mot") return <CompassMot onClose={finish} />;
   if (ask.wizard === "radio") return <RcSetup onClose={finish} />;
