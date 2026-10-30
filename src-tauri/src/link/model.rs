@@ -418,6 +418,24 @@ pub enum Cmd {
     Tune { p: f64, i: f64, d: f64 },
     #[serde(rename = "mode")]
     Mode { mode: String },
+    #[serde(rename = "command_long")]
+    CommandLong {
+        command: u16,
+        #[serde(default)]
+        param1: f32,
+        #[serde(default)]
+        param2: f32,
+        #[serde(default)]
+        param3: f32,
+        #[serde(default)]
+        param4: f32,
+        #[serde(default)]
+        param5: f32,
+        #[serde(default)]
+        param6: f32,
+        #[serde(default)]
+        param7: f32,
+    },
     /// Upload a mission, or clear it when `items` is empty. Not a JSON command.
     #[serde(skip)]
     Mission {
@@ -592,7 +610,7 @@ impl LinkState {
                 roll: 1500,
                 pitch: 1500,
                 yaw: 1500,
-                thr: 0,
+                thr: 1500,
             },
             rcmap,
             virtual_stick: false,

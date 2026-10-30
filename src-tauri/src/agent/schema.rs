@@ -235,6 +235,107 @@ fn tool_schema() -> Value {
             }
         },
         {
+            "name": "log_magfit",
+            "description": doc!(
+                "Calculates compass calibration parameters from a DataFlash log using least-squares fit against the World Magnetic Model (equivalent to ArduPilot WebTools MAGFit).",
+                "Returns `orig_error_mgauss`, `fit_error_mgauss`, `reduction_pct`, `coverage_pct`, `orientation` (logged, best_fit, matches), and `params` (offsets, diagonals, off-diagonals, scale, motor compensation, and orientation).",
+                "`compass` is the compass index: 1 (default), 2, or 3.",
+                "`fit_type` is `offsets`, `scale`, or `iron` (default).",
+                "`motor_comp` is `none` (default), `throttle`, or `current`.",
+                "`check_orientation` verifies mounting rotation against all 38 ArduPilot orientations. Defaults to true.",
+                "`start_us` and `end_us` bound the analyzed flight interval.",
+                "`lat` and `lon` are optional latitude and longitude (in degrees). Provide them if the log does not contain GPS or origin records (e.g. indoor flights or bench tests).",
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "file": { "type": "string", "description": "An id from `list_logs`, or `local.id` from `vehicle_logs`." },
+                    "compass": { "type": "integer", "description": "Compass index (1, 2, or 3). Defaults to 1." },
+                    "fit_type": { "type": "string", "enum": ["offsets", "scale", "iron"], "description": "Calibration model: `offsets`, `scale`, or `iron`. Defaults to `iron`." },
+                    "motor_comp": { "type": "string", "enum": ["none", "throttle", "current"], "description": "Motor interference compensation: `none`, `throttle`, or `current`. Defaults to `none`." },
+                    "check_orientation": { "type": "boolean", "description": "Whether to check mounting rotation against standard ArduPilot orientations. Defaults to true." },
+                    "start_us": { "type": "number", "description": "TimeUS lower bound, in microseconds. Omit it for no lower bound." },
+                    "end_us": { "type": "number", "description": "TimeUS upper bound, in microseconds. Omit it for no upper bound." },
+                    "lat": { "type": "number", "description": "Flight location latitude in degrees. Optional; overrides or provides coordinates if GPS is missing from the log." },
+                    "lon": { "type": "number", "description": "Flight location longitude in degrees. Optional; overrides or provides coordinates if GPS is missing from the log." }
+                },
+                "required": ["file"]
+            }
+        },
+        {
+            "name": "log_filter_review",
+            "description": doc!(
+                "Analyzes gyro vibration noise and optimizes harmonic notch and low-pass filter parameters from a DataFlash log (equivalent to ArduPilot WebTools FilterReview).",
+                "Simulates post-filter noise attenuation and control phase delay.",
+                "Returns primary motor noise peak, estimated hover throttle, current vs proposed filter parameters, and noise reduction (dB).",
+                "`axis` is `all` (default), `roll`, `pitch`, or `yaw`.",
+                "`start_us` and `end_us` bound the analyzed flight interval.",
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "file": { "type": "string", "description": "An id from `list_logs`, or `local.id` from `vehicle_logs`." },
+                    "axis": { "type": "string", "enum": ["all", "roll", "pitch", "yaw"], "description": "Gyro axis to analyze. Defaults to `all`." },
+                    "start_us": { "type": "number", "description": "TimeUS lower bound, in microseconds. Omit it for no lower bound." },
+                    "end_us": { "type": "number", "description": "TimeUS upper bound, in microseconds. Omit it for no upper bound." }
+                },
+                "required": ["file"]
+            }
+        },
+        {
+            "name": "log_audit",
+            "description": doc!(
+                "Performs a comprehensive flight safety, crash detection, and hardware health audit from a DataFlash log (equivalent to ArduPilot WebTools HardwareReport with FlightMD and ardupilot-mcp rule extensions).",
+                "Evaluates a deterministic health score (0..100) across vibrations, clipping, 5V brownouts, battery sag, EKF innovations/lane switches, in-flight GPS quality, motor saturation, and safety parameters.",
+                "Returns structured category verdicts (PASS/WARN/FAIL), prioritized issues with recommendations, and key timeline intervals for charting.",
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "file": { "type": "string", "description": "An id from `list_logs`, or `local.id` from `vehicle_logs`." }
+                },
+                "required": ["file"]
+            }
+        },
+        {
+            "name": "log_motor_balance",
+            "description": doc!(
+                "Analyzes in-flight motor thrust balance, center of gravity (CG) offsets, and motor arm twist from a DataFlash log.",
+                "Evaluates individual motor PWM outputs (RCOU) and ESC telemetry (RPM, current, temperature).",
+                "Diagnoses forward/aft CG bias, lateral CG bias, CW vs CCW motor twist, and damaged or degraded motor/propeller outliers.",
+                "`start_us` and `end_us` bound the analyzed flight interval.",
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "file": { "type": "string", "description": "An id from `list_logs`, or `local.id` from `vehicle_logs`." },
+                    "start_us": { "type": "number", "description": "TimeUS lower bound, in microseconds. Omit it for no lower bound." },
+                    "end_us": { "type": "number", "description": "TimeUS upper bound, in microseconds. Omit it for no upper bound." }
+                },
+                "required": ["file"]
+            }
+        },
+        {
+            "name": "log_pid_review",
+            "description": doc!(
+                "Evaluates rate PID tuning quality, stability margins, and step responses from a DataFlash log (equivalent to ArduPilot WebTools PIDReview).",
+                "Computes Phase Margin (PM), Gain Margin (GM), Rise Time, Peak Overshoot (%), and Settling Time.",
+                "Recommends concrete P and D parameter changes to achieve optimal damping and phase margin.",
+                "`axis` is `roll` (default), `pitch`, or `yaw`.",
+                "`start_us` and `end_us` bound the analyzed flight interval.",
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "file": { "type": "string", "description": "An id from `list_logs`, or `local.id` from `vehicle_logs`." },
+                    "axis": { "type": "string", "enum": ["roll", "pitch", "yaw"], "description": "Rate axis to review: `roll` (default), `pitch`, or `yaw`." },
+                    "start_us": { "type": "number", "description": "TimeUS lower bound, in microseconds. Omit it for no lower bound." },
+                    "end_us": { "type": "number", "description": "TimeUS upper bound, in microseconds. Omit it for no upper bound." }
+                },
+                "required": ["file"]
+            }
+        },
+        {
             "name": "suggest_next",
             "description": doc!(
                 "Show buttons under the reply for what the user may do next.",
@@ -804,9 +905,10 @@ fn tool_schema() -> Value {
             "name": "arm",
             "description": doc!(
                 "Arm the vehicle.",
-                "Runs immediately only while safe mode is on.",
-                "Otherwise it stores a card, this turn stops, and the vehicle is not armed.",
-                "The vehicle still applies its own pre-arm checks.",
+                "Runs immediately while safe mode is on or in SITL, verifying actual arming with the autopilot.",
+                "NOTE: On ArduPilot Copter, arming on the ground requires zero throttle. Call `rc_stick(preset: \"zero_throttle\")` before `arm` to prevent PreArm throttle rejection.",
+                "Returns `armed: true` when confirmed by the autopilot, or `armed: false` with `status_text` containing pre-arm failure reasons.",
+                "While safe mode is off, stores an approval card and waits for user confirmation.",
             ),
             "parameters": { "type": "object", "properties": {} }
         },
@@ -814,10 +916,124 @@ fn tool_schema() -> Value {
             "name": "disarm",
             "description": doc!(
                 "Disarm the vehicle.",
-                "Runs immediately only while safe mode is on.",
-                "Otherwise it stores a card, this turn stops, and the vehicle is not disarmed.",
+                "Runs immediately while safe mode is on or in SITL, verifying actual disarming with the autopilot.",
+                "Returns `armed: false` when confirmed by the autopilot.",
+                "While safe mode is off, stores an approval card and waits for user confirmation.",
             ),
             "parameters": { "type": "object", "properties": {} }
+        },
+        {
+            "name": "mav_command",
+            "description": doc!(
+                "Sends one or more MAVLink commands (COMMAND_LONG) to the connected vehicle.",
+                "Pass an array of one or more commands in `commands`.",
+                "Supported commands: `NAV_TAKEOFF` (takeoff with `alt_m`), `NAV_LAND`, `NAV_RETURN_TO_LAUNCH`, `DO_REPOSITION`, `DO_SET_SERVO` (`servo`, `pwm`), `DO_CHANGE_SPEED` (`speed_mps`), `DO_VTOL_TRANSITION`, or numeric command IDs.",
+                "Timing: Commands in `commands` execute immediately in sequence without pauses.",
+                "If time is needed between actions (such as climbing to altitude after takeoff or settling), use the `wait` tool between commands.",
+                "While safe mode is off, an approval card stops the turn until the user approves it.",
+                "While safe mode is on or in SITL, commands run immediately and are recorded as applied cards.",
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "commands": {
+                        "type": "array",
+                        "description": "List of MAVLink commands to execute in sequence. Each item specifies `command`, optional `params`, and optional `reason`.",
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "command": {
+                                    "type": "string",
+                                    "description": "MAVLink command name or numeric ID (e.g. `NAV_TAKEOFF`, `NAV_LAND`, `NAV_RETURN_TO_LAUNCH`, `DO_REPOSITION`, `DO_SET_SERVO`, `DO_CHANGE_SPEED`, `DO_VTOL_TRANSITION`)."
+                                },
+                                "params": {
+                                    "type": "object",
+                                    "description": "Parameters for the command: `alt_m` (for takeoff/reposition), `speed_mps` (for speed/reposition), `servo` & `pwm` (for DO_SET_SERVO), `lat` & `lon` (for reposition), or raw `param1`..`param7`."
+                                },
+                                "reason": {
+                                    "type": "string",
+                                    "description": "Engineering rationale for why this command is being sent."
+                                }
+                            },
+                            "required": ["command"]
+                        }
+                    }
+                },
+                "required": ["commands"]
+            }
+        },
+        {
+            "name": "wait",
+            "description": doc!(
+                "Pause execution for a specified duration in seconds or until an altitude or flight mode condition is met.",
+                "Displays a live waiting proposal card in chat showing what is being waited for, which completes when the condition is met.",
+                "Use this tool to introduce necessary delays between sequential commands (such as waiting for climb after takeoff, spool-up time, or mode settling).",
+                "Returns fresh vehicle state (`alt_m`, `mode`, `armed`, `groundspeed_mps`, `climb_mps`, `status_text`) upon completion.",
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "seconds": {
+                        "type": "number",
+                        "description": "Duration to wait in seconds (1.0 to 60.0). Defaults to 5.0."
+                    },
+                    "reason": {
+                        "type": "string",
+                        "description": "Engineering reason for the pause (e.g. 'Wait for altitude climb to 100m')."
+                    },
+                    "target_alt_m": {
+                        "type": "number",
+                        "description": "Optional target altitude in meters. If set, wait finishes early when vehicle reaches or crosses this altitude."
+                    },
+                    "target_mode": {
+                        "type": "string",
+                        "description": "Optional target flight mode (e.g. 'LOITER', 'AUTO'). If set, wait finishes early when mode matches."
+                    }
+                },
+                "required": ["seconds"]
+            }
+        },
+        {
+            "name": "rc_stick",
+            "description": doc!(
+                "Controls virtual pilot RC sticks (Roll, Pitch, Throttle, Yaw) sent via MAVLink RC override.",
+                "In Copter modes where altitude is controlled by pilot throttle (such as LOITER, ALT_HOLD, and POSHOLD), neutral throttle (1500 PWM) holds altitude. Throttle below 1500 commands descent, and above 1500 commands climb.",
+                "Use `preset: \"neutral\"` or `throttle: 1500` to maintain altitude in LOITER/ALT_HOLD.",
+                "Use `preset: \"zero_throttle\"` or `throttle: 1000` to command zero throttle on the ground.",
+                "Use `preset: \"release\"` to clear stick override and return control to physical RC.",
+                "While safe mode is off, an approval card stops the turn until the user approves it.",
+                "While safe mode is on or in SITL, stick changes run immediately and are recorded as applied cards.",
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "preset": {
+                        "type": "string",
+                        "enum": ["neutral", "zero_throttle", "release"],
+                        "description": "Convenient stick preset: `neutral` (all sticks at 1500 to hold altitude), `zero_throttle` (throttle 1000, others 1500), or `release` (clear override)."
+                    },
+                    "throttle": {
+                        "type": "number",
+                        "description": "Throttle PWM (1000 to 2000). 1500 is neutral/hold altitude, 1000 is zero/down, 2000 is full climb."
+                    },
+                    "roll": {
+                        "type": "number",
+                        "description": "Roll PWM (1000 to 2000). 1500 is centered neutral."
+                    },
+                    "pitch": {
+                        "type": "number",
+                        "description": "Pitch PWM (1000 to 2000). 1500 is centered neutral."
+                    },
+                    "yaw": {
+                        "type": "number",
+                        "description": "Yaw PWM (1000 to 2000). 1500 is centered neutral."
+                    },
+                    "reason": {
+                        "type": "string",
+                        "description": "Engineering rationale for this stick command (e.g. 'Set throttle to neutral 1500 to hold altitude in LOITER')."
+                    }
+                }
+            }
         },
         {
             "name": "reboot",

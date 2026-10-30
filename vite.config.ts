@@ -16,6 +16,12 @@ export default defineConfig({
     proxy: {
       "/stream": { target: "http://127.0.0.1:8767", changeOrigin: true },
       "/cmd": { target: "http://127.0.0.1:8767", changeOrigin: true },
+      "/ai": { target: "http://127.0.0.1:8767", changeOrigin: true },
+      "/app": { target: "http://127.0.0.1:8767", changeOrigin: true },
+      "/tlog": { target: "http://127.0.0.1:8767", changeOrigin: true },
+      "/open": { target: "http://127.0.0.1:8767", changeOrigin: true },
+      "/ports": { target: "http://127.0.0.1:8767", changeOrigin: true },
+      "/logs": { target: "http://127.0.0.1:8767", changeOrigin: true },
     },
   },
   build: {

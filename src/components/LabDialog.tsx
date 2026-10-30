@@ -4,6 +4,7 @@ import { ai, type AiAccount, type AiStatus } from "../assistant/api";
 import { openExternal } from "../lib/open";
 import { APP_HTTP } from "../mav/link";
 import { PLOT_SPANS, getPlotSpan, setPlotSpan, type PlotSpan } from "../mav/store";
+import { CLOUD_ACCOUNT_URL, defaultLoginUrl } from "../config";
 
 const KEY_PAGES: Record<string, string> = {
   gemini: "https://aistudio.google.com/apikey",
@@ -25,6 +26,7 @@ function checkNote(status: string): string {
   if (status === "network unavailable") return "The provider did not answer.";
   return status || "The provider did not answer.";
 }
+
 
 export type AppRelease = {
   current: string;
@@ -56,7 +58,7 @@ export function LabDialog({
   const [account, setAccount] = useState<AiAccount | null>(null);
   const [ownKey, setOwnKey] = useState(false);
   const [savedProvider, setSavedProvider] = useState("");
-  const [loginUrl, setLoginUrl] = useState("");
+  const [loginUrl, setLoginUrl] = useState(defaultLoginUrl);
   const [span, setSpan] = useState<PlotSpan>(getPlotSpan);
   const [tlogOn, setTlogOn] = useState(false);
   const [tlogPath, setTlogPath] = useState("");
@@ -253,12 +255,12 @@ export function LabDialog({
                   {account?.signed_in ? (
                     <a
                       className="cabinet-link"
-                      href="https://arduloops-api.firebaseapp.com/account"
+                      href={CLOUD_ACCOUNT_URL}
                       onClick={(ev) => {
                         ev.preventDefault();
                         void ai.cabinet()
                           .then((res) => openExternal(res.url))
-                          .catch(() => openExternal("https://arduloops-api.firebaseapp.com/account"));
+                          .catch(() => openExternal(CLOUD_ACCOUNT_URL));
                       }}
                     >
                       {t("ArduLoops Cloud")}
@@ -272,20 +274,14 @@ export function LabDialog({
                 ) : (
                   <a
                     className="google-signin"
-                    href={loginUrl || "#"}
+                    href={loginUrl || defaultLoginUrl()}
                     target="_blank"
                     rel="noopener noreferrer"
                     onClick={(ev) => {
+                      ev.preventDefault();
                       setAiState(t("Complete sign-in in the browser."));
-                      if (!loginUrl) {
-                        ev.preventDefault();
-                        void ai.loginUrl().then((res) => {
-                          if (res.url) {
-                            setLoginUrl(res.url);
-                            openExternal(res.url);
-                          }
-                        }).catch((err: Error) => setAiState(err.message));
-                      }
+                      const target = loginUrl || defaultLoginUrl();
+                      openExternal(target);
                     }}
                   >
                     <GoogleMark />

@@ -17,6 +17,7 @@ use mavlink::ardupilotmega::{
     SIM_STATE_DATA, SIMSTATE_DATA, STATUSTEXT_DATA, VFR_HUD_DATA,
 };
 use mavlink::{MavConnection, MavHeader};
+use num_traits::FromPrimitive;
 use serde::{Deserialize, Serialize};
 
 use crate::sitl::{SitlCtl, SitlOpts};

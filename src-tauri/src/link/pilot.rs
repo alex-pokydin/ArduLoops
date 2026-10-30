@@ -139,7 +139,7 @@ fn send_rc(conn: &dyn MavConnection<MavMessage>, st: &LinkState) {
         roll = st.rc.roll;
         pitch = st.rc.pitch;
         yaw = st.rc.yaw;
-        thr = if st.rc.thr > 0 { st.rc.thr } else { 0 };
+        thr = if st.rc.thr >= 800 && st.rc.thr <= 2200 { st.rc.thr } else { 1500 };
     } else if hover {
         thr = st.rc.thr;
     }

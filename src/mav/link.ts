@@ -1,8 +1,10 @@
+import { APP_HTTP } from "../config";
+
 export const DEFAULT_LINK = "tcpout:127.0.0.1:5763";
 /** In-app SITL `--serial0 tcp:5770` (no MAVProxy). */
 export const SITL_LINK = "tcpout:127.0.0.1:5770";
-/** Local MAVLink HTTP (browser and desktop). */
-export const APP_HTTP = "http://127.0.0.1:8767";
+/** Local MAVLink HTTP (browser and desktop). Re-exported from central config. */
+export { APP_HTTP };
 const KEY = "arduloops.link";
 const HIST_KEY = "arduloops.links";
 const HIST_MAX = 12;

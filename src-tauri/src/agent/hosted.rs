@@ -5,6 +5,12 @@ use std::io::Write;
 use futures_util::StreamExt;
 use genai::chat::ToolCall;
 
+pub const DEFAULT_AUTH_ORIGIN: &str = "https://arduloops-api.firebaseapp.com";
+pub const DEFAULT_HOSTED_API: &str = "https://api-qm4zps6yqa-ew.a.run.app";
+pub const LOCAL_DEV_API: &str = "http://127.0.0.1:8788";
+pub const AUTH_CALLBACK_MOBILE: &str = "arduloops://auth";
+pub const AUTH_CALLBACK_DESKTOP: &str = "http://127.0.0.1:8767/auth/callback";
+
 struct Session {
     refresh_token: String,
     id_token: String,
@@ -20,9 +26,9 @@ fn api_base() -> String {
     // Hosting login posts the handoff to Cloud Run. A local ARDULOOPS_API is only
     // paired with a local cabinet (ARDULOOPS_AUTH_ORIGIN on 127.0.0.1).
     if local_host(&auth_origin()) {
-        return std::env::var("ARDULOOPS_API").unwrap_or_else(|_| "http://127.0.0.1:8788".into());
+        return std::env::var("ARDULOOPS_API").unwrap_or_else(|_| LOCAL_DEV_API.into());
     }
-    std::env::var("ARDULOOPS_HOSTED_API").unwrap_or_else(|_| "https://api-qm4zps6yqa-ew.a.run.app".into())
+    std::env::var("ARDULOOPS_HOSTED_API").unwrap_or_else(|_| DEFAULT_HOSTED_API.into())
 }
 
 fn session_path() -> std::path::PathBuf {
@@ -76,8 +82,10 @@ fn session_id_token() -> Result<String, String> {
         &json!({ "refresh_token": session.refresh_token }),
     ) {
         Ok(value) => value,
-        Err(_) => {
-            clear_session();
+        Err(err) => {
+            if err.contains("401") || err.contains("Sign in required") {
+                clear_session();
+            }
             return Err("Sign in required.".into());
         }
     };
@@ -160,7 +168,11 @@ pub fn finish_login(nonce: &str) -> String {
 fn nonce_from_auth_url(raw: &str) -> Option<&str> {
     let url = raw.split('#').next()?;
     let (base, query) = url.split_once('?')?;
-    if base != "arduloops://auth" && base != "arduloops://auth/" {
+    if base != "arduloops://auth"
+        && base != "arduloops://auth/"
+        && base != "intent://auth"
+        && base != "intent://auth/"
+    {
         return None;
     }
     query.split('&').find_map(|pair| {
@@ -181,6 +193,10 @@ mod auth_url {
     fn a_mobile_return_carries_the_nonce() {
         assert_eq!(super::nonce_from_auth_url("arduloops://auth?nonce=deadbeef"), Some("deadbeef"));
         assert_eq!(super::nonce_from_auth_url("arduloops://auth/?nonce=deadbeef"), Some("deadbeef"));
+        assert_eq!(
+            super::nonce_from_auth_url("intent://auth?nonce=deadbeef#Intent;scheme=arduloops;package=com.iampm.arduloops;end"),
+            Some("deadbeef")
+        );
         assert_eq!(super::nonce_from_auth_url("http://127.0.0.1:8767/auth/callback?nonce=deadbeef"), None);
     }
 }
@@ -230,7 +246,7 @@ fn claim_session(nonce: &str) -> Result<String, String> {
     }
     save_session(&json!({
         "refresh_token": value["refresh_token"].as_str().unwrap_or(""),
-        "id_token": "",
+        "id_token": value["id_token"].as_str().unwrap_or(""),
         "email": value["email"].as_str().unwrap_or(""),
         "uid": value["uid"].as_str().unwrap_or(""),
         "plan": value["plan"].as_str().unwrap_or("free"),
@@ -282,14 +298,14 @@ pub fn account_status() -> Value {
 
 fn auth_origin() -> String {
     std::env::var("ARDULOOPS_AUTH_ORIGIN")
-        .unwrap_or_else(|_| "https://arduloops-api.firebaseapp.com".into())
+        .unwrap_or_else(|_| DEFAULT_AUTH_ORIGIN.into())
 }
 
 fn login_return() -> &'static str {
     if cfg!(any(target_os = "android", target_os = "ios")) {
-        "arduloops://auth"
+        AUTH_CALLBACK_MOBILE
     } else {
-        "http://127.0.0.1:8767/auth/callback"
+        AUTH_CALLBACK_DESKTOP
     }
 }
 

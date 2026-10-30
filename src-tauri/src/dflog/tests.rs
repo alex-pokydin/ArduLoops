@@ -1029,4 +1029,281 @@ mod tests {
         let missing = chart_bytes(&buf, &json!({ "axes": [] }));
         assert_eq!(missing["ok"], json!(false));
     }
+
+    #[test]
+    fn wmm_calculates_expected_earth_field() {
+        // Kyiv, Ukraine: lat 50.45, lon 30.52
+        let ef = expected_earth_field(50.45, 30.52).expect("expected earth field in range");
+        let total_intensity = (ef[0] * ef[0] + ef[1] * ef[1] + ef[2] * ef[2]).sqrt();
+        assert!(total_intensity > 450.0 && total_intensity < 550.0, "{total_intensity}");
+        assert!(ef[0] > 150.0, "North component: {}", ef[0]);
+        assert!(ef[2] > 400.0, "Down component: {}", ef[2]);
+    }
+
+    #[test]
+    fn quaternion_rotates_vectors_and_interpolates() {
+        // Test YAW_90: vector [1, 0, 0] rotated by YAW_90 becomes [0, 1, 0]
+        let q_yaw90 = quaternion_from_rotation(2).unwrap();
+        let rotated = quaternion_rotate(q_yaw90, [1.0, 0.0, 0.0]);
+        assert!((rotated[0]).abs() < 1e-6);
+        assert!((rotated[1] - 1.0).abs() < 1e-6);
+        assert!((rotated[2]).abs() < 1e-6);
+
+        // Test SLERP at t = 0.5
+        let q_none = quaternion_from_rotation(0).unwrap();
+        let q_half = quaternion_slerp(q_none, q_yaw90, 0.5);
+        let q_yaw45 = quaternion_from_rotation(1).unwrap();
+        for i in 0..4 {
+            assert!((q_half[i] - q_yaw45[i]).abs() < 1e-4, "idx {i}: {} vs {}", q_half[i], q_yaw45[i]);
+        }
+    }
+
+    #[test]
+    fn linear_solver_and_iron_inversion_solve_accurately() {
+        // 3x3 diagonal system
+        let a = [
+            [2.0, 0.0, 0.0],
+            [0.0, 3.0, 0.0],
+            [0.0, 0.0, 4.0],
+        ];
+        let b = [4.0, 9.0, 16.0];
+        let sol = solve_linear_system(a, b).unwrap();
+        assert!((sol[0] - 2.0).abs() < 1e-9);
+        assert!((sol[1] - 3.0).abs() < 1e-9);
+        assert!((sol[2] - 4.0).abs() < 1e-9);
+
+        // Symmetric 3x3 inversion
+        let dia = [1.0, 1.0, 1.0];
+        let odi = [0.0, 0.0, 0.0];
+        let inv = invert_symmetric_3x3(dia, odi).unwrap();
+        assert!((inv[0][0] - 1.0).abs() < 1e-9);
+        assert!((inv[1][1] - 1.0).abs() < 1e-9);
+        assert!((inv[2][2] - 1.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn magfit_fits_synthetic_log_compass_parameters() {
+        let mut buf = Vec::new();
+        push_fmt(&mut buf, 140, "PARM", "QNf", "TimeUS,Name,Value");
+        push_fmt(&mut buf, 150, "AHR2", "Qfff", "TimeUS,Roll,Pitch,Yaw");
+        push_fmt(&mut buf, 160, "MAG", "QBffffff", "TimeUS,I,MagX,MagY,MagZ,OfsX,OfsY,OfsZ");
+
+        let push_parm = |buf: &mut Vec<u8>, name: &str, val: f32| {
+            buf.extend_from_slice(&[HEAD1, HEAD2, 140]);
+            buf.extend_from_slice(&0u64.to_le_bytes());
+            let mut name_b = [0u8; 16];
+            name_b[..name.len()].copy_from_slice(name.as_bytes());
+            buf.extend_from_slice(&name_b);
+            buf.extend_from_slice(&val.to_le_bytes());
+        };
+
+        push_parm(&mut buf, "AHRS_ORIGIN_LAT", 50.45);
+        push_parm(&mut buf, "AHRS_ORIGIN_LON", 30.52);
+        push_parm(&mut buf, "COMPASS_OFS_X", 0.0);
+        push_parm(&mut buf, "COMPASS_OFS_Y", 0.0);
+        push_parm(&mut buf, "COMPASS_OFS_Z", 0.0);
+        push_parm(&mut buf, "COMPASS_DIA_X", 1.0);
+        push_parm(&mut buf, "COMPASS_DIA_Y", 1.0);
+        push_parm(&mut buf, "COMPASS_DIA_Z", 1.0);
+        push_parm(&mut buf, "COMPASS_SCALE", 1.0);
+        push_parm(&mut buf, "COMPASS_ORIENT", 0.0);
+
+        let ef = expected_earth_field(50.45, 30.52).unwrap();
+        let true_ofs = [45.0, -35.0, 25.0];
+
+        for i in 0..72 {
+            let t_us = (i + 1) as u64 * 100_000;
+            let yaw_deg = (i as f64 * 5.0).to_radians();
+            let roll_deg = ((i as f64 * 0.2).sin() * 10.0).to_radians();
+            let pitch_deg = ((i as f64 * 0.3).cos() * 8.0).to_radians();
+
+            buf.extend_from_slice(&[HEAD1, HEAD2, 150]);
+            buf.extend_from_slice(&t_us.to_le_bytes());
+            buf.extend_from_slice(&(roll_deg.to_degrees() as f32).to_le_bytes());
+            buf.extend_from_slice(&(pitch_deg.to_degrees() as f32).to_le_bytes());
+            buf.extend_from_slice(&(yaw_deg.to_degrees() as f32).to_le_bytes());
+
+            let q = quaternion_from_euler(roll_deg, pitch_deg, yaw_deg);
+            let q_inv = [q[0], -q[1], -q[2], -q[3]];
+            let e_body = quaternion_rotate(q_inv, ef);
+
+            let measured = [
+                e_body[0] + true_ofs[0],
+                e_body[1] + true_ofs[1],
+                e_body[2] + true_ofs[2],
+            ];
+
+            buf.extend_from_slice(&[HEAD1, HEAD2, 160]);
+            buf.extend_from_slice(&t_us.to_le_bytes());
+            buf.push(0);
+            buf.extend_from_slice(&(measured[0] as f32).to_le_bytes());
+            buf.extend_from_slice(&(measured[1] as f32).to_le_bytes());
+            buf.extend_from_slice(&(measured[2] as f32).to_le_bytes());
+            buf.extend_from_slice(&0.0f32.to_le_bytes());
+            buf.extend_from_slice(&0.0f32.to_le_bytes());
+            buf.extend_from_slice(&0.0f32.to_le_bytes());
+        }
+
+        let out = magfit_bytes(&buf, 1, "iron", "none", true, None, None, None, None);
+        assert_eq!(out["ok"], json!(true), "{out}");
+        assert_eq!(out["compass"], json!(1));
+        assert!(out["reduction_pct"].as_f64().unwrap() > 90.0, "reduction was: {}", out["reduction_pct"]);
+        assert_eq!(out["orientation"]["matches"], json!(true));
+
+        let p = &out["params"];
+        let ofs_x = p["COMPASS_OFS_X"].as_f64().unwrap();
+        let ofs_y = p["COMPASS_OFS_Y"].as_f64().unwrap();
+        let ofs_z = p["COMPASS_OFS_Z"].as_f64().unwrap();
+        assert!((ofs_x + true_ofs[0]).abs() < 1.0, "ofs_x: {ofs_x}");
+        assert!((ofs_y + true_ofs[1]).abs() < 1.0, "ofs_y: {ofs_y}");
+        assert!((ofs_z + true_ofs[2]).abs() < 1.0, "ofs_z: {ofs_z}");
+    }
+
+    #[test]
+    fn magfit_fails_without_coords_and_succeeds_with_override() {
+        let mut buf = Vec::new();
+        push_fmt(&mut buf, 140, "PARM", "QNf", "TimeUS,Name,Value");
+        push_fmt(&mut buf, 150, "AHR2", "Qfff", "TimeUS,Roll,Pitch,Yaw");
+        push_fmt(&mut buf, 160, "MAG", "QBffffff", "TimeUS,I,MagX,MagY,MagZ,OfsX,OfsY,OfsZ");
+
+        // Notice: NO AHRS_ORIGIN_LAT / LON, and NO ORGN / GPS messages in buf.
+        let earth = expected_earth_field(50.45, 30.52).unwrap();
+        for i in 0..100 {
+            let roll = (i as f64 * 3.6).to_radians();
+            let pitch = ((i as f64 * 2.5).sin() * 45.0).to_radians();
+            let yaw = (i as f64 * 7.2).to_radians();
+            let q = quaternion_from_euler(roll, pitch, yaw);
+            let q_inv = [q[0], -q[1], -q[2], -q[3]];
+            let expected_body = quaternion_rotate(q_inv, earth);
+
+            // AHR2
+            buf.extend_from_slice(&[HEAD1, HEAD2, 150]);
+            buf.extend_from_slice(&(i as u64 * 20_000).to_le_bytes());
+            buf.extend_from_slice(&(roll.to_degrees() as f32).to_le_bytes());
+            buf.extend_from_slice(&(pitch.to_degrees() as f32).to_le_bytes());
+            buf.extend_from_slice(&(yaw.to_degrees() as f32).to_le_bytes());
+
+            // MAG
+            buf.extend_from_slice(&[HEAD1, HEAD2, 160]);
+            buf.extend_from_slice(&(i as u64 * 20_000).to_le_bytes());
+            buf.push(0); // compass 1
+            buf.extend_from_slice(&(expected_body[0] as f32).to_le_bytes());
+            buf.extend_from_slice(&(expected_body[1] as f32).to_le_bytes());
+            buf.extend_from_slice(&(expected_body[2] as f32).to_le_bytes());
+            buf.extend_from_slice(&0.0f32.to_le_bytes());
+            buf.extend_from_slice(&0.0f32.to_le_bytes());
+            buf.extend_from_slice(&0.0f32.to_le_bytes());
+        }
+
+        // Without coords: must fail with informative error
+        let fail_res = magfit_bytes(&buf, 1, "iron", "none", true, None, None, None, None);
+        assert_eq!(fail_res["ok"], json!(false));
+        assert!(fail_res["error"].as_str().unwrap().contains("No GPS or origin coordinates found"));
+
+        // With manual lat and lon: succeeds
+        let ok_res = magfit_bytes(&buf, 1, "iron", "none", true, None, None, Some(50.45), Some(30.52));
+        assert_eq!(ok_res["ok"], json!(true), "{ok_res}");
+        assert_eq!(ok_res["coordinates"]["source"], json!("manual"));
+        assert_eq!(ok_res["coordinates"]["lat"], json!(50.45));
+        assert_eq!(ok_res["coordinates"]["lon"], json!(30.52));
+    }
+
+    #[test]
+    fn magfit_runs_on_real_iampm_log_if_present() {
+        let path = std::path::Path::new(r"D:\PROJ\IAMPM\V2\2.2 Калібрування і розміщення сенсорів\2.2-A magfit-offsets (t137247)\01_p06_sample_log.bin");
+        if !path.exists() {
+            return;
+        }
+        let bytes = std::fs::read(path).unwrap();
+        let res = magfit_bytes(&bytes, 1, "iron", "none", true, None, None, None, None);
+        println!("REAL LOG MAGFIT RESULT: {}", serde_json::to_string_pretty(&res).unwrap());
+        assert_eq!(res["ok"], serde_json::json!(true), "{res}");
+    }
+
+    #[test]
+    fn filter_review_simulates_notch_attenuation_and_phase_delay() {
+        let (gain_center, _) = notch_response(150.0, 50.0, 1000.0, 150.0);
+        assert!(gain_center < 0.05, "Notch center gain should be deep null, was {gain_center}");
+
+        let (gain_far, _) = notch_response(150.0, 50.0, 1000.0, 30.0);
+        assert!((gain_far - 1.0).abs() < 0.25, "Passband gain should be near 1.0, was {gain_far}");
+
+        let mut spectrum = Vec::new();
+        for f in 20..400 {
+            let f_f64 = f as f64;
+            let amp = if (f_f64 - 150.0).abs() < 10.0 { 10.0 } else { 1.0 };
+            spectrum.push((f_f64, amp));
+        }
+        let sim = simulate_filter(150.0, 50.0, 1, 40.0, 1000.0, &spectrum);
+        assert!(sim.noise_attenuation_db > 10.0, "Attenuation should exceed 10 dB: {}", sim.noise_attenuation_db);
+        assert!(sim.phase_delay_at_30hz_ms < 8.0, "Phase delay at 30 Hz should be reasonable: {}", sim.phase_delay_at_30hz_ms);
+    }
+
+    #[test]
+    fn filter_review_runs_on_real_iampm_log_if_present() {
+        let path = std::path::Path::new(r"D:\PROJ\IAMPM\V2\4.3 Фільтри - harmonic notch і FFT\4.3-A harmonic-notch-throttle (t108668)\01_p07_2023-11-05 14-47-22.bin");
+        if !path.exists() {
+            return;
+        }
+        let bytes = std::fs::read(path).unwrap();
+        let res = filter_review_bytes(&bytes, None, None, None);
+        println!("REAL LOG FILTER REVIEW RESULT: {}", serde_json::to_string_pretty(&res).unwrap());
+        assert_eq!(res["ok"], json!(true), "{res}");
+        assert!(res["primary_peak_hz"].as_f64().unwrap() > 30.0);
+        assert!(res["simulation"]["proposed_attenuation_db"].as_f64().unwrap() > 0.0);
+    }
+
+    #[test]
+    fn audit_runs_on_real_iampm_log_if_present() {
+        let path = std::path::Path::new(r"D:\PROJ\IAMPM\V2\5.2 GPS і EKF failsafe\5.2-B ekf-fs-tree-crash (t140808)\01_p01_2025-11-10 23-46-15.bin");
+        if !path.exists() {
+            return;
+        }
+        let bytes = std::fs::read(path).unwrap();
+        let res = audit_bytes(&bytes);
+        println!("REAL LOG AUDIT RESULT: {}", serde_json::to_string_pretty(&res).unwrap());
+        assert_eq!(res["ok"], json!(true), "{res}");
+        assert!(res["verdict"].is_object());
+        assert!(res["health"].is_object());
+        assert!(res["health"]["score"].is_number());
+    }
+
+    #[test]
+    fn audit_detects_ekf_lane_switch_on_real_log_if_present() {
+        let path = std::path::Path::new(r"D:\PROJ\IAMPM\V2\5.1 EKF\5.1-A ekf-lane-switch-baro (t91133)\01_p01_00000155.BIN");
+        if !path.exists() {
+            return;
+        }
+        let bytes = std::fs::read(path).unwrap();
+        let res = audit_bytes(&bytes);
+        println!("REAL LOG EKF LANE SWITCH AUDIT: {}", serde_json::to_string_pretty(&res["navigation"]).unwrap());
+        assert_eq!(res["ok"], json!(true));
+        assert!(res["navigation"]["ekf_lane_switches"].as_array().map(|a| a.len()).unwrap_or(0) > 0 || res["navigation"]["ekf_errors"].as_u64().unwrap_or(0) > 0);
+    }
+
+    #[test]
+    fn motor_balance_runs_on_real_iampm_log_if_present() {
+        let path = std::path::Path::new(r"D:\PROJ\IAMPM\V2\4.1 Тюнінг коптера\4.1-A autotune-failing-notch-first (t104302)\01_p01_Autotune test 2023-07-28 18-31-23.bin");
+        if !path.exists() {
+            return;
+        }
+        let bytes = std::fs::read(path).unwrap();
+        let res = motor_balance_bytes(&bytes, None, None);
+        println!("REAL LOG MOTOR BALANCE RESULT: {}", serde_json::to_string_pretty(&res).unwrap());
+        assert_eq!(res["ok"], json!(true), "{res}");
+        assert!(res["motors"].as_array().unwrap().len() >= 4);
+    }
+
+    #[test]
+    fn pid_review_runs_on_real_iampm_log_if_present() {
+        let path = std::path::Path::new(r"D:\PROJ\IAMPM\V2\4.1 Тюнінг коптера\4.1-A autotune-failing-notch-first (t104302)\01_p01_Autotune test 2023-07-28 18-31-23.bin");
+        if !path.exists() {
+            return;
+        }
+        let bytes = std::fs::read(path).unwrap();
+        let res = pid_review_bytes(&bytes, Some("roll"), None, None);
+        println!("REAL LOG PID REVIEW RESULT: {}", serde_json::to_string_pretty(&res).unwrap());
+        assert_eq!(res["ok"], json!(true), "{res}");
+        assert!(res["metrics"]["phase_margin_deg"].as_f64().unwrap() > 0.0);
+    }
 }

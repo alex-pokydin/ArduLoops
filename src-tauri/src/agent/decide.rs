@@ -559,8 +559,30 @@ fn bench_left(c: &Connection) -> Option<Value> {
     Some(json!({"until_ms": until, "left_s": (until - now_ms) / 1000}))
 }
 
-fn safe_on(c: &Connection) -> bool {
-    bench_left(c).is_some()
+fn safe_on_for(c: &Connection, sample: &Sample) -> bool {
+    bench_left(c).is_some() || sample.is_simulator()
+}
+
+/// Stores an already-applied vehicle change (executed under safe mode or in SITL)
+/// so that the chat displays it as an applied widget instead of a silent tool call.
+fn record_applied_change(
+    c: &Connection,
+    chat: &str,
+    kind: &str,
+    title: &str,
+    old: Option<f64>,
+    new_value: f64,
+    reason: &str,
+    payload: &str,
+) {
+    if chat.is_empty() {
+        return;
+    }
+    let id = Uuid::new_v4().to_string();
+    c.execute(
+        "INSERT INTO ai_proposal (id, chat_id, status, param, old_value, new_value, reason, created_at, kind, payload) VALUES (?1,?2,'applied',?3,?4,?5,?6,?7,?8,?9)",
+        params![id, chat, title, old, new_value, reason, now(), kind, payload],
+    ).ok();
 }
 
 fn fold_identical_pending(c: &Connection, id: &str, status: &str) {
@@ -675,6 +697,14 @@ fn run_saved(kind: &str, param: &str, value: f64, payload: &str, tx: &Sender<Cmd
         "disarm" => bridge_post("/cmd", &json!({"op": "arm", "on": false}), 8),
         "reboot" => bridge_post("/cmd", &json!({"op": "reboot"}), 8),
         "erase_logs" => bridge_post("/logs/erase", &json!({"confirm": true}), 15),
+        "mav_cmd" => {
+            let cmd: Value = serde_json::from_str(payload).unwrap_or_else(|_| json!({}));
+            bridge_post("/cmd", &cmd, 15)
+        }
+        "stick" => {
+            let cmd: Value = serde_json::from_str(payload).unwrap_or_else(|_| json!({}));
+            bridge_post("/cmd", &cmd, 8)
+        }
         "script" => {
             let args: Value = serde_json::from_str(payload).unwrap_or_else(|_| json!({}));
             match args["op"].as_str().unwrap_or("") {

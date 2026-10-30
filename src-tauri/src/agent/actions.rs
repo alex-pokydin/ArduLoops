@@ -127,7 +127,8 @@ fn wizard_spec(name: &str) -> Option<&'static WizardSpec> {
     WIZARDS.iter().find(|item| item.name == name)
 }
 
-fn wizard_name_ok(name: &str) -> bool {
+#[allow(dead_code)]
+pub(crate) fn wizard_name_ok(name: &str) -> bool {
     wizard_spec(name).is_some()
 }
 
@@ -248,7 +249,7 @@ fn set_param_tool(args: &Value, sample: &Sample, c: &Connection, chat: &str) -> 
         Ok(changes) => changes,
         Err(error) => return json!({ "status": "failed", "error": error }),
     };
-    let live = safe_on(c);
+    let live = safe_on_for(c, sample);
     let book = param_book(sample);
     let mut results = Vec::new();
     for change in changes {
@@ -261,8 +262,14 @@ fn set_param_tool(args: &Value, sample: &Sample, c: &Connection, chat: &str) -> 
             results.push(hold_change(c, chat, "param", &change.name, old, change.value, &change.reason, ""));
             continue;
         }
-        audit(c, &format!("param {}", change.name), "direct write", "requested", "agent (safe_mode)");
-        results.push(send_param(&change.name, change.value));
+        let actor = if sample.is_simulator() { "agent (sitl)" } else { "agent (safe_mode)" };
+        audit(c, &format!("param {}", change.name), "direct write", "requested", actor);
+        let sent = send_param(&change.name, change.value);
+        if sent.get("status").and_then(|v| v.as_str()) == Some("applied") {
+            let old = book.values.get(&change.name).map(|seen| seen.value);
+            record_applied_change(c, chat, "param", &change.name, old, change.value, &change.reason, "");
+        }
+        results.push(sent);
     }
     if results.iter().any(|item| item.get("hold").and_then(|v| v.as_bool()) == Some(true)) {
         return json!({ "hold": true, "results": results });
@@ -399,7 +406,21 @@ fn url_query(text: &str) -> String {
 const RESULT_CAP: usize = 256_000;
 
 fn kept_whole(name: &str) -> bool {
-    matches!(name, "log_compute" | "log_query" | "log_schema" | "log_inspect" | "log_params" | "list_params" | "get_param")
+    matches!(
+        name,
+        "log_filter_review"
+            | "log_audit"
+            | "log_motor_balance"
+            | "log_pid_review"
+            | "log_magfit"
+            | "log_compute"
+            | "log_query"
+            | "log_schema"
+            | "log_inspect"
+            | "log_params"
+            | "list_params"
+            | "get_param"
+    )
 }
 
 fn fit_result(name: &str, result: Value) -> Value {
@@ -575,7 +596,8 @@ fn runs_in_parallel(name: &str, args: &Value) -> bool {
     match name {
         "set_param" | "set_mode" | "arm" | "disarm" | "reboot" | "erase_vehicle_logs" | "connect"
         | "disconnect" | "vehicle_comment" | "download_vehicle_log" | "show_live"
-        | "script_list" | "script_read" | "script_write" | "script_delete" | "script_restart" => false,
+        | "script_list" | "script_read" | "script_write" | "script_delete" | "script_restart"
+        | "mav_command" | "wait" | "rc_stick" => false,
         "firmware_build" => !matches!(args["action"].as_str(), Some("submit") | Some("status") | Some("logs") | Some("download")),
         "firmware_flash" => !matches!(args["action"].as_str(), Some("start_bootloader") | Some("prepare")),
         _ => true,

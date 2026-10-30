@@ -11,7 +11,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 pub const HTTP_ADDR: &str = "127.0.0.1:8767";
 
-const CORS: &str = "Access-Control-Allow-Origin: *\r\nAccess-Control-Allow-Headers: content-type\r\nAccess-Control-Allow-Methods: GET, POST, OPTIONS\r\n";
+const CORS: &str = "Access-Control-Allow-Origin: *\r\nAccess-Control-Allow-Headers: content-type, authorization, cache-control\r\nAccess-Control-Allow-Methods: GET, POST, OPTIONS\r\nAccess-Control-Allow-Private-Network: true\r\n";
 
 pub fn serve(addr: &str, latest: Arc<Mutex<Sample>>, tx: Sender<Cmd>) {
     let listener = match TcpListener::bind(addr) {
@@ -441,6 +441,110 @@ fn handle(stream: TcpStream, latest: Arc<Mutex<Sample>>, tx: Sender<Cmd>) -> std
                 &serde_json::to_vec(&serde_json::json!({ "error": error }))?,
             ),
         };
+    }
+    if method == "POST" && path == "/logs/magfit" {
+        let len = headers
+            .get("content-length")
+            .and_then(|v| v.parse::<usize>().ok())
+            .unwrap_or(0)
+            .min(32_768);
+        let mut body = vec![0u8; len];
+        if len > 0 {
+            reader.read_exact(&mut body)?;
+        }
+        let args = serde_json::from_slice::<serde_json::Value>(&body).unwrap_or(serde_json::json!({}));
+        let id = args.get("file").or_else(|| args.get("id")).and_then(|v| v.as_str()).unwrap_or("");
+        let compass = args.get("compass").and_then(|v| v.as_u64().map(|n| n as usize));
+        let fit_type = args.get("fit_type").and_then(|v| v.as_str());
+        let motor_comp = args.get("motor_comp").and_then(|v| v.as_str());
+        let check_orientation = args.get("check_orientation").and_then(|v| v.as_bool());
+        let start_us = args.get("start_us").and_then(|v| v.as_u64());
+        let end_us = args.get("end_us").and_then(|v| v.as_u64());
+        let lat = args.get("lat").and_then(|v| v.as_f64())
+            .or_else(|| args.get("latitude").and_then(|v| v.as_f64()));
+        let lon = args.get("lon").and_then(|v| v.as_f64())
+            .or_else(|| args.get("longitude").and_then(|v| v.as_f64()))
+            .or_else(|| args.get("lng").and_then(|v| v.as_f64()));
+        let res = crate::dflog::magfit(id, compass, fit_type, motor_comp, check_orientation, start_us, end_us, lat, lon);
+        let mut socket = reader.into_inner();
+        let bytes = serde_json::to_vec(&res)?;
+        return reply(&mut socket, 200, "application/json", &bytes);
+    }
+    if method == "POST" && path == "/logs/filter_review" {
+        let len = headers
+            .get("content-length")
+            .and_then(|v| v.parse::<usize>().ok())
+            .unwrap_or(0)
+            .min(32_768);
+        let mut body = vec![0u8; len];
+        if len > 0 {
+            reader.read_exact(&mut body)?;
+        }
+        let args = serde_json::from_slice::<serde_json::Value>(&body).unwrap_or(serde_json::json!({}));
+        let id = args.get("file").or_else(|| args.get("id")).and_then(|v| v.as_str()).unwrap_or("");
+        let axis = args.get("axis").and_then(|v| v.as_str());
+        let start_us = args.get("start_us").and_then(|v| v.as_u64());
+        let end_us = args.get("end_us").and_then(|v| v.as_u64());
+        let res = crate::dflog::filter_review(id, axis, start_us, end_us);
+        let mut socket = reader.into_inner();
+        let bytes = serde_json::to_vec(&res)?;
+        return reply(&mut socket, 200, "application/json", &bytes);
+    }
+    if method == "POST" && path == "/logs/audit" {
+        let len = headers
+            .get("content-length")
+            .and_then(|v| v.parse::<usize>().ok())
+            .unwrap_or(0)
+            .min(32_768);
+        let mut body = vec![0u8; len];
+        if len > 0 {
+            reader.read_exact(&mut body)?;
+        }
+        let args = serde_json::from_slice::<serde_json::Value>(&body).unwrap_or(serde_json::json!({}));
+        let id = args.get("file").or_else(|| args.get("id")).and_then(|v| v.as_str()).unwrap_or("");
+        let res = crate::dflog::audit(id);
+        let mut socket = reader.into_inner();
+        let bytes = serde_json::to_vec(&res)?;
+        return reply(&mut socket, 200, "application/json", &bytes);
+    }
+    if method == "POST" && path == "/logs/motor_balance" {
+        let len = headers
+            .get("content-length")
+            .and_then(|v| v.parse::<usize>().ok())
+            .unwrap_or(0)
+            .min(32_768);
+        let mut body = vec![0u8; len];
+        if len > 0 {
+            reader.read_exact(&mut body)?;
+        }
+        let args = serde_json::from_slice::<serde_json::Value>(&body).unwrap_or(serde_json::json!({}));
+        let id = args.get("file").or_else(|| args.get("id")).and_then(|v| v.as_str()).unwrap_or("");
+        let start_us = args.get("start_us").and_then(|v| v.as_u64());
+        let end_us = args.get("end_us").and_then(|v| v.as_u64());
+        let res = crate::dflog::motor_balance(id, start_us, end_us);
+        let mut socket = reader.into_inner();
+        let bytes = serde_json::to_vec(&res)?;
+        return reply(&mut socket, 200, "application/json", &bytes);
+    }
+    if method == "POST" && path == "/logs/pid_review" {
+        let len = headers
+            .get("content-length")
+            .and_then(|v| v.parse::<usize>().ok())
+            .unwrap_or(0)
+            .min(32_768);
+        let mut body = vec![0u8; len];
+        if len > 0 {
+            reader.read_exact(&mut body)?;
+        }
+        let args = serde_json::from_slice::<serde_json::Value>(&body).unwrap_or(serde_json::json!({}));
+        let id = args.get("file").or_else(|| args.get("id")).and_then(|v| v.as_str()).unwrap_or("");
+        let axis = args.get("axis").and_then(|v| v.as_str());
+        let start_us = args.get("start_us").and_then(|v| v.as_u64());
+        let end_us = args.get("end_us").and_then(|v| v.as_u64());
+        let res = crate::dflog::pid_review(id, axis, start_us, end_us);
+        let mut socket = reader.into_inner();
+        let bytes = serde_json::to_vec(&res)?;
+        return reply(&mut socket, 200, "application/json", &bytes);
     }
     if method == "POST" && path == "/logs/erase" {
         let len = headers

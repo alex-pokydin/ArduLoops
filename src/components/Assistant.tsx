@@ -17,6 +17,7 @@ import { getLang, useT } from "../i18n/i18n";
 import { getLuaQuote, quoteLabel, setLuaQuote, subscribeLuaQuote, type LuaQuote } from "../luaQuote";
 import { subscribe } from "../mav/store";
 import { useVehicle, viewSample } from "../mav/view";
+import { isSitl } from "../mav/sim";
 import type { Sample } from "../mav/types";
 
 const LuaSource = lazy(() => import("./LuaSource").then((mod) => ({ default: mod.LuaSource })));
@@ -47,9 +48,10 @@ type LinkFace = {
   boot_uid: string;
   board_name: string;
   log_download?: Sample["log_download"];
+  sitl?: boolean;
 };
 
-let linkFaceCache: LinkFace = { ok: false, frame: "", mode: "", armed: false, boot_uid: "", board_name: "" };
+let linkFaceCache: LinkFace = { ok: false, frame: "", mode: "", armed: false, boot_uid: "", board_name: "", sitl: false };
 let linkFaceVehicle = "";
 
 type PendingOut = { role: "user" | "steer"; body: string; at: number; attach: string; quote: string; images: string[] };
@@ -107,6 +109,7 @@ function linkFace(vehicle: "copter" | "plane"): LinkFace {
   const boot_uid = sample.boot_uid || "";
   const board_name = sample.board_name || "";
   const armed = !!sample.armed;
+  const sitl = isSitl(sample.params) || !!sample.sitl_running;
   if (
     linkFaceVehicle === vehicle
     && linkFaceCache.ok === sample.ok
@@ -115,12 +118,13 @@ function linkFace(vehicle: "copter" | "plane"): LinkFace {
     && linkFaceCache.armed === armed
     && linkFaceCache.boot_uid === boot_uid
     && linkFaceCache.board_name === board_name
+    && linkFaceCache.sitl === sitl
     && sameFlow(linkFaceCache.log_download, sample.log_download)
   ) {
     return linkFaceCache;
   }
   linkFaceVehicle = vehicle;
-  linkFaceCache = { ok: sample.ok, frame, mode, armed, boot_uid, board_name, log_download: sample.log_download };
+  linkFaceCache = { ok: sample.ok, frame, mode, armed, boot_uid, board_name, sitl, log_download: sample.log_download };
   return linkFaceCache;
 }
 
@@ -201,6 +205,9 @@ function waitTitle(tr: typeof import("../i18n/i18n").t, p: Proposal): string {
   if (p.kind === "connect") return tr("Connecting");
   if (p.kind === "disconnect") return tr("Disconnecting");
   if (p.kind === "reboot") return tr("Rebooting");
+  if (p.kind === "mav_cmd") return tr("Executing {name}", { name: p.param });
+  if (p.kind === "stick") return tr("Setting sticks");
+  if (p.kind === "wait") return tr("Waiting");
   return proposalTitle(tr, p);
 }
 
@@ -243,6 +250,9 @@ function cardKind(items: Proposal[]): string {
 function cardTitle(tr: typeof import("../i18n/i18n").t, items: Proposal[]): string {
   const live = items.find((item) => item.status === "waiting");
   if (items.length === 1) return live ? waitTitle(tr, items[0]) : proposalTitle(tr, items[0]);
+  if (cardKind(items) === "mav_cmd") return tr("Execute commands");
+  if (cardKind(items) === "stick") return tr("Virtual sticks");
+  if (cardKind(items) === "wait") return live ? tr("Waiting") : tr("Wait");
   if (cardKind(items) !== "param" && cardKind(items) !== "mixed") return proposalTitle(tr, items[0]);
   return tr("Suggested changes");
 }
@@ -283,7 +293,7 @@ function changeLine(tr: typeof import("../i18n/i18n").t, item: Proposal): string
     return tr("Write {name} · {bytes} B", { name: item.param, bytes: script.body.length });
   }
   if (!item.kind || item.kind === "param") return `${item.param} = ${fmt(item.new)} (${tr("was {value}", { value: fmt(item.old) })})`;
-  if (item.kind === "mode") return item.param;
+  if (item.kind === "mode" || item.kind === "mav_cmd" || item.kind === "stick" || item.kind === "wait") return item.param;
   const payload = item.payload?.trim() ?? "";
   if (payload && !payload.startsWith("{")) return payload;
   if (payload.startsWith("{")) {
@@ -317,6 +327,26 @@ function ProposalIcon({ kind }: { kind: string }) {
   }
   if (kind === "mode") {
     return <svg {...common}><path d="M8 2.2 10.4 10.2 8 8.6 5.6 10.2z" fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinejoin="round" /></svg>;
+  }
+  if (kind === "mav_cmd") {
+    return <svg {...common}><path d="M2.5 7.5 13.5 2.5 8.5 13.5 7.2 8.8z" fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinejoin="round" strokeLinecap="round" /></svg>;
+  }
+  if (kind === "stick") {
+    return (
+      <svg {...common}>
+        <circle cx="8" cy="8" r="5.6" fill="none" stroke="currentColor" strokeWidth="1.4" />
+        <path d="M8 2.4v11.2M2.4 8h11.2" fill="none" stroke="currentColor" strokeWidth="1" strokeDasharray="1.5 1.5" />
+        <circle cx="8" cy="8" r="2.2" fill="currentColor" />
+      </svg>
+    );
+  }
+  if (kind === "wait") {
+    return (
+      <svg {...common}>
+        <circle cx="8" cy="8" r="5.6" fill="none" stroke="currentColor" strokeWidth="1.4" />
+        <path d="M8 4.6v3.4l2.2 1.4" fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round" />
+      </svg>
+    );
   }
   if (kind === "erase_logs") {
     return <svg {...common}><path d="M4 4.2h8M6.2 4.2V3h3.6v1.2M5.2 6v6.2h5.6V6" fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round" /></svg>;
@@ -1212,7 +1242,7 @@ function ChatPane({
   onImages: (update: (prev: string[]) => string[]) => void;
   onImported: (id: string) => void;
   onContinue: () => void;
-  drone: { boot_uid?: string; board_name?: string; frame?: string; ok?: boolean };
+  drone: LinkFace;
   live: LiveTurn | null;
   flow?: Sample["log_download"];
 }) {
@@ -1598,6 +1628,10 @@ function ChatPane({
                 <span className="ai-safe on">{t("Safe mode · {m}:{s}", { m: Math.floor(bench.left_s / 60), s: String(bench.left_s % 60).padStart(2, "0") })}</span>
                 <button type="button" className="ai-estop" onClick={onStop}>{t("Emergency stop")}</button>
               </div>
+            ) : drone.sitl ? (
+              <div className="ai-safe-top">
+                <span className="ai-safe on">{t("Safe mode · SITL")}</span>
+              </div>
             ) : null}
             {note ? (
               <p className="ai-error">
@@ -1795,7 +1829,7 @@ function ChatPane({
                   </div>
                 ) : null}
               </div>
-              {bench ? null : (
+              {bench || drone.sitl ? null : (
                 <button type="button" className="ai-safe" onClick={onBench}>{t("Safe mode")}</button>
               )}
               {models.length ? (

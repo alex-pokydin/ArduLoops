@@ -646,7 +646,8 @@ fn complete_turn(
     // A follow-up without a new log keeps the log this chat already has.
     let earlier = if log_id.is_empty() { latest_chat_log(c, chat) } else { None };
     let log_id = earlier.as_deref().unwrap_or(log_id);
-    let system = system_prompt(lang, sample, bench_left(c).is_some(), log_id, earlier.is_some());
+    let bench = bench_left(c).is_some() || sample.is_simulator();
+    let system = system_prompt(lang, sample, bench, log_id, earlier.is_some());
     let prompt = conversation_prompt(&history, log_id, earlier.is_some());
     let images = turn_images(&body["images"]);
     let reply = converse(&provider, &model, &key, reasoning, &system, lang, &prompt, images, sample, c, tx, chat, log_id);

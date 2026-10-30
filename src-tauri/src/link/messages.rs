@@ -454,6 +454,38 @@ fn apply_cmd(
                 );
             }
         }
+        Cmd::CommandLong {
+            command,
+            param1,
+            param2,
+            param3,
+            param4,
+            param5,
+            param6,
+            param7,
+        } => {
+            if command == 245 && (param1.round() as i32) == 2 {
+                return;
+            }
+            if let Some(mav_cmd) = MavCmd::from_u32(command as u32) {
+                send_msg(
+                    conn,
+                    &MavMessage::COMMAND_LONG(COMMAND_LONG_DATA {
+                        param1,
+                        param2,
+                        param3,
+                        param4,
+                        param5,
+                        param6,
+                        param7,
+                        command: mav_cmd,
+                        target_system: st.target_system,
+                        target_component: st.target_component,
+                        confirmation: 0,
+                    }),
+                );
+            }
+        }
         Cmd::Arm { on } => {
             // GCS disarm is refused while Copter !land_complete / Plane is_flying.
             // 21196 is ArduPilot's force-disarm magic (GCS.h magic_force_arm_disarm_value).
@@ -475,12 +507,14 @@ fn apply_cmd(
             }
         }
         Cmd::Hover => {
-            st.rc.thr = 1550;
+            st.virtual_stick = true;
+            st.rc.thr = 1500;
             st.rc.roll = 1500;
             st.rc.pitch = 1500;
             st.rc.yaw = 1500;
         }
         Cmd::Land => {
+            st.virtual_stick = true;
             st.rc.thr = 1100;
             st.rc.roll = 1500;
             st.rc.pitch = 1500;
@@ -496,12 +530,18 @@ fn apply_cmd(
             st.rc.roll = pwm(roll, 1500);
             st.rc.pitch = pwm(pitch, 1500);
             st.rc.yaw = pwm(yaw, 1500);
-            st.rc.thr = if thr > 0.0 { thr.round() as i32 } else { 0 };
+            st.rc.thr = if thr >= 800.0 && thr <= 2200.0 {
+                thr.round() as i32
+            } else if thr == 0.0 {
+                1500
+            } else {
+                pwm(thr, 1500)
+            };
         }
         Cmd::Release => {
             st.virtual_stick = false;
             st.pulse_until = None;
-            st.rc.thr = 0;
+            st.rc.thr = 1500;
             st.rc.roll = 1500;
             st.rc.pitch = 1500;
             st.rc.yaw = 1500;

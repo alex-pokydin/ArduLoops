@@ -8,6 +8,7 @@
     "tauri": "node scripts/with-cargo.mjs tauri",
     "cli": "node scripts/arduloops-cli.mjs",
     "i18n": "node scripts/check-i18n.mjs",
+    "check:upstream": "node scripts/check-upstream.mjs",
     "web": "vite",
     "web:build": "tsc --noEmit && vite build"
   },

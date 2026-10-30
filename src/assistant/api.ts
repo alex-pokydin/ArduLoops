@@ -100,6 +100,55 @@ export const ai = {
       body: JSON.stringify({ changes }),
     }),
   logs: () => json<{ logs: LocalLog[] }>("/ai/logs"),
+  magfit: (body: {
+    file: string;
+    compass?: number;
+    fit_type?: "offsets" | "scale" | "iron";
+    motor_comp?: "none" | "throttle" | "current";
+    check_orientation?: boolean;
+    start_us?: number;
+    end_us?: number;
+    lat?: number;
+    lon?: number;
+  }) =>
+    json<{
+      ok: boolean;
+      compass?: number;
+      fit_type?: string;
+      samples?: number;
+      coordinates?: { lat: number; lon: number; source: string };
+      coverage_pct?: number;
+      orig_error_mgauss?: number;
+      fit_error_mgauss?: number;
+      reduction_pct?: number;
+      orientation?: { logged?: string; best_fit?: string; matches?: boolean; cost_ratio?: number };
+      params?: Record<string, number>;
+      error?: string;
+      note?: string;
+    }>("/logs/magfit", {
+      method: "POST",
+      body: JSON.stringify(body),
+    }),
+  filterReview: (body: { file: string; axis?: "all" | "roll" | "pitch" | "yaw"; start_us?: number; end_us?: number }) =>
+    json<Record<string, unknown>>("/logs/filter_review", {
+      method: "POST",
+      body: JSON.stringify(body),
+    }),
+  logAudit: (body: { file: string }) =>
+    json<Record<string, unknown>>("/logs/audit", {
+      method: "POST",
+      body: JSON.stringify(body),
+    }),
+  motorBalance: (body: { file: string; start_us?: number; end_us?: number }) =>
+    json<Record<string, unknown>>("/logs/motor_balance", {
+      method: "POST",
+      body: JSON.stringify(body),
+    }),
+  pidReview: (body: { file: string; axis?: "roll" | "pitch" | "yaw"; start_us?: number; end_us?: number }) =>
+    json<Record<string, unknown>>("/logs/pid_review", {
+      method: "POST",
+      body: JSON.stringify(body),
+    }),
   /** XHR, because fetch does not report upload progress. `sent` reaches `total` before the bridge checks the file. */
   importLog: (file: File, onProgress?: (sent: number, total: number) => void) =>
     new Promise<{ id: string }>((resolve, reject) => {

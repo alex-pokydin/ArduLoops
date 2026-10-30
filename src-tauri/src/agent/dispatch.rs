@@ -80,6 +80,528 @@ fn param_rows(book: &ParamBook, names: &[String]) -> Value {
     })
 }
 
+struct MavCmdSpec {
+    command_id: u16,
+    title: String,
+    param7: f32,
+    reason: String,
+    payload: Value,
+}
+
+fn mav_cmd_name(id: u16) -> &'static str {
+    match id {
+        16 => "Waypoint",
+        17 => "Loiter",
+        18 => "Loiter turns",
+        19 => "Loiter time",
+        20 => "Return to launch",
+        21 => "Land",
+        22 => "Takeoff",
+        82 => "Spline waypoint",
+        176 => "Set mode",
+        177 => "Jump",
+        178 => "Change speed",
+        179 => "Set home",
+        181 => "Set relay",
+        182 => "Repeat relay",
+        183 => "Set servo",
+        184 => "Repeat servo",
+        192 => "Reposition",
+        195 => "Set ROI",
+        203 => "Camera control",
+        205 => "Mount control",
+        207 => "Fence enable",
+        208 => "Parachute",
+        209 => "Motor test",
+        210 => "Inverted flight",
+        211 => "Gripper",
+        212 => "Autotune enable",
+        214 => "Camera trigger distance",
+        241 => "Preflight calibration",
+        246 => "Reboot/shutdown",
+        400 => "Arm/disarm",
+        511 => "Set message interval",
+        512 => "Request message",
+        3000 => "VTOL transition",
+        _ => "COMMAND_LONG",
+    }
+}
+
+fn resolve_mav_cmd(name: &str) -> Option<(u16, &'static str)> {
+    if let Ok(id) = name.trim().parse::<u16>() {
+        return Some((id, mav_cmd_name(id)));
+    }
+    let norm = name.trim().to_ascii_uppercase();
+    let clean = norm
+        .strip_prefix("MAV_CMD_")
+        .or_else(|| norm.strip_prefix("CMD_"))
+        .unwrap_or(&norm);
+
+    match clean {
+        "NAV_TAKEOFF" | "TAKEOFF" => Some((22, "Takeoff")),
+        "NAV_LAND" | "LAND" => Some((21, "Land")),
+        "NAV_RETURN_TO_LAUNCH" | "RTL" | "RETURN_TO_LAUNCH" => Some((20, "Return to launch")),
+        "NAV_LOITER_UNLIM" | "LOITER_UNLIM" | "LOITER" => Some((17, "Loiter")),
+        "NAV_LOITER_TURNS" => Some((18, "Loiter turns")),
+        "NAV_LOITER_TIME" => Some((19, "Loiter time")),
+        "NAV_WAYPOINT" | "WAYPOINT" => Some((16, "Waypoint")),
+        "NAV_SPLINE_WAYPOINT" => Some((82, "Spline waypoint")),
+        "DO_SET_MODE" | "SET_MODE" => Some((176, "Set mode")),
+        "DO_JUMP" => Some((177, "Jump")),
+        "DO_CHANGE_SPEED" | "CHANGE_SPEED" => Some((178, "Change speed")),
+        "DO_SET_HOME" | "SET_HOME" => Some((179, "Set home")),
+        "DO_SET_RELAY" => Some((181, "Set relay")),
+        "DO_REPEAT_RELAY" => Some((182, "Repeat relay")),
+        "DO_SET_SERVO" | "SET_SERVO" => Some((183, "Set servo")),
+        "DO_REPEAT_SERVO" => Some((184, "Repeat servo")),
+        "DO_REPOSITION" | "REPOSITION" => Some((192, "Reposition")),
+        "DO_SET_ROI" => Some((195, "Set ROI")),
+        "DO_DIGICAM_CONTROL" => Some((203, "Camera control")),
+        "DO_MOUNT_CONTROL" => Some((205, "Mount control")),
+        "DO_SET_CAM_TRIGG_DIST" => Some((214, "Camera trigger distance")),
+        "DO_FENCE_ENABLE" => Some((207, "Fence enable")),
+        "DO_PARACHUTE" => Some((208, "Parachute")),
+        "DO_MOTOR_TEST" => Some((209, "Motor test")),
+        "DO_INVERTED_FLIGHT" => Some((210, "Inverted flight")),
+        "DO_GRIPPER" => Some((211, "Gripper")),
+        "DO_AUTOTUNE_ENABLE" | "AUTOTUNE_ENABLE" => Some((212, "Autotune enable")),
+        "DO_VTOL_TRANSITION" | "VTOL_TRANSITION" => Some((3000, "VTOL transition")),
+        "COMPONENT_ARM_DISARM" | "ARM_DISARM" => Some((400, "Arm/disarm")),
+        "PREFLIGHT_CALIBRATION" => Some((241, "Preflight calibration")),
+        "PREFLIGHT_REBOOT_SHUTDOWN" => Some((246, "Reboot/shutdown")),
+        "SET_MESSAGE_INTERVAL" => Some((511, "Set message interval")),
+        "REQUEST_MESSAGE" => Some((512, "Request message")),
+        _ => None,
+    }
+}
+
+fn parse_mav_cmd_spec(val: &Value) -> Result<MavCmdSpec, String> {
+    let cmd_str = match val.get("command") {
+        Some(Value::String(s)) => s.clone(),
+        Some(Value::Number(n)) => n.to_string(),
+        _ => return Err("command must be a string name or integer ID".into()),
+    };
+    let (cmd_id, default_label) = resolve_mav_cmd(&cmd_str)
+        .ok_or_else(|| format!("Unknown MAVLink command: {cmd_str}"))?;
+
+    let p = val.get("params").unwrap_or(val);
+    let mut p1 = p.get("param1").and_then(|v| v.as_f64()).unwrap_or(0.0) as f32;
+    let mut p2 = p.get("param2").and_then(|v| v.as_f64()).unwrap_or(0.0) as f32;
+    let p3 = p.get("param3").and_then(|v| v.as_f64()).unwrap_or(0.0) as f32;
+    let mut p4 = p.get("param4").and_then(|v| v.as_f64()).unwrap_or(0.0) as f32;
+    let mut p5 = p.get("param5").and_then(|v| v.as_f64()).unwrap_or(0.0) as f32;
+    let mut p6 = p.get("param6").and_then(|v| v.as_f64()).unwrap_or(0.0) as f32;
+    let mut p7 = p.get("param7").and_then(|v| v.as_f64()).unwrap_or(0.0) as f32;
+
+    if cmd_id == 22 {
+        if let Some(alt) = p.get("alt_m").or_else(|| p.get("alt")).or_else(|| p.get("altitude")).and_then(|v| v.as_f64()) {
+            p7 = alt as f32;
+        }
+        if let Some(pitch) = p.get("pitch").and_then(|v| v.as_f64()) {
+            p1 = pitch as f32;
+        }
+    } else if cmd_id == 178 {
+        if let Some(spd) = p.get("speed_mps").or_else(|| p.get("speed")).and_then(|v| v.as_f64()) {
+            p2 = spd as f32;
+        }
+    } else if cmd_id == 183 {
+        if let Some(srv) = p.get("servo").and_then(|v| v.as_f64()) {
+            p1 = srv as f32;
+        }
+        if let Some(pwm) = p.get("pwm").and_then(|v| v.as_f64()) {
+            p2 = pwm as f32;
+        }
+    } else if cmd_id == 181 {
+        if let Some(r) = p.get("relay").and_then(|v| v.as_f64()) {
+            p1 = r as f32;
+        }
+        if let Some(on) = p.get("on").and_then(|v| v.as_bool()) {
+            p2 = if on { 1.0 } else { 0.0 };
+        }
+    } else if cmd_id == 192 {
+        if let Some(spd) = p.get("speed_mps").and_then(|v| v.as_f64()) {
+            p2 = spd as f32;
+        }
+        if let Some(yaw) = p.get("yaw_deg").and_then(|v| v.as_f64()) {
+            p4 = yaw as f32;
+        }
+        if let Some(lat) = p.get("lat").and_then(|v| v.as_f64()) {
+            p5 = lat as f32;
+        }
+        if let Some(lon) = p.get("lon").and_then(|v| v.as_f64()) {
+            p6 = lon as f32;
+        }
+        if let Some(alt) = p.get("alt_m").or_else(|| p.get("alt")).and_then(|v| v.as_f64()) {
+            p7 = alt as f32;
+        }
+    }
+
+    if cmd_id == 245 && (p1.round() as i32) == 2 {
+        return Err("Refused: clearing storage is not allowed".into());
+    }
+
+    let title = if cmd_id == 22 && p7 > 0.0 {
+        format!("Takeoff ({p7} m)")
+    } else if cmd_id == 183 {
+        format!("Set servo {p1} = {p2}")
+    } else if cmd_id == 178 && p2 > 0.0 {
+        format!("Change speed ({p2} m/s)")
+    } else if cmd_id == 176 {
+        format!("Set mode (custom={p2})")
+    } else {
+        default_label.to_string()
+    };
+
+    let reason = val.get("reason").and_then(|v| v.as_str()).unwrap_or("").trim().to_string();
+
+    let payload = json!({
+        "op": "command_long",
+        "command": cmd_id,
+        "param1": p1,
+        "param2": p2,
+        "param3": p3,
+        "param4": p4,
+        "param5": p5,
+        "param6": p6,
+        "param7": p7,
+    });
+
+    Ok(MavCmdSpec {
+        command_id: cmd_id,
+        title,
+        param7: p7,
+        reason,
+        payload,
+    })
+}
+
+fn mav_command_tool(args: &Value, sample: &Sample, c: &Connection, chat: &str) -> Value {
+    let safe = safe_on_for(c, sample);
+    let actor = if sample.is_simulator() { "agent (sitl)" } else { "agent (safe_mode)" };
+    let raw_cmds = if let Some(arr) = args["commands"].as_array() {
+        arr.clone()
+    } else if args.get("command").is_some() {
+        vec![args.clone()]
+    } else {
+        return json!({ "ok": false, "error": "commands is required" });
+    };
+    if raw_cmds.is_empty() {
+        return json!({ "ok": false, "error": "commands array is empty" });
+    }
+
+    let mut parsed = Vec::new();
+    for raw in &raw_cmds {
+        match parse_mav_cmd_spec(raw) {
+            Ok(spec) => parsed.push(spec),
+            Err(err) => return json!({ "ok": false, "error": err }),
+        }
+    }
+
+    let mut results = Vec::new();
+    for spec in parsed {
+        if !safe {
+            results.push(hold_change(
+                c,
+                chat,
+                "mav_cmd",
+                &spec.title,
+                None,
+                spec.param7 as f64,
+                &spec.reason,
+                &spec.payload.to_string(),
+            ));
+            continue;
+        }
+
+        audit(c, &format!("mav_cmd {}", spec.title), &spec.reason, "requested", actor);
+        let res = bridge_post("/cmd", &spec.payload, 15);
+        if action_failed(&res) {
+            results.push(json!({
+                "command": spec.title,
+                "status": "failed",
+                "error": error_text(&res)
+            }));
+            break;
+        } else {
+            std::thread::sleep(std::time::Duration::from_millis(250));
+            let cur = bridge_get("/sample", 2);
+            let mut res_item = json!({
+                "command": spec.title,
+                "status": "applied",
+                "id": spec.command_id
+            });
+            if let Some(arr) = cur.get("texts").and_then(Value::as_array) {
+                let texts: Vec<&str> = arr.iter().filter_map(Value::as_str).take(3).collect();
+                if !texts.is_empty() {
+                    res_item["status_text"] = json!(texts);
+                }
+            }
+            record_applied_change(
+                c,
+                chat,
+                "mav_cmd",
+                &spec.title,
+                None,
+                spec.param7 as f64,
+                &spec.reason,
+                &spec.payload.to_string(),
+            );
+            results.push(res_item);
+        }
+    }
+
+    if results.iter().any(|item| item.get("hold").and_then(|v| v.as_bool()) == Some(true)) {
+        return json!({ "hold": true, "results": results });
+    }
+    if results.len() == 1 {
+        return results.pop().unwrap_or(json!({ "status": "applied" }));
+    }
+    json!({ "status": "applied", "results": results })
+}
+
+fn wait_tool(args: &Value, c: &Connection, chat: &str) -> Value {
+    let seconds = args["seconds"]
+        .as_f64()
+        .or_else(|| args["seconds"].as_str().and_then(|s| s.parse().ok()))
+        .unwrap_or(5.0)
+        .clamp(0.5, 60.0);
+    let reason = args["reason"].as_str().unwrap_or("").trim();
+    let target_alt = args["target_alt_m"].as_f64();
+    let target_mode = args["target_mode"].as_str().map(|s| s.trim().to_ascii_uppercase());
+
+    let mut title_parts = Vec::new();
+    if let Some(ref mode) = target_mode {
+        title_parts.push(format!("mode {mode}"));
+    }
+    if let Some(alt) = target_alt {
+        title_parts.push(format!("alt {alt}m"));
+    }
+    let card_title = if !title_parts.is_empty() {
+        format!("Wait (target {} · max {:.0}s)", title_parts.join(", "), seconds)
+    } else {
+        format!("Wait {:.1}s", seconds)
+    };
+
+    let prop_id = if !chat.is_empty() {
+        let id = Uuid::new_v4().to_string();
+        let payload = json!({
+            "seconds": seconds,
+            "target_alt_m": target_alt,
+            "target_mode": target_mode,
+            "reason": reason,
+        });
+        c.execute(
+            "INSERT INTO ai_proposal (id, chat_id, status, param, old_value, new_value, reason, created_at, kind, payload) VALUES (?1,?2,'waiting',?3,NULL,?4,?5,?6,'wait',?7)",
+            params![id, chat, &card_title, seconds, reason, now(), payload.to_string()],
+        ).ok();
+        Some(id)
+    } else {
+        None
+    };
+
+    let start = std::time::Instant::now();
+    let duration = std::time::Duration::from_secs_f64(seconds);
+    let step = std::time::Duration::from_millis(250);
+
+    let mut condition_met = false;
+    let mut cancelled = false;
+    let mut last_sample = bridge_get("/sample", 5);
+
+    while start.elapsed() < duration {
+        let sleep_time = step.min(duration.saturating_sub(start.elapsed()));
+        std::thread::sleep(sleep_time);
+
+        if let Some(ref id) = prop_id {
+            let is_rejected: bool = c.query_row(
+                "SELECT status FROM ai_proposal WHERE id=?1",
+                [id],
+                |r| r.get::<_, String>(0),
+            ).map(|st| st == "rejected_by_user").unwrap_or(false);
+            if is_rejected {
+                cancelled = true;
+                break;
+            }
+        }
+
+        last_sample = bridge_get("/sample", 3);
+
+        if let Some(ref want_mode) = target_mode {
+            if let Some(cur_mode) = last_sample.get("mode").and_then(Value::as_str) {
+                if cur_mode.eq_ignore_ascii_case(want_mode) {
+                    condition_met = true;
+                    break;
+                }
+            }
+        }
+
+        if let Some(want_alt) = target_alt {
+            if let Some(alt) = last_sample.get("alt").and_then(Value::as_f64) {
+                if (alt - want_alt).abs() <= 1.0 || (want_alt > 0.0 && alt >= want_alt) {
+                    condition_met = true;
+                    break;
+                }
+            }
+        }
+    }
+
+    let elapsed = (start.elapsed().as_secs_f64() * 10.0).round() / 10.0;
+
+    if let Some(ref id) = prop_id {
+        if cancelled {
+            let cancel_title = format!("Wait cancelled ({elapsed}s)");
+            c.execute(
+                "UPDATE ai_proposal SET status='cancelled', param=?1, new_value=?2 WHERE id=?3",
+                params![cancel_title, elapsed, id],
+            ).ok();
+        } else {
+            let done_title = if condition_met {
+                format!("Condition reached in {elapsed}s")
+            } else {
+                format!("Waited {elapsed}s")
+            };
+            c.execute(
+                "UPDATE ai_proposal SET status='completed', param=?1, new_value=?2 WHERE id=?3",
+                params![done_title, elapsed, id],
+            ).ok();
+        }
+    }
+
+    let mut out = serde_json::Map::new();
+    out.insert("ok".into(), json!(!cancelled));
+    if cancelled {
+        out.insert("cancelled".into(), json!(true));
+    }
+    out.insert("waited_s".into(), json!(elapsed));
+    if !reason.is_empty() {
+        out.insert("reason".into(), json!(reason));
+    }
+    if target_alt.is_some() || target_mode.is_some() {
+        out.insert("condition_met".into(), json!(condition_met));
+    }
+
+    if let Some(obj) = last_sample.as_object() {
+        out.insert("vehicle".into(), json!({
+            "linked": obj.get("linked").unwrap_or(&Value::Bool(false)),
+            "armed": obj.get("armed").unwrap_or(&Value::Bool(false)),
+            "mode": obj.get("mode").unwrap_or(&Value::Null),
+            "alt_m": obj.get("alt").unwrap_or(&Value::Null),
+            "groundspeed_mps": obj.get("groundspeed").unwrap_or(&Value::Null),
+            "climb_mps": obj.get("climb").unwrap_or(&Value::Null),
+            "heading_deg": obj.get("heading").unwrap_or(&Value::Null),
+            "status_text": obj.get("texts").and_then(Value::as_array).map(|arr| {
+                arr.iter().filter_map(Value::as_str).take(3).collect::<Vec<_>>()
+            }).unwrap_or_default(),
+        }));
+    }
+
+    Value::Object(out)
+}
+
+fn rc_stick_tool(args: &Value, sample: &Sample, c: &Connection, chat: &str) -> Value {
+    let safe = safe_on_for(c, sample);
+    let actor = if sample.is_simulator() { "agent (sitl)" } else { "agent (safe_mode)" };
+
+    let preset = args.get("preset").and_then(Value::as_str).unwrap_or("").trim().to_ascii_lowercase();
+    let is_release = preset == "release" || args.get("release").and_then(Value::as_bool).unwrap_or(false);
+    let reason = args.get("reason").and_then(Value::as_str).unwrap_or("").trim();
+
+    if is_release {
+        let label = "Release sticks";
+        if !safe {
+            return hold_change(c, chat, "stick", label, None, 0.0, reason, "{\"op\":\"release\"}");
+        }
+        audit(c, "rc_stick release", reason, "requested", actor);
+        let res = bridge_post("/cmd", &json!({"op": "release"}), 8);
+        if !action_failed(&res) {
+            record_applied_change(c, chat, "stick", label, None, 0.0, reason, "{\"op\":\"release\"}");
+        }
+        return json!({ "ok": true, "status": "applied", "released": true });
+    }
+
+    let parse_pwm = |val: Option<&Value>, def: i32| -> i32 {
+        match val {
+            Some(Value::Number(n)) => {
+                let v = n.as_f64().unwrap_or(def as f64);
+                if v >= 800.0 && v <= 2200.0 {
+                    v.round() as i32
+                } else if v >= -1.0 && v <= 1.0 {
+                    (1500.0 + v * 500.0).round() as i32
+                } else {
+                    def
+                }
+            }
+            Some(Value::String(s)) => {
+                let s = s.trim().to_ascii_lowercase();
+                match s.as_str() {
+                    "neutral" | "center" | "hover" | "mid" => 1500,
+                    "zero" | "min" | "down" | "bottom" | "idle" => 1000,
+                    "max" | "up" | "top" => 2000,
+                    "climb" => 1650,
+                    "descend" => 1350,
+                    _ => s.parse::<f64>().map(|v| {
+                        if v >= 800.0 && v <= 2200.0 {
+                            v.round() as i32
+                        } else if v >= -1.0 && v <= 1.0 {
+                            (1500.0 + v * 500.0).round() as i32
+                        } else {
+                            def
+                        }
+                    }).unwrap_or(def)
+                }
+            }
+            _ => def,
+        }
+    };
+
+    let (mut roll, mut pitch, mut yaw, mut thr) = if preset == "zero_throttle" {
+        (1500, 1500, 1500, 1000)
+    } else {
+        (1500, 1500, 1500, 1500)
+    };
+
+    if let Some(v) = args.get("roll") { roll = parse_pwm(Some(v), roll); }
+    if let Some(v) = args.get("pitch") { pitch = parse_pwm(Some(v), pitch); }
+    if let Some(v) = args.get("yaw") { yaw = parse_pwm(Some(v), yaw); }
+    if let Some(v) = args.get("thr").or_else(|| args.get("throttle")) { thr = parse_pwm(Some(v), thr); }
+
+    let summary = if thr == 1500 && roll == 1500 && pitch == 1500 && yaw == 1500 {
+        "Sticks neutral (thr=1500)".to_string()
+    } else if thr == 1000 && roll == 1500 && pitch == 1500 && yaw == 1500 {
+        "Sticks throttle zero (thr=1000)".to_string()
+    } else {
+        format!("Sticks (R:{roll} P:{pitch} Y:{yaw} T:{thr})")
+    };
+
+    let payload = json!({
+        "op": "stick",
+        "roll": roll,
+        "pitch": pitch,
+        "yaw": yaw,
+        "thr": thr,
+    });
+
+    if !safe {
+        return hold_change(c, chat, "stick", &summary, None, thr as f64, reason, &payload.to_string());
+    }
+
+    audit(c, &format!("rc_stick {summary}"), reason, "requested", actor);
+    let res = bridge_post("/cmd", &payload, 8);
+    if action_failed(&res) {
+        return json!({ "ok": false, "error": error_text(&res) });
+    }
+
+    record_applied_change(c, chat, "stick", &summary, None, thr as f64, reason, &payload.to_string());
+
+    json!({
+        "ok": true,
+        "status": "applied",
+        "roll": roll,
+        "pitch": pitch,
+        "yaw": yaw,
+        "thr": thr,
+    })
+}
+
 fn run_tool(
     name: &str,
     args: &Value,
@@ -108,6 +630,7 @@ fn run_tool(
                 "climb_mps": sample.climb,
                 "throttle_pct": sample.thr_out,
                 "attitude_hz": sample.att_hz,
+                "status_text": sample.texts.iter().take(5).cloned().collect::<Vec<_>>(),
                 "params_received": sample.params.len(),
                 "params_expected": sample.param_count,
                 "params_complete": sample.param_count > 0 && sample.param_indices.len() >= sample.param_count as usize,
@@ -166,6 +689,11 @@ fn run_tool(
         "log_schema" => log_schema_tool(args, file),
         "log_query" => log_query_tool(args, file),
         "log_compute" => log_compute_tool(args, file),
+        "log_magfit" => log_magfit_tool(args, file),
+        "log_filter_review" => log_filter_review_tool(args, file),
+        "log_audit" => log_audit_tool(file),
+        "log_motor_balance" => log_motor_balance_tool(args, file),
+        "log_pid_review" => log_pid_review_tool(args, file),
         "show_chart" => crate::dflog::chart(file, args),
         "show_spectrum" => crate::dflog::gyro_picture(file, "spectrum", args),
         "show_spectrogram" => crate::dflog::gyro_picture(file, "spectrogram", args),
@@ -245,13 +773,18 @@ fn run_tool(
         }
         "firmware_flash" => {
             let action = args["action"].as_str().unwrap_or("");
-            if action == "start_bootloader" && !safe_on(c) {
+            if action == "start_bootloader" && !safe_on_for(c, sample) {
                 return hold_change(c, chat, "flash", "Flash firmware", None, 0.0, "", &args.to_string());
             }
             if action == "start_bootloader" {
-                audit(c, "firmware flash", "start bootloader", "requested", "agent (safe_mode)");
+                let actor = if sample.is_simulator() { "agent (sitl)" } else { "agent (safe_mode)" };
+                audit(c, "firmware flash", "start bootloader", "requested", actor);
             }
-            bridge_post("/firmware/flash", args, 60)
+            let res = bridge_post("/firmware/flash", args, 60);
+            if action == "start_bootloader" && !action_failed(&res) {
+                record_applied_change(c, chat, "flash", "Flash firmware", None, 0.0, "", &args.to_string());
+            }
+            res
         }
         "vehicle_logs" => {
             let refresh = args["refresh"].as_bool().unwrap_or(true);
@@ -345,11 +878,16 @@ fn run_tool(
             if args["confirm"].as_bool() != Some(true) {
                 return json!({ "ok": false, "error": "Erasing DataFlash logs is permanent; pass confirm true" });
             }
-            if !safe_on(c) {
+            if !safe_on_for(c, sample) {
                 return hold_change(c, chat, "erase_logs", "Erase on-board logs", None, 0.0, "", "");
             }
-            audit(c, "erase logs", "confirm true", "requested", "agent (safe_mode)");
-            bridge_post("/logs/erase", &json!({"confirm": true}), 15)
+            let actor = if sample.is_simulator() { "agent (sitl)" } else { "agent (safe_mode)" };
+            audit(c, "erase logs", "confirm true", "requested", actor);
+            let res = bridge_post("/logs/erase", &json!({"confirm": true}), 15);
+            if !action_failed(&res) {
+                record_applied_change(c, chat, "erase_logs", "Erase on-board logs", None, 0.0, "", "");
+            }
+            res
         }
         "diagnostics" => {
             if args["refresh"].as_bool().unwrap_or(false) {
@@ -363,11 +901,16 @@ fn run_tool(
                 if connect_already_up(&state, &url, now_f64()) {
                     return already_up_result(&state);
                 }
-                if !safe_on(c) {
+                if !safe_on_for(c, sample) {
                     return hold_change(c, chat, "connect", "Connect", None, 0.0, "", &url);
                 }
-                audit(c, "connect", &url, "requested", "agent (safe_mode)");
-                run_link_wait(c, chat, "connect", "Connect", &url)
+                let actor = if sample.is_simulator() { "agent (sitl)" } else { "agent (safe_mode)" };
+                audit(c, "connect", &url, "requested", actor);
+                let res = run_link_wait(c, chat, "connect", "Connect", &url);
+                if res.get("status").and_then(|v| v.as_str()) == Some("applied") {
+                    record_applied_change(c, chat, "connect", "Connect", None, 0.0, "", &url);
+                }
+                res
             }
             Err(error) => json!({ "ok": false, "error": error }),
         },
@@ -376,39 +919,125 @@ fn run_tool(
             if mode.is_empty() {
                 return json!({ "ok": false, "error": "mode is required" });
             }
-            if !safe_on(c) {
+            if !safe_on_for(c, sample) {
                 return hold_change(c, chat, "mode", mode, None, 0.0, "", "");
             }
-            audit(c, &format!("mode {mode}"), "assistant mode", "requested", "agent (safe_mode)");
-            bridge_post("/cmd", &json!({"op": "mode", "mode": mode}), 15)
+            let actor = if sample.is_simulator() { "agent (sitl)" } else { "agent (safe_mode)" };
+            audit(c, &format!("mode {mode}"), "assistant mode", "requested", actor);
+            let res = bridge_post("/cmd", &json!({"op": "mode", "mode": mode}), 15);
+            if !action_failed(&res) {
+                record_applied_change(c, chat, "mode", mode, None, 0.0, "", "");
+            }
+            res
         }
         "arm" => {
-            if !safe_on(c) {
+            if !safe_on_for(c, sample) {
                 return hold_change(c, chat, "arm", "Arm", None, 0.0, "", "");
             }
-            audit(c, "arm", "assistant arm", "requested", "agent (safe_mode)");
-            bridge_post("/cmd", &json!({"op": "arm", "on": true}), 8)
+            let actor = if sample.is_simulator() { "agent (sitl)" } else { "agent (safe_mode)" };
+            audit(c, "arm", "assistant arm", "requested", actor);
+            let res = bridge_post("/cmd", &json!({"op": "arm", "on": true}), 8);
+            if action_failed(&res) {
+                return json!({ "ok": false, "error": error_text(&res) });
+            }
+            let start = std::time::Instant::now();
+            let mut armed = false;
+            let mut latest_texts = Vec::new();
+            while start.elapsed() < std::time::Duration::from_millis(1800) {
+                std::thread::sleep(std::time::Duration::from_millis(150));
+                let cur = bridge_get("/sample", 2);
+                if let Some(arr) = cur.get("texts").and_then(Value::as_array) {
+                    latest_texts = arr.iter().filter_map(Value::as_str).take(5).map(String::from).collect();
+                }
+                if cur.get("armed").and_then(Value::as_bool) == Some(true) {
+                    armed = true;
+                    break;
+                }
+            }
+            if armed {
+                record_applied_change(c, chat, "arm", "Arm", None, 0.0, "", "");
+                json!({
+                    "ok": true,
+                    "armed": true,
+                    "status": "applied",
+                    "status_text": latest_texts,
+                })
+            } else {
+                json!({
+                    "ok": false,
+                    "armed": false,
+                    "status": "failed",
+                    "error": "Autopilot rejected arming. Vehicle is still disarmed.",
+                    "status_text": latest_texts,
+                    "tip": "Check pre-arm warnings in status_text. If throttle is too high, set rc_stick(preset: \"zero_throttle\") before arming.",
+                })
+            }
         }
         "disarm" => {
-            if !safe_on(c) {
+            if !safe_on_for(c, sample) {
                 return hold_change(c, chat, "disarm", "Disarm", None, 0.0, "", "");
             }
-            audit(c, "disarm", "assistant disarm", "requested", "agent (safe_mode)");
-            bridge_post("/cmd", &json!({"op": "arm", "on": false}), 8)
+            let actor = if sample.is_simulator() { "agent (sitl)" } else { "agent (safe_mode)" };
+            audit(c, "disarm", "assistant disarm", "requested", actor);
+            let res = bridge_post("/cmd", &json!({"op": "arm", "on": false}), 8);
+            if action_failed(&res) {
+                return json!({ "ok": false, "error": error_text(&res) });
+            }
+            let start = std::time::Instant::now();
+            let mut disarmed = false;
+            let mut latest_texts = Vec::new();
+            while start.elapsed() < std::time::Duration::from_millis(1800) {
+                std::thread::sleep(std::time::Duration::from_millis(150));
+                let cur = bridge_get("/sample", 2);
+                if let Some(arr) = cur.get("texts").and_then(Value::as_array) {
+                    latest_texts = arr.iter().filter_map(Value::as_str).take(5).map(String::from).collect();
+                }
+                if cur.get("armed").and_then(Value::as_bool) == Some(false) {
+                    disarmed = true;
+                    break;
+                }
+            }
+            if disarmed {
+                record_applied_change(c, chat, "disarm", "Disarm", None, 0.0, "", "");
+                json!({
+                    "ok": true,
+                    "armed": false,
+                    "status": "applied",
+                    "status_text": latest_texts,
+                })
+            } else {
+                json!({
+                    "ok": false,
+                    "armed": true,
+                    "status": "failed",
+                    "error": "Autopilot rejected disarming.",
+                    "status_text": latest_texts,
+                })
+            }
         }
         "reboot" => {
-            if !safe_on(c) {
+            if !safe_on_for(c, sample) {
                 return hold_change(c, chat, "reboot", "Reboot", None, 0.0, "", "");
             }
-            audit(c, "reboot", "assistant reboot", "requested", "agent (safe_mode)");
-            run_link_wait(c, chat, "reboot", "Reboot", "")
+            let actor = if sample.is_simulator() { "agent (sitl)" } else { "agent (safe_mode)" };
+            audit(c, "reboot", "assistant reboot", "requested", actor);
+            let res = run_link_wait(c, chat, "reboot", "Reboot", "");
+            if res.get("status").and_then(|v| v.as_str()) == Some("applied") {
+                record_applied_change(c, chat, "reboot", "Reboot", None, 0.0, "", "");
+            }
+            res
         }
         "disconnect" => {
-            if !safe_on(c) {
+            if !safe_on_for(c, sample) {
                 return hold_change(c, chat, "disconnect", "Disconnect", None, 0.0, "", "");
             }
-            audit(c, "disconnect", "assistant disconnect", "requested", "agent (safe_mode)");
-            run_link_wait(c, chat, "disconnect", "Disconnect", "")
+            let actor = if sample.is_simulator() { "agent (sitl)" } else { "agent (safe_mode)" };
+            audit(c, "disconnect", "assistant disconnect", "requested", actor);
+            let res = run_link_wait(c, chat, "disconnect", "Disconnect", "");
+            if res.get("status").and_then(|v| v.as_str()) == Some("applied") {
+                record_applied_change(c, chat, "disconnect", "Disconnect", None, 0.0, "", "");
+            }
+            res
         },
         "script_list" => bridge_get("/scripts", 15),
         "script_read" => {
@@ -420,6 +1049,9 @@ fn run_tool(
         }
         "script_write" | "script_delete" | "script_restart" => script_change_tool(name, args, c, chat),
         "wizard_widget" => wizard_widget(args, sample, c, chat),
+        "mav_command" => mav_command_tool(args, sample, c, chat),
+        "wait" => wait_tool(args, c, chat),
+        "rc_stick" => rc_stick_tool(args, sample, c, chat),
         "health" => bridge_get("/health", 8),
         _ => json!({ "error": "unknown tool" }),
     }
@@ -581,6 +1213,76 @@ fn log_compute_tool(args: &Value, file: &str) -> Value {
         note_interval(obj);
     }
     with_log_hash(file, value)
+}
+
+fn log_magfit_tool(args: &Value, file: &str) -> Value {
+    if file.is_empty() {
+        return json!({ "ok": false, "error": "file is required. file is an id from list_logs, or local.id from vehicle_logs." });
+    }
+    let compass = args.get("compass").and_then(|v| v.as_u64().map(|n| n as usize));
+    let fit_type = args.get("fit_type").and_then(|v| v.as_str());
+    let motor_comp = args.get("motor_comp").and_then(|v| v.as_str());
+    let check_orientation = args.get("check_orientation").and_then(|v| v.as_bool());
+    let start_us = args.get("start_us").and_then(|v| v.as_u64());
+    let end_us = args.get("end_us").and_then(|v| v.as_u64());
+    let lat = args.get("lat").and_then(|v| v.as_f64())
+        .or_else(|| args.get("latitude").and_then(|v| v.as_f64()));
+    let lon = args.get("lon").and_then(|v| v.as_f64())
+        .or_else(|| args.get("longitude").and_then(|v| v.as_f64()))
+        .or_else(|| args.get("lng").and_then(|v| v.as_f64()));
+
+    let val = crate::dflog::magfit(
+        file,
+        compass,
+        fit_type,
+        motor_comp,
+        check_orientation,
+        start_us,
+        end_us,
+        lat,
+        lon,
+    );
+    with_log_hash(file, val)
+}
+
+fn log_filter_review_tool(args: &Value, file: &str) -> Value {
+    if file.is_empty() {
+        return json!({ "ok": false, "error": "file is required. file is an id from list_logs, or local.id from vehicle_logs." });
+    }
+    let axis = args.get("axis").and_then(|v| v.as_str());
+    let start_us = args.get("start_us").and_then(|v| v.as_u64());
+    let end_us = args.get("end_us").and_then(|v| v.as_u64());
+    let val = crate::dflog::filter_review(file, axis, start_us, end_us);
+    with_log_hash(file, val)
+}
+
+fn log_audit_tool(file: &str) -> Value {
+    if file.is_empty() {
+        return json!({ "ok": false, "error": "file is required. file is an id from list_logs, or local.id from vehicle_logs." });
+    }
+    let val = crate::dflog::audit(file);
+    with_log_hash(file, val)
+}
+
+fn log_motor_balance_tool(args: &Value, file: &str) -> Value {
+    if file.is_empty() {
+        return json!({ "ok": false, "error": "file is required. file is an id from list_logs, or local.id from vehicle_logs." });
+    }
+    let start_us = args.get("start_us").and_then(|v| v.as_u64());
+    let end_us = args.get("end_us").and_then(|v| v.as_u64());
+    let val = crate::dflog::motor_balance(file, start_us, end_us);
+    with_log_hash(file, val)
+}
+
+fn log_pid_review_tool(args: &Value, file: &str) -> Value {
+    if file.is_empty() {
+        return json!({ "ok": false, "error": "file is required. file is an id from list_logs, or local.id from vehicle_logs." });
+    }
+    let axis = args.get("axis").and_then(|v| v.as_str());
+    let start_us = args.get("start_us").and_then(|v| v.as_u64());
+    let end_us = args.get("end_us").and_then(|v| v.as_u64());
+    let val = crate::dflog::pid_review(file, axis, start_us, end_us);
+    with_log_hash(file, val)
 }
 
 const LIVE_CHARTS: usize = 5;

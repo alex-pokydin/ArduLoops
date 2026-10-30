@@ -21,5 +21,23 @@ include!("spectrum.rs");
 // DataFlash decode, names, and summaries.
 include!("parse.rs");
 
+// World Magnetic Model (WMM) lookup.
+include!("wmm.rs");
+
+// MAGFit compass calibration.
+include!("magfit.rs");
+
+// FilterReview gyro noise and notch filter optimization.
+include!("filter_review.rs");
+
+// Hardware report and flight safety audit.
+include!("audit.rs");
+
+// Motor balance and thrust loss diagnostics.
+include!("motors.rs");
+
+// PIDReview stability margins and rate tuning.
+include!("pid_review.rs");
+
 // Tests.
 include!("tests.rs");

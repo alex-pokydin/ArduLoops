@@ -580,7 +580,7 @@ export function Aside({
   const [planeCam, setPlaneCam] = useState<"rear" | "side" | "top">("rear");
   const holdUntil = useRef(0);
   const stickTimer = useRef(0);
-  const rc = useRef({ roll: 1500, pitch: 1500, yaw: 1500, thr: 0 });
+  const rc = useRef({ roll: 1500, pitch: 1500, yaw: 1500, thr: 1500 });
   const leftN = useRef({ x: 0, y: 0 });
   const rightN = useRef({ x: 0, y: 0 });
   const stickL = useRef<HTMLDivElement>(null);
@@ -619,7 +619,7 @@ export function Aside({
   }
 
   function resetSticks() {
-    rc.current = { roll: 1500, pitch: 1500, yaw: 1500, thr: 0 };
+    rc.current = { roll: 1500, pitch: 1500, yaw: 1500, thr: 1500 };
     leftN.current = { x: 0, y: 0 };
     rightN.current = { x: 0, y: 0 };
     setKnob(knobL.current, 0, 0);

@@ -86,6 +86,7 @@ dependencies = [
  "genai",
  "log",
  "mavlink",
+ "num-traits",
  "reqwest",
  "rusqlite",
  "rustls",
