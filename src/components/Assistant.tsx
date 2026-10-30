@@ -7,6 +7,7 @@ import remarkGfm from "remark-gfm";
 import remarkMath from "remark-math";
 import "katex/dist/katex.min.css";
 import { ai, type AiStatus, type Chat, type CloudDoc, type LiveTurn, type LocalLog, type Msg, type Proposal } from "../assistant/api";
+import { DEFAULT_MODELS, formatTokens, formatUsd, loadCachedModels, syncModelsDev } from "../assistant/models";
 import { IMAGES_PER_MESSAGE, imageFiles, shrinkImage } from "../assistant/images";
 import { Disconnected } from "./Disconnected";
 import { WizardHost, type WizardAsk } from "./WizardHost";
@@ -454,12 +455,7 @@ function ProposalCard({
 
 const EMPTY_CHECKS = { propellers: false, power: false, workspace: false, control: false };
 
-const MODELS: Record<string, string[]> = {
-  gemini: ["gemini-4-argon", "gemini-3.8-flash", "gemini-3.5-flash-lite"],
-  openai: ["gpt-6.1-sol", "gpt-6.1-terra", "gpt-6-luna", "gpt-6-astra"],
-  anthropic: ["claude-opus-5-5", "claude-sonnet-5-5", "claude-haiku-5-5"],
-  xai: ["grok-4.7", "grok-4.6", "grok-4.5"],
-};
+const MODELS = DEFAULT_MODELS;
 
 export function Assistant({
   home,
@@ -473,6 +469,12 @@ export function Assistant({
   const t = useT();
   const vehicle = useLinkFace();
   const [status, setStatus] = useState<AiStatus | null>(null);
+  const [dynamicModels, setDynamicModels] = useState<Record<string, string[]>>(() => loadCachedModels());
+  useEffect(() => {
+    void syncModelsDev().then((updated) => {
+      if (updated) setDynamicModels(updated);
+    });
+  }, []);
   const [open, setOpen] = useState(false);
   const [chats, setChats] = useState<Chat[]>([]);
   const [chatId, setChatId] = useState("");
@@ -876,7 +878,7 @@ export function Assistant({
   const provider = status?.active?.provider || "";
   const models = (status?.account?.signed_in && status.active?.storage === "hosted" && status.account.models?.[provider])
     ? (status.account.models[provider] || [])
-    : (MODELS[provider] || []);
+    : (dynamicModels[provider] || MODELS[provider] || []);
   useEffect(() => {
     const node = panel.current;
     if (!node) return;
@@ -1316,6 +1318,23 @@ function ChatPane({
     if (narrow) setChatsOpen(false);
   }, [narrow]);
   const thread = useMemo(() => placeProposals(groupMessages(messages), proposals), [messages, proposals]);
+  const { chatCost, chatTokens, chatTurns } = useMemo(() => {
+    let cost = 0;
+    let tokens = 0;
+    let turns = 0;
+    for (const b of thread) {
+      if (b.kind === "tools") {
+        if (b.workedUsd) cost += b.workedUsd;
+        if (b.workedTokens) tokens += b.workedTokens;
+        turns += 1;
+      } else if (b.kind === "msg" && (b.msg.role === "user" || b.msg.role === "steer")) {
+        turns += 1;
+      }
+    }
+    if (live?.cost) cost += live.cost;
+    if (live?.tokens) tokens += live.tokens;
+    return { chatCost: cost, chatTokens: tokens, chatTurns: turns };
+  }, [thread, live?.cost, live?.tokens]);
   const [earlier, setEarlier] = useState(0);
   useEffect(() => { setEarlier(0); }, [chatId]);
   const shownThread = useMemo(() => tailTurns(thread, 6 + earlier), [thread, earlier]);
@@ -1556,7 +1575,7 @@ function ChatPane({
               </button>
             ) : null}
             {held.map((block, index) => block.kind === "tools" ? (
-              <ToolGroup key={block.key} t={t} items={block.items} workedMs={block.workedMs} note={block.note} flow={index === liveTools ? flow : undefined} thought={keptThoughts[block.key]} live={busy && liveOnTools && index === liveTools ? live : null} />
+              <ToolGroup key={block.key} t={t} items={block.items} workedMs={block.workedMs} workedUsd={block.workedUsd} note={block.note} flow={index === liveTools ? flow : undefined} thought={keptThoughts[block.key]} live={busy && liveOnTools && index === liveTools ? live : null} />
             ) : block.kind === "proposal" ? (
               <ProposalCard key={block.key} t={t} items={block.items} busy={busy} onDecision={onDecision} onCancelWait={onCancelWait} onOpenWizard={onOpenWizard} wizardOpenId={wizardOpenId} />
             ) : (
@@ -1843,10 +1862,19 @@ function ChatPane({
                   >
                     <span className="ai-model-name">{shownModel}</span>
                     {reasoning && provider === "gemini" ? <span className="ai-model-level">· {reasoning}</span> : null}
+                    <span className="ai-model-cost">{`· ${formatUsd(chatCost) || "$0.00"}`}</span>
                     <span className="ai-model-caret" aria-hidden>▾</span>
                   </button>
                   {modelOpen ? (
                     <div className="ai-model-menu">
+                      <div className="ai-chat-usage">
+                        <span className="ai-chat-usage-label">{t("Chat usage")}</span>
+                        <span className="ai-chat-usage-val">
+                          {formatUsd(chatCost) || "$0.00"}
+                          {` · ${t("{n} tokens", { n: chatTokens > 0 ? formatTokens(chatTokens) : "0" })}`}
+                          {chatTurns > 0 ? ` · ${t("{n} turns", { n: chatTurns })}` : ""}
+                        </span>
+                      </div>
                       <span className="ai-model-head">{t("Model")}</span>
                       {modelList.map((id) => (
                         <button
@@ -2099,10 +2127,10 @@ const AssistantMarkdown = memo(function AssistantMarkdown({ text }: { text: stri
   );
 });
 
-type ToolItem = { key: string; name: string; input?: string; output: string };
+type ToolItem = { key: string; name: string; input?: string; output: string; usd?: number };
 type ThreadBlock =
   | { kind: "msg"; key: string; msg: Msg; at: number; attach?: string; images?: string[]; quote?: string; quoteTitle?: string; docs?: SavedDoc[] }
-  | { kind: "tools"; key: string; items: ToolItem[]; workedMs?: number; note?: string; at: number }
+  | { kind: "tools"; key: string; items: ToolItem[]; workedMs?: number; workedUsd?: number; workedTokens?: number; note?: string; at: number }
   | { kind: "proposal"; key: string; items: Proposal[]; at: number };
 
 function quoteChip(body: string): { label: string; title: string } {
@@ -2119,7 +2147,7 @@ function quoteChip(body: string): { label: string; title: string } {
   }
 }
 
-function parseTool(body: string): { name: string; input?: string; output: string } {
+function parseTool(body: string): { name: string; input?: string; output: string; usd?: number } {
   const trimmed = body.trim();
   const parsed = parseToolJson(trimmed);
   if (parsed) return parsed;
@@ -2132,15 +2160,16 @@ function parseTool(body: string): { name: string; input?: string; output: string
   };
 }
 
-function parseToolJson(trimmed: string): { name: string; input?: string; output: string } | null {
+function parseToolJson(trimmed: string): { name: string; input?: string; output: string; usd?: number } | null {
   if (!trimmed.startsWith("{")) return null;
   try {
-    const value = JSON.parse(trimmed) as { name?: unknown; input?: unknown; output?: unknown };
+    const value = JSON.parse(trimmed) as { name?: unknown; input?: unknown; output?: unknown; usd?: unknown };
     if (value && typeof value.name === "string" && "output" in value) {
       return {
         name: value.name,
         input: "input" in value ? JSON.stringify(value.input ?? {}, null, 2) : undefined,
         output: typeof value.output === "string" ? value.output : JSON.stringify(value.output ?? {}, null, 2),
+        usd: typeof value.usd === "number" && Number.isFinite(value.usd) ? value.usd : undefined,
       };
     }
   } catch {
@@ -2149,14 +2178,22 @@ function parseToolJson(trimmed: string): { name: string; input?: string; output:
   return null;
 }
 
-function workMs(body: string): number | undefined {
+function workInfo(body: string): { ms?: number; usd?: number; tokens?: number } {
   try {
-    const value = JSON.parse(body) as { ms?: unknown };
-    if (typeof value.ms === "number" && Number.isFinite(value.ms)) return value.ms;
+    const value = JSON.parse(body) as { ms?: unknown; usd?: unknown; tokens?: unknown };
+    return {
+      ms: typeof value.ms === "number" && Number.isFinite(value.ms) ? value.ms : undefined,
+      usd: typeof value.usd === "number" && Number.isFinite(value.usd) ? value.usd : undefined,
+      tokens: typeof value.tokens === "number" && Number.isFinite(value.tokens) ? value.tokens : undefined,
+    };
   } catch {
     /* not a work record */
   }
-  return undefined;
+  return {};
+}
+
+function workMs(body: string): number | undefined {
+  return workInfo(body).ms;
 }
 
 function turnStarts(blocks: ThreadBlock[]): number[] {
@@ -2249,16 +2286,25 @@ function groupMessages(messages: Msg[]): ThreadBlock[] {
       if (parsed.name !== "suggest_next") items.push({ key: `${messages[i].at}-${i}`, ...parsed });
       i += 1;
     }
-    let workedMs: number | undefined;
+    let workedInfo: { ms?: number; usd?: number; tokens?: number } = {};
     if (i < messages.length && messages[i].role === "work") {
-      workedMs = workMs(messages[i].body);
+      workedInfo = workInfo(messages[i].body);
       i += 1;
     } else if (start > 0 && i < messages.length && messages[i].role === "assistant") {
       const span = Math.max(1, messages[i].at - messages[start - 1].at);
-      workedMs = span * 1000;
+      workedInfo = { ms: span * 1000 };
     }
     i -= 1;
-    out.push({ kind: "tools", key: `tools-${start}`, items, workedMs, note: groupNote || undefined, at: messages[start].at });
+    out.push({
+      kind: "tools",
+      key: `tools-${start}`,
+      items,
+      workedMs: workedInfo.ms,
+      workedUsd: workedInfo.usd,
+      workedTokens: workedInfo.tokens,
+      note: groupNote || undefined,
+      at: messages[start].at,
+    });
   }
   flushNote(0);
   if (pendingDocs.length) {
@@ -3149,11 +3195,12 @@ function ReasoningNote({ t, text }: { t: (k: string) => string; text: string }) 
 }
 
 const ToolGroup = memo(function ToolGroup({
-  t, items, workedMs, note, thought, live, flow,
+  t, items, workedMs, workedUsd, note, thought, live, flow,
 }: {
   t: (k: string, vars?: Record<string, string | number>) => string;
   items: ToolItem[];
   workedMs?: number;
+  workedUsd?: number;
   note?: string;
   thought?: string;
   live: LiveTurn | null;
@@ -3169,8 +3216,16 @@ const ToolGroup = memo(function ToolGroup({
     <details className={failed.some(Boolean) ? "ai-tools ai-has-fail" : "ai-tools"}>
       <summary>
         {live && !live.tool ? <span className="ai-think-spin" aria-hidden /> : null}
-        <span className="ai-tools-names">{live ? running : workedMs != null ? workedLabel(t, workedMs) : t("Tools")}</span>
-        {live ? <LiveClock t={t} live={live} /> : null}
+        <span className="ai-tools-names">
+          {live ? running : workedMs != null ? workedLabel(t, workedMs) : t("Tools")}
+          {!live && workedUsd ? <span className="ai-cost">{` · ${formatUsd(workedUsd)}`}</span> : null}
+        </span>
+        {live ? (
+          <span className="ai-live-time-wrap">
+            <LiveClock t={t} live={live} />
+            {live.cost ? <span className="ai-cost-live">{` · ${formatUsd(live.cost)}`}</span> : null}
+          </span>
+        ) : null}
         {heavyCount > 0 ? <SizeWarn title={t("Large results in this turn: {n}. They are kept whole.", { n: heavyCount })} /> : null}
       </summary>
       <ul>
@@ -3205,6 +3260,7 @@ function ToolRow({
             <SizeWarn title={t("Large result, kept whole. {n} characters.", { n: item.output.length })} />
           ) : null}
           {hint ? <span className="ai-tool-hint" title={hint}>{` · ${hint}`}</span> : null}
+          {item.usd ? <span className="ai-tool-cost" title={`$${item.usd.toFixed(4)}`}>{` · ${formatUsd(item.usd)}`}</span> : null}
         </summary>
         {open && item.input !== undefined ? (
           <>

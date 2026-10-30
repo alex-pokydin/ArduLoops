@@ -463,7 +463,7 @@ fn tool_from_event(value: &Value) -> ToolCall {
     }
 }
 
-fn apply_sse(buf: &mut String, text: &mut String, thought: &mut String, calls: &mut Vec<ToolCall>, turn_id: &mut Option<String>) -> Result<(), String> {
+fn apply_sse(buf: &mut String, text: &mut String, thought: &mut String, calls: &mut Vec<ToolCall>, turn_id: &mut Option<String>, turn_cost: &mut f64, turn_tokens: &mut u64) -> Result<(), String> {
     while let Some(cut) = buf.find("\n\n") {
         let block = buf[..cut].to_string();
         *buf = buf[cut + 2..].to_string();
@@ -504,6 +504,13 @@ fn apply_sse(buf: &mut String, text: &mut String, thought: &mut String, calls: &
                 live_clear_reply();
             }
             "document" => live_document(&value),
+            "usage" => {
+                let usd = value["usd"].as_f64().unwrap_or(0.0);
+                let toks = value["totalTokens"].as_u64().or_else(|| value["tokens"].as_u64()).unwrap_or(0);
+                live_add_usage(usd, toks);
+                *turn_cost += usd;
+                *turn_tokens += toks;
+            }
             "error" => return Err(value["message"].as_str().unwrap_or("The model request failed.").to_string()),
             _ => {}
         }
@@ -540,17 +547,19 @@ async fn read_hosted(resp: reqwest::Response, gen: u64, turn_slot: &mut Option<S
     let mut text = String::new();
     let mut thought = String::new();
     let mut calls = Vec::new();
+    let mut turn_cost = 0.0f64;
+    let mut turn_tokens = 0u64;
     while let Some(item) = stream.next().await {
         if gen_halted(gen) {
             return Err("stopped".into());
         }
         let chunk = item.map_err(hosted_err)?;
         buf.push_str(&String::from_utf8_lossy(&chunk));
-        apply_sse(&mut buf, &mut text, &mut thought, &mut calls, turn_slot)?;
+        apply_sse(&mut buf, &mut text, &mut thought, &mut calls, turn_slot, &mut turn_cost, &mut turn_tokens)?;
     }
-    apply_sse(&mut buf, &mut text, &mut thought, &mut calls, turn_slot)?;
+    apply_sse(&mut buf, &mut text, &mut thought, &mut calls, turn_slot, &mut turn_cost, &mut turn_tokens)?;
     let assistant = if calls.is_empty() { None } else { Some(assistant_from_calls(calls.clone())) };
-    Ok(ProviderTurn { text, calls, assistant })
+    Ok(ProviderTurn { text, calls, assistant, cost: turn_cost, tokens: turn_tokens })
 }
 
 fn hosted_turn(provider: &str, model: &str, reasoning: &str, system: &str, lang: &str, messages: &[genai::chat::ChatMessage], quota: &str, chat_id: &str, turn_slot: &mut Option<String>) -> Result<ProviderTurn, String> {

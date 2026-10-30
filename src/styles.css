@@ -1967,6 +1967,9 @@ article.assistant:hover .ai-reply-tools, article.assistant:last-of-type .ai-repl
 .ai-clock { flex: none; margin-left: 8px; color: var(--dim); font-size: 12px; font-variant-numeric: tabular-nums; white-space: nowrap; }
 .ai-clock-total { margin-left: 6px; opacity: 0.7; }
 .ai-clock-total::before { content: "· "; }
+.ai-cost { color: var(--dim); font-size: 12px; font-variant-numeric: tabular-nums; opacity: 0.85; }
+.ai-live-time-wrap { display: inline-flex; align-items: baseline; flex: none; white-space: nowrap; }
+.ai-cost-live { color: var(--dim); font-size: 12px; font-variant-numeric: tabular-nums; opacity: 0.85; }
 .ai-tool-warn {
   flex: none; display: inline-flex; align-items: center; margin-left: 6px;
   color: var(--amber); opacity: 0.8;
@@ -1983,6 +1986,7 @@ article.assistant:hover .ai-reply-tools, article.assistant:last-of-type .ai-repl
 .ai-tools details > summary { color: var(--ink); font-weight: 650; padding: 2px 0; display: flex; align-items: baseline; width: 100%; min-width: 0; overflow: hidden; white-space: nowrap; }
 .ai-tools details > summary .ai-tool-name { flex: none; color: var(--dim); font-weight: 500; }
 .ai-tools details > summary .ai-tool-hint { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 450; }
+.ai-tools details > summary .ai-tool-cost { flex: none; margin-left: 6px; color: var(--dim); font-size: 11px; font-weight: 400; font-variant-numeric: tabular-nums; opacity: 0.75; }
 .ai-charts { display: flex; flex-wrap: wrap; gap: 8px; margin: 10px 0 0; }
 .ai-docs { display: flex; flex-wrap: wrap; gap: 8px; margin: 10px 0 0; }
 .ai-doc-card {
@@ -2281,12 +2285,19 @@ article.assistant:hover .ai-reply-tools, article.assistant:last-of-type .ai-repl
 .ai-model:hover, .ai-model.on { background: #222831; color: var(--ink); }
 .ai-model-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .ai-model-level { flex: none; color: var(--cyan); }
+.ai-model-cost { flex: none; color: var(--dim); font-size: 11px; font-variant-numeric: tabular-nums; opacity: 0.85; }
 .ai-model-caret { flex: none; font-size: 10px; opacity: 0.7; }
 .ai-model-menu {
   position: absolute; left: 0; bottom: calc(100% + 8px); z-index: 3; width: min(260px, 72vw);
   display: grid; gap: 2px; padding: 8px; border-radius: 12px; background: #1a1e24;
   box-shadow: 0 12px 32px rgba(0, 0, 0, 0.45), inset 0 0 0 1px #2a3140;
 }
+.ai-chat-usage {
+  display: flex; flex-direction: column; gap: 2px; padding: 6px 8px 8px; margin-bottom: 4px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08); font-size: 11px;
+}
+.ai-chat-usage-label { color: var(--dim); text-transform: uppercase; letter-spacing: 0.04em; font-size: 10px; font-weight: 550; }
+.ai-chat-usage-val { color: var(--ink); font-weight: 500; font-variant-numeric: tabular-nums; }
 .ai-model-head { padding: 4px 6px 2px; font-size: 11px; color: var(--dim); }
 .ai-model-head:not(:first-child) { margin-top: 6px; }
 .ai-model-menu > button {

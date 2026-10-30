@@ -16,7 +16,7 @@ fn converse(
     tx: &Sender<Cmd>,
     chat: &str,
     log_id: &str,
-) -> Result<String, String> {
+) -> Result<(String, f64, u64), String> {
     let mut messages = vec![user_message(prompt, images)];
     let mut steer_after = latest_message_id(c, chat);
     let mut turn_id: Option<String> = None;
@@ -26,6 +26,8 @@ fn converse(
     let mut charts = ChartBook::default();
     let mut live_on = false;
     let hosted = key.is_empty();
+    let mut total_cost = 0.0f64;
+    let mut total_tokens = 0u64;
     for _ in 0..TOOL_BUDGET {
         if turn_halted() {
             return Err("stopped".into());
@@ -48,23 +50,26 @@ fn converse(
             provider_turn(provider, model, key, reasoning, system, &messages)?
         };
         apply_leaked_tools(&mut turn);
+        total_cost += turn.cost;
+        total_tokens += turn.tokens;
         if turn.calls.is_empty() {
             if turn.text.trim().is_empty() {
                 return Err("empty provider response".into());
             }
-            return Ok(turn.text);
+            return Ok((turn.text, total_cost, total_tokens));
         }
         messages.push(turn.assistant.unwrap_or_else(|| assistant_from_calls(turn.calls.clone())));
         let planned: Vec<(String, Value)> = turn.calls.iter().map(|call| {
             (call.fn_name.clone(), call.fn_arguments.clone())
         }).collect();
         let added = fresh_calls(&planned, &seen);
-        let batch = run_batch(&planned, &mut seen, sample, c, tx, chat, log_id, &mut charts, &mut live_on);
+        let cost_per_call = if !planned.is_empty() { turn.cost / planned.len() as f64 } else { 0.0 };
+        let batch = run_batch(&planned, &mut seen, sample, c, tx, chat, log_id, &mut charts, &mut live_on, cost_per_call);
         used += added;
         if batch.all_repeat {
             repeat_streak += 1;
             if repeat_streak >= 2 {
-                return Ok(polling_stopped(system));
+                return Ok((polling_stopped(system), total_cost, total_tokens));
             }
         } else {
             repeat_streak = 0;
@@ -275,6 +280,8 @@ struct ProviderTurn {
     text: String,
     calls: Vec<genai::chat::ToolCall>,
     assistant: Option<genai::chat::ChatMessage>,
+    cost: f64,
+    tokens: u64,
 }
 
 fn provider_model(provider: &str, model: &str) -> Result<genai::ModelIden, String> {
@@ -329,11 +336,30 @@ fn turn_options(provider: &str, model: &str, reasoning: &str) -> genai::chat::Ch
     let mut options = genai::chat::ChatOptions::default()
         .with_capture_content(true)
         .with_capture_tool_calls(true)
-        .with_capture_reasoning_content(true);
+        .with_capture_reasoning_content(true)
+        .with_capture_usage(true);
     if let Some(effort) = reasoning_effort(provider, model, reasoning) {
         options = options.with_reasoning_effort(effort);
     }
     options
+}
+
+fn estimate_cost(provider: &str, model: &str, input_tokens: u64, output_tokens: u64) -> f64 {
+    let (input_rate, output_rate) = match provider {
+        "gemini" if model.contains("flash-lite") => (0.30, 2.50),
+        "gemini" if model.contains("pro") => (2.00, 12.00),
+        "gemini" => (0.75, 3.75),
+        "openai" if model.contains("luna") => (0.10, 0.50),
+        "openai" if model.contains("astra") => (10.00, 50.00),
+        "openai" => (2.00, 10.00),
+        "anthropic" if model.contains("haiku") => (1.00, 5.00),
+        "anthropic" if model.contains("opus") => (4.00, 20.00),
+        "anthropic" => (2.00, 10.00),
+        "xai" if model.contains("4.3") => (1.25, 2.50),
+        "xai" => (2.00, 6.00),
+        _ => (1.00, 5.00),
+    };
+    ((input_tokens as f64 * input_rate) + (output_tokens as f64 * output_rate)) / 1_000_000.0
 }
 
 fn install_tls() {
@@ -659,13 +685,15 @@ async fn stream_turn(
     gen: u64,
 ) -> Result<ProviderTurn, String> {
     use futures_util::StreamExt;
-    let started = until_halt(gen, client.exec_chat_stream(model, request, Some(&options))).await?
+    let started = until_halt(gen, client.exec_chat_stream(model.clone(), request, Some(&options))).await?
         .map_err(|err| err.to_string())?;
     let mut stream = started.stream;
     let mut text = String::new();
     let mut thought = String::new();
     let mut calls: Vec<genai::chat::ToolCall> = Vec::new();
     let mut assistant: Option<genai::chat::ChatMessage> = None;
+    let mut step_tokens = 0u64;
+    let mut step_cost = 0.0f64;
     loop {
         let Some(item) = until_halt(gen, stream.next()).await? else {
             break;
@@ -712,6 +740,15 @@ async fn stream_turn(
                 } else {
                     live_clear_reply();
                 }
+                if let Some(usage) = end.captured_usage.as_ref() {
+                    let prompt = usage.prompt_tokens.unwrap_or(0).max(0) as u64;
+                    let completion = usage.completion_tokens.unwrap_or(0).max(0) as u64;
+                    step_tokens = prompt + completion;
+                    step_cost = estimate_cost(model.adapter_kind.as_str(), model.model_name.as_str(), prompt, completion);
+                    if step_tokens > 0 {
+                        live_add_usage(step_cost, step_tokens);
+                    }
+                }
                 assistant = end.into_assistant_message_for_tool_use().map(settled_message);
             }
         }
@@ -720,7 +757,7 @@ async fn stream_turn(
     if assistant.is_none() && !calls.is_empty() {
         assistant = Some(assistant_from_calls(calls.clone()));
     }
-    Ok(ProviderTurn { text, calls, assistant })
+    Ok(ProviderTurn { text, calls, assistant, cost: step_cost, tokens: step_tokens })
 }
 
 fn call_provider(provider: &str, model: &str, key: &str, prompt: &str, _tools: &[()]) -> Result<String, String> {

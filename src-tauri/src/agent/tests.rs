@@ -399,7 +399,7 @@ mod link_wait_tests {
                 created_at INTEGER NOT NULL
             );",
         ).unwrap();
-        note_tool(&c, "c", "log_compute", &json!({}), &full);
+        note_tool(&c, "c", "log_compute", &json!({}), &full, 0.0);
         let body: String = c.query_row("SELECT body FROM ai_message WHERE role='tool'", [], |row| row.get(0)).unwrap();
         let saved: serde_json::Value = serde_json::from_str(&body).unwrap();
         assert!(saved["output"].get("preview").is_none(), "{saved}");

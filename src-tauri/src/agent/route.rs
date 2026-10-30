@@ -651,9 +651,13 @@ fn complete_turn(
     let prompt = conversation_prompt(&history, log_id, earlier.is_some());
     let images = turn_images(&body["images"]);
     let reply = converse(&provider, &model, &key, reasoning, &system, lang, &prompt, images, sample, c, tx, chat, log_id);
-    save_work(c, chat, now_ms().saturating_sub(started));
+    let (text, cost, tokens) = match reply {
+        Ok((text, cost, tokens)) => (Ok(text), cost, tokens),
+        Err(err) => (Err(err), 0.0, 0),
+    };
+    save_work(c, chat, now_ms().saturating_sub(started), cost, tokens);
     schedule_compact(chat, &provider, &model, &key);
-    let reply = match reply {
+    let reply = match text {
         Ok(text) => text,
         Err(err) => {
             end_live(gen);

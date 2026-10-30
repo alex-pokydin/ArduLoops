@@ -23,7 +23,21 @@ export type Chat = { id: string; title: string; updated_at: number; vehicle_key?
 export type Msg = { role: string; body: string; at: number };
 export type SavedDocItem = { id?: string; title: string; format: string; url: string };
 export type CloudDoc = { id?: string; title: string; format: string; body: string; shared?: boolean; views?: number; url?: string; updatedAt?: number };
-export type LiveTurn = { active: boolean; tool?: string; input?: string; thought?: string; reply?: string; note?: string; holds?: number; docs?: SavedDocItem[]; started_ms?: number; step_ms?: number };
+export type LiveTurn = {
+  active: boolean;
+  tool?: string;
+  input?: string;
+  thought?: string;
+  reply?: string;
+  note?: string;
+  holds?: number;
+  docs?: SavedDocItem[];
+  started_ms?: number;
+  step_ms?: number;
+  cost?: number;
+  tokens?: number;
+  step_cost?: number;
+};
 export type Proposal = {
   id: string;
   status: string;

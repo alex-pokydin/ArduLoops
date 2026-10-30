@@ -484,12 +484,12 @@ fn note_held(c: &Connection, chat: &str, tool: &str, ids: &[String]) {
     ).ok();
 }
 
-fn record_tool(c: &Connection, chat: &str, name: &str, args: &Value, result: &Value) {
+fn record_tool(c: &Connection, chat: &str, name: &str, args: &Value, result: &Value, cost: f64) {
     if confirmation_pending(result) {
         note_held(c, chat, name, &hold_ids(result));
         return;
     }
-    note_tool(c, chat, name, args, result);
+    note_tool(c, chat, name, args, result, cost);
 }
 
 fn note_doc(c: &Connection, chat: &str, doc: &Value) {
@@ -524,9 +524,13 @@ fn save_assistant(c: &Connection, chat: &str, text: &str) {
     ).ok();
 }
 
-fn note_tool(c: &Connection, chat: &str, name: &str, args: &Value, result: &Value) {
+fn note_tool(c: &Connection, chat: &str, name: &str, args: &Value, result: &Value, cost: f64) {
     let mut output = result.clone();
-    let mut line = json!({ "name": name, "input": args, "output": output }).to_string();
+    let mut line_obj = json!({ "name": name, "input": args, "output": output });
+    if cost > 0.0 {
+        line_obj["usd"] = json!((cost * 1e6).round() / 1e6);
+    }
+    let mut line = line_obj.to_string();
     if result.get("chart").is_none() && !kept_whole(name) && line.chars().count() > RESULT_CAP {
         output = match result.as_str() {
             Some(text) => {
@@ -538,7 +542,8 @@ fn note_tool(c: &Connection, chat: &str, name: &str, args: &Value, result: &Valu
                 json!({ "truncated": true, "preview": preview })
             }
         };
-        line = json!({ "name": name, "input": args, "output": output }).to_string();
+        line_obj["output"] = output;
+        line = line_obj.to_string();
     }
     c.execute(
         "INSERT INTO ai_message (chat_id, role, body, created_at) VALUES (?1, 'tool', ?2, ?3)",
@@ -546,11 +551,17 @@ fn note_tool(c: &Connection, chat: &str, name: &str, args: &Value, result: &Valu
     ).ok();
 }
 
-fn save_work(c: &Connection, chat: &str, ms: i64) {
-    let body = json!({ "ms": ms.max(0) }).to_string();
+fn save_work(c: &Connection, chat: &str, ms: i64, cost: f64, tokens: u64) {
+    let mut body = json!({ "ms": ms.max(0) });
+    if cost > 0.0 {
+        body["usd"] = json!((cost * 1e6).round() / 1e6);
+    }
+    if tokens > 0 {
+        body["tokens"] = json!(tokens);
+    }
     c.execute(
         "INSERT INTO ai_message (chat_id, role, body, created_at) VALUES (?1, 'work', ?2, ?3)",
-        params![chat, body, now()],
+        params![chat, body.to_string(), now()],
     ).ok();
 }
 
@@ -742,6 +753,7 @@ fn run_batch(
     log_id: &str,
     charts: &mut ChartBook,
     live_on: &mut bool,
+    cost_per_call: f64,
 ) -> ToolBatch {
     let repeat = json!({
         "ok": true,
@@ -767,7 +779,7 @@ fn run_batch(
                 Ok(ChartSlot::Full) => {
                     let value = json!({ "ok": false, "error": "This turn already has 5 charts." });
                     seen.insert(key, value.clone());
-                    record_tool(c, chat, name, args, &value);
+                    record_tool(c, chat, name, args, &value, cost_per_call);
                     results[i] = value;
                 }
                 Ok(ChartSlot::Remove { known }) => {
@@ -788,13 +800,13 @@ fn run_batch(
                         })
                     };
                     seen.insert(key, value.clone());
-                    record_tool(c, chat, name, args, &value);
+                    record_tool(c, chat, name, args, &value, cost_per_call);
                     results[i] = value;
                 }
                 Err(error) => {
                     let value = json!({ "ok": false, "error": error });
                     seen.insert(key, value.clone());
-                    record_tool(c, chat, name, args, &value);
+                    record_tool(c, chat, name, args, &value, cost_per_call);
                     results[i] = value;
                 }
             }
@@ -832,7 +844,7 @@ fn run_batch(
         });
         for (i, value) in computed {
             seen.insert(call_key(&planned[i].0, &planned[i].1), value.clone());
-            record_tool(c, chat, &planned[i].0, &planned[i].1, &value);
+            record_tool(c, chat, &planned[i].0, &planned[i].1, &value, cost_per_call);
             results[i] = value;
         }
     } else {
@@ -842,7 +854,7 @@ fn run_batch(
             let mut value = fit_result(name, run_tool(name, args, sample, c, tx, chat, log_id));
             stamp_live(name, &mut value, live_on);
             seen.insert(call_key(name, args), value.clone());
-            record_tool(c, chat, name, args, &value);
+            record_tool(c, chat, name, args, &value, cost_per_call);
             results[i] = value;
         }
     }

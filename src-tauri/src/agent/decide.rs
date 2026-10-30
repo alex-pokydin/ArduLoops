@@ -239,7 +239,7 @@ fn finish_holds(c: &Connection, chat: &str) -> bool {
             }
         }
         if !items.is_empty() {
-            note_tool(c, chat, &tool, &json!({}), &rollup(items));
+            note_tool(c, chat, &tool, &json!({}), &rollup(items), 0.0);
         }
         c.execute("DELETE FROM ai_message WHERE id=?1", [id]).ok();
     }
