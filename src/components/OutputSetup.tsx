@@ -80,6 +80,11 @@ export function useParamDraft(params: Record<string, number>) {
 
 export type Draft = ReturnType<typeof useParamDraft>;
 
+/** The number of a job on a step's card: outlined until it is done, green when done, amber when it needs attention. */
+export function StepNum({ n, state }: { n: number; state: "done" | "warn" | "todo" }) {
+  return <span className={`ms-num ${state}`} aria-hidden="true">{n}</span>;
+}
+
 /** Guide link on the left; changes, Discard and Write on the right, as every drawn step page has. */
 export function StepFooter({
   draft,

@@ -7,15 +7,14 @@ import { getLatest, getSetupSnapshot, subscribe } from "../mav/store";
 import { useStorePicked } from "../mav/view";
 import { AccelOrient } from "./AccelOrient";
 import { AccelWizard } from "./CalibrationPanel";
-import { ORIENT_IDS, orientLabel } from "./compass-orient";
-import { NumField, SelectField, StepFooter, pnum, useParamDraft } from "./OutputSetup";
+import { customAngles, orientChoices, orientLabel } from "./compass-orient";
+import { NumField, SelectField, StepFooter, StepNum, pnum, useParamDraft } from "./OutputSetup";
 import { StepPreArm } from "./StepPreArm";
 
 const GUIDE = "https://ardupilot.org/copter/docs/common-accelerometer-calibration.html";
 const G = 9.80665;
 const DEG = Math.PI / 180;
 
-const ORIENTATIONS: [number, string][] = ORIENT_IDS.map((id) => [id, orientLabel(id)]);
 const GYRO_CAL: [number, string][] = [[0, "Never"], [1, "Every boot"]];
 const IMU_MSG = ["SCALED_IMU", "SCALED_IMU2", "SCALED_IMU3"] as const;
 
@@ -109,9 +108,9 @@ export function AccelStep() {
   const trimX = pnum(params, "AHRS_TRIM_X");
   const trimY = pnum(params, "AHRS_TRIM_Y");
   const trimmed = trimX != null && trimY != null && (Math.abs(trimX) > 1e-4 || Math.abs(trimY) > 1e-4);
-  const wizRow = (state: "done" | "warn" | "todo", title: string, detail: string, label: string, onClick: () => void, primary = false) => (
+  const wizRow = (n: number, state: "done" | "warn" | "todo", title: string, detail: string, label: string, onClick: () => void, primary = false) => (
     <div className="ms-wstep">
-      <span className={`ms-dot ${state === "todo" ? "" : state}`} />
+      <StepNum n={n} state={state} />
       <span className="ms-wstep-copy"><b>{t(title)}</b><span>{detail}</span></span>
       <button type="button" className={`frs-btn ${primary ? "primary sm" : "quiet"}`} disabled={!ready || !!busy} onClick={onClick}>{label}</button>
     </div>
@@ -133,13 +132,15 @@ export function AccelStep() {
               <span className="ms-fix">{t("Propellers off, vehicle still")}</span>
             </div>
             {orient == null ? null : wizRow(
+              1,
               sideways ? "warn" : "done",
               "Orientation",
-              sideways ? t("{name} · reads more than 60° off level at rest", { name: orientLabel(Math.round(orient)) }) : t("{name} · reads level", { name: orientLabel(Math.round(orient)) }),
+              sideways ? t("{name} · reads more than 60° off level at rest", { name: [orientLabel(Math.round(orient)), customAngles(params, Math.round(orient))].filter(Boolean).join(" ") }) : t("{name} · reads level", { name: [orientLabel(Math.round(orient)), customAngles(params, Math.round(orient))].filter(Boolean).join(" ") }),
               t("Detect"),
               () => setDetect(true),
             )}
             {cal == null ? null : wizRow(
+              2,
               cal ? "done" : "warn",
               "Six-side calibration",
               cal && ofs.every((v) => v != null) ? `INS_ACCOFFS ${ofs.map((v) => (v as number).toFixed(2)).join(", ")} m/s²` : t("Not done on this board. ArduPilot will not arm until it is."),
@@ -148,6 +149,7 @@ export function AccelStep() {
               !cal,
             )}
             {trimX == null || trimY == null ? null : wizRow(
+              3,
               trimmed ? "done" : "todo",
               "Level",
               trimmed ? t("Trim roll {x}° · pitch {y}°", { x: (trimX / DEG).toFixed(1), y: (trimY / DEG).toFixed(1) }) : t("No trim stored. Set it with the vehicle level on its legs."),
@@ -158,7 +160,7 @@ export function AccelStep() {
           </div>
           <div className="ms-card">
             <div className="ms-card-head"><b>{t("Settings")}</b></div>
-            <SelectField draft={draft} name="AHRS_ORIENTATION" label="Orientation" options={ORIENTATIONS} />
+            <SelectField draft={draft} name="AHRS_ORIENTATION" label="Orientation" options={orientChoices(params, orient == null ? null : Math.round(draft.value("AHRS_ORIENTATION") ?? orient))} hint={customAngles(params, Math.round(draft.value("AHRS_ORIENTATION") ?? -1)) || undefined} />
             <NumField draft={draft} name="AHRS_TRIM_X" label="Roll trim" unit="°" scale={DEG} step={0.1} />
             <NumField draft={draft} name="AHRS_TRIM_Y" label="Pitch trim" unit="°" scale={DEG} step={0.1} />
             <SelectField draft={draft} name="INS_GYR_CAL" label="Gyro calibration" options={GYRO_CAL} />

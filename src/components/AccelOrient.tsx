@@ -6,7 +6,8 @@ import { currentMatrix, fitBoard, mean, namedMatrix, orientLabel, toEuler, vlen,
 import { Icon } from "./MotorSetup";
 import { BoardTop, HoldRing, PoseArt, SensorWizard, TiltGauge } from "./SensorWizard";
 
-type Phase = "level" | "nose" | "done";
+/** `ready` waits for Start, so the vehicle can be placed before anything is measured. */
+type Phase = "ready" | "level" | "nose" | "done";
 
 /** Seconds a pose must be held still before it is taken. */
 const HOLD = 1;
@@ -53,7 +54,7 @@ export function AccelOrient({ current, onPick, onClose, fromAssistant }: {
 }) {
   const t = useT();
   const sample = useSyncExternalStore(subscribe, getLatest, getLatest);
-  const [phase, setPhase] = useState<Phase>("level");
+  const [phase, setPhase] = useState<Phase>("ready");
   const [fit, setFit] = useState<BoardFit | null>(null);
   const [held, setHeld] = useState(0);
   const bag = useRef({ seen: -1, lastT: 0, held: 0, points: [] as V3[], level: null as V3 | null });
@@ -79,7 +80,7 @@ export function AccelOrient({ current, onPick, onClose, fromAssistant }: {
   }
 
   useEffect(() => {
-    if (phase === "done" || bag.current.seen === sample.t) return;
+    if (phase === "ready" || phase === "done" || bag.current.seen === sample.t) return;
     const b = bag.current;
     const dt = b.lastT > 0 ? Math.min(0.4, Math.max(0, sample.t - b.lastT)) : 0;
     b.seen = sample.t;
@@ -111,7 +112,7 @@ export function AccelOrient({ current, onPick, onClose, fromAssistant }: {
   function again() {
     bag.current = { seen: -1, lastT: 0, held: 0, points: [], level: null };
     setFit(null);
-    setPhase("level");
+    setPhase("ready");
   }
 
   const holding = held > 0;
@@ -123,7 +124,21 @@ export function AccelOrient({ current, onPick, onClose, fromAssistant }: {
       <span />
     </>
   );
-  if (phase === "level") {
+  if (phase === "ready") {
+    body = (
+      <>
+        <div className="mw-headline"><h3>{t("Two still poses")}</h3><p>{t("Level on a flat surface, then nose down about 30°. After Start, each pose is taken once it has been held still for a second.")}</p></div>
+        {!sample.ok ? <div className="mw-note warn">{Icon.warn()}<span>{t("Connect a vehicle first.")}</span></div> : null}
+        <span className="mw-dim mw-sm">{t("Nothing is written. The result goes into the step's draft.")}</span>
+      </>
+    );
+    footer = (
+      <>
+        <button type="button" className="mw-btn text" onClick={() => onClose(report(false))}>{t("Cancel")}</button>
+        <button type="button" className="mw-btn primary" disabled={!sample.ok} onClick={() => setPhase("level")}><span>{t("Start")}</span>{Icon.chevR()}</button>
+      </>
+    );
+  } else if (phase === "level") {
     body = (
       <>
         <div className="mw-headline"><h3>{t("Set it level")}</h3><p>{t(craft === "plane" ? "On its wheels or belly, on a flat surface. It is taken by itself after a second." : "On its legs, on a flat surface. It is taken by itself after a second.")}</p></div>
@@ -205,7 +220,7 @@ export function AccelOrient({ current, onPick, onClose, fromAssistant }: {
       title={t("Detect board orientation")}
       fromAssistant={fromAssistant}
       steps={[t("Level"), t("Nose down"), t("Result")]}
-      step={phase === "level" ? 0 : phase === "nose" ? 1 : 2}
+      step={phase === "ready" || phase === "level" ? 0 : phase === "nose" ? 1 : 2}
       left={left}
       body={body}
       footer={footer}

@@ -3,6 +3,7 @@ import { createPortal } from "react-dom";
 import { AccelOrient } from "./AccelOrient";
 import { AccelWizard } from "./CalibrationPanel";
 import { CompassMot } from "./CompassMot";
+import { CompassOrient } from "./CompassOrient";
 import { CompassCalWizard } from "./CompassPanel";
 import { BatterySetup } from "./BatterySetup";
 import { ModeSetup } from "./ModeSetup";
@@ -83,8 +84,9 @@ export function WizardHost({
     const orient = sample.params?.AHRS_ORIENTATION;
     return <AccelOrient current={typeof orient === "number" ? Math.round(orient) : 0} onClose={finish} fromAssistant />;
   }
-  if (ask.wizard === "compass") return <CompassCalWizard onClose={finish} />;
-  if (ask.wizard === "compass_mot") return <CompassMot onClose={finish} />;
+  if (ask.wizard === "compass") return <CompassCalWizard onClose={finish} fromAssistant />;
+  if (ask.wizard === "compass_orient") return <CompassOrient autoOpen fromAssistant onClose={(report) => finish(report)} />;
+  if (ask.wizard === "compass_mot") return <CompassMot onClose={finish} fromAssistant />;
   if (ask.wizard === "radio") return <RcSetup onClose={finish} />;
   if (ask.wizard === "modes") return <ModeSetup frame={sample.frame === "plane" ? "plane" : "copter"} onClose={finish} />;
   if (ask.wizard === "battery") return <BatterySetup onClose={finish} />;

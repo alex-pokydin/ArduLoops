@@ -5,7 +5,7 @@ import { getSetupSnapshot, subscribe } from "../mav/store";
 import { useStorePicked } from "../mav/view";
 import { MotorDiagram } from "./MotorDiagram";
 import { MotorSetup, type MotorScope } from "./MotorSetup";
-import { OUTPUTS, OutputsTable, SelectField, StepFooter, Switch, pnum, useLiveOutputs, useParamDraft } from "./OutputSetup";
+import { OUTPUTS, OutputsTable, pnum, SelectField, StepFooter, StepNum, Switch, useLiveOutputs, useParamDraft } from "./OutputSetup";
 
 const GUIDE = "https://ardupilot.org/copter/docs/connect-escs-and-motors.html";
 
@@ -22,10 +22,6 @@ const REBOOT = ["MOT_PWM_TYPE", "SERVO_BLH_BDMASK", "SERVO_BLH_RVMASK"];
 
 export function isDshot(type: number | null): boolean {
   return type != null && Math.round(type) >= 4 && Math.round(type) <= 7;
-}
-
-function StateDot({ state }: { state: "done" | "warn" | "todo" }) {
-  return <i className={`ms-dot ${state}`} aria-hidden="true" />;
 }
 
 /**
@@ -63,9 +59,9 @@ export function MotorsStep() {
   const rpmOn = bdmask != null && motorOuts.length > 0 && (Math.round(bdmask) & motorBits) === motorBits;
   const ready = sample.ok && !!frame;
 
-  const wizRow = (state: "done" | "warn" | "todo", title: string, detail: string, label: string, scope: MotorScope) => (
+  const wizRow = (n: number, state: "done" | "warn" | "todo", title: string, detail: string, label: string, scope: MotorScope) => (
     <div className="ms-wstep">
-      <StateDot state={state} />
+      <StepNum n={n} state={state} />
       <span className="ms-wstep-copy"><b>{t(title)}</b><span>{detail}</span></span>
       <button type="button" className="frs-btn quiet" disabled={!ready} onClick={() => setOpen(scope)}>{t(label)}</button>
     </div>
@@ -96,8 +92,9 @@ export function MotorsStep() {
               <b>{t("Motor wizard")}</b>
               <button type="button" className="frs-btn primary sm" disabled={!ready} onClick={() => setOpen(null)}>{t("Open")}</button>
             </div>
-            {wizRow(matched === total && total > 0 ? "done" : "warn", "Order", t("{n} of {total} outputs matched", { n: matched, total }), matched === total ? "Redo" : "Match", { steps: ["order"] })}
+            {wizRow(1, matched === total && total > 0 ? "done" : "warn", "Order", t("{n} of {total} outputs matched", { n: matched, total }), matched === total ? "Redo" : "Match", { steps: ["order"] })}
             {wizRow(
+              2,
               "todo",
               "Direction",
               reversedOuts.length ? t("Reversed in the ESC: {list}", { list: reversedOuts.map((o) => `OUT ${o}`).join(", ") }) : t("Spin each motor and compare with the arrows."),
@@ -105,6 +102,7 @@ export function MotorsStep() {
               { steps: ["direction"] },
             )}
             {wizRow(
+              3,
               arm != null && arm > 0 && (min == null || min > arm) ? "done" : "warn",
               "Idle",
               arm != null ? t("Spin armed {arm} · min {min}", { arm: arm.toFixed(2), min: min != null ? min.toFixed(2) : "—" }) : "—",

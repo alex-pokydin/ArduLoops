@@ -548,7 +548,7 @@ function waitingOn(steps: Step[], cards: WaitingCard[]): Set<string> {
   const ids = new Set<string>();
   for (const card of cards) {
     if (card.kind === "wizard") {
-      const wizard = card.name === "compass_mot" ? "compass" : card.name === "board_orientation" ? "accel" : card.name;
+      const wizard = card.name === "compass_mot" || card.name === "compass_orient" ? "compass" : card.name === "board_orientation" ? "accel" : card.name;
       const step = steps.find((item) => item.wizard === wizard);
       if (step) ids.add(step.id);
     } else {

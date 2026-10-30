@@ -151,7 +151,8 @@ function wizardTitle(tr: typeof import("../i18n/i18n").t, name: string): string 
   if (name === "accel") return tr("Accelerometer wizard");
   if (name === "board_orientation") return tr("Detect board orientation");
   if (name === "compass") return tr("Compass offset wizard");
-  if (name === "compass_mot") return tr("Motor current wizard");
+  if (name === "compass_orient") return tr("Compass orientation");
+  if (name === "compass_mot") return tr("Motor interference");
   if (name === "motors") return tr("Motor setup wizard");
   if (name === "radio") return tr("Radio setup");
   if (name === "modes") return tr("Flight modes");

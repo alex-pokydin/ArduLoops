@@ -41,3 +41,25 @@ export function describeDevice(id: number | null, kind: "compass" | "imu"): Devi
   else if (busType === 3) where = `DroneCAN ${bus + 1} · node ${address}`;
   return { name, bus: busName, where };
 }
+
+/** COMPASS_DISBLMSK bits and their names, as AP_Compass documents them. */
+export const COMPASS_DRIVER_BITS: Record<number, string> = {
+  0: "HMC5883", 1: "LSM303D", 2: "AK8963", 3: "BMM150", 4: "LSM9DS1", 5: "LIS3MDL", 6: "AK0991x", 7: "IST8310",
+  8: "ICM-20948", 9: "MMC3416", 11: "DroneCAN", 12: "QMC5883L", 14: "MAG3110", 15: "IST8308", 16: "RM3100", 17: "MSP",
+  18: "External AHRS", 19: "MMC5xx3", 20: "QMC5883P", 21: "BMM350", 22: "IIS2MDC / LIS2MDL", 24: "AF9838",
+};
+
+/** Compass device type (from the id) → its AP_Compass driver bit; DroneCAN and MSP go by bus. */
+const COMPASS_TYPE_BIT: Record<number, number> = {
+  0x01: 0, 0x07: 0, 0x02: 1, 0x04: 2, 0x05: 3, 0x06: 4, 0x08: 5, 0x09: 6, 0x14: 6, 0x15: 6, 0x0a: 7, 0x0b: 8,
+  0x0c: 9, 0x0d: 12, 0x0e: 14, 0x10: 15, 0x11: 16, 0x12: 16, 0x13: 19, 0x16: 20, 0x17: 21, 0x18: 22, 0x1a: 24,
+};
+
+/** The COMPASS_DISBLMSK bit that stops this compass's driver, or null when it has none (SITL). */
+export function compassDriverBit(id: number | null): number | null {
+  if (id == null || id <= 0) return null;
+  const busType = id & 0x07;
+  if (busType === 3) return 11;
+  if (busType === 5) return 17;
+  return COMPASS_TYPE_BIT[(id >> 16) & 0xff] ?? null;
+}

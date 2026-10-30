@@ -218,3 +218,25 @@ export function fitBoard(levelBody: V3, noseBody: V3, current: M3): BoardFit | n
   }
   return best;
 }
+
+/**
+ * Picker entries for an orientation parameter: every named rotation, plus Custom 1 and 2 (CUST_ROT1/2_*) where the
+ * firmware has them, and the old Custom (100) only when it is the value set.
+ */
+export function orientChoices(params: Record<string, number>, current: number | null): [number, string][] {
+  const list: [number, string][] = ORIENT_IDS.map((id) => [id, orientLabel(id)]);
+  if ("CUST_ROT1_ROLL" in params || current === 101) list.push([101, orientLabel(101)]);
+  if ("CUST_ROT2_ROLL" in params || current === 102) list.push([102, orientLabel(102)]);
+  if (current === 100) list.push([100, orientLabel(100)]);
+  if (current != null && !list.some(([id]) => id === current)) list.push([current, String(current)]);
+  return list;
+}
+
+/** The angles behind a custom rotation (101 → CUST_ROT1_*, 102 → CUST_ROT2_*), or "" for a named one. */
+export function customAngles(params: Record<string, number>, value: number | null): string {
+  if (value !== 101 && value !== 102) return "";
+  const g = value === 101 ? "CUST_ROT1_" : "CUST_ROT2_";
+  const a = ["ROLL", "PITCH", "YAW"].map((k) => params[`${g}${k}`]);
+  if (!a.every((v) => typeof v === "number" && Number.isFinite(v))) return "";
+  return `roll ${a[0].toFixed(1)}° · pitch ${a[1].toFixed(1)}° · yaw ${a[2].toFixed(1)}°`;
+}
