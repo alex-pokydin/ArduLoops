@@ -111,7 +111,7 @@ const PLANE_FS = ["THR_FAILSAFE", "THR_FS_VALUE", "FS_SHORT_ACTN", "FS_SHORT_TIM
 
 // Step ids are also the `setup_status` sections: keep the enum in src-tauri/src/agent/schema.rs the same.
 const COPTER: Step[] = [
-  { id: "frame", title: "Frame", body: "How many arms, and how the motors are laid out.", kind: "frame", group: "Airframe", params: ["FRAME_CLASS", "FRAME_TYPE"] },
+  { id: "frame", title: "Frame", body: "How many arms, and how the motors are laid out.", kind: "frame", group: "Airframe", params: ["FRAME_CLASS", "FRAME_TYPE"], wizard: "frame" },
   LEVEL,
   COMPASS,
   BATTERY,

@@ -6,6 +6,7 @@ import { PREARM_FRESH_S } from "../lib/vehicleHeader";
 import { noteUi, writeParam } from "../mav/cmd";
 import { useStorePicked } from "../mav/view";
 import { Icon } from "./MotorSetup";
+import { type WizardClose } from "../wizards/close";
 
 type Live = {
   ok: boolean;
@@ -82,7 +83,7 @@ export function PreArmHead({ failing }: { failing: number }) {
  * One checkbox per arming check: checked = it stops arming when it fails. Each row says what it covers and its
  * state now. Write sends one parameter, ARMING_SKIPCHK or ARMING_CHECK, whichever the board has.
  */
-export function ArmingChecksWindow({ tick = [], onClose }: { tick?: number[]; onClose: () => void }) {
+export function ArmingChecksWindow({ tick = [], onClose, fromAssistant }: { tick?: number[]; onClose: (report?: WizardClose) => void; fromAssistant?: boolean }) {
   const t = useT();
   const live = useLive();
   const checks = checksFor(live.frame);
@@ -118,7 +119,7 @@ export function ArmingChecksWindow({ tick = [], onClose }: { tick?: number[]; on
       return;
     }
     noteUi([{ kind: "param", name: state.param, value, from: state.raw }]);
-    onClose();
+    onClose({ outcome: "completed", measures: { param: state.param, from: state.raw, to: value, skipped: checks.filter((c) => skip.has(c.bit)).map((c) => c.name).join(", ") || "none" } });
   }
 
   const toggle = (bit: number) => {
@@ -133,10 +134,10 @@ export function ArmingChecksWindow({ tick = [], onClose }: { tick?: number[]; on
       <div className="modal ac-modal" role="dialog" aria-modal="true" aria-labelledby="ac-title">
         <div className="ac-top">
           <div className="ac-title">
-            <h2 id="ac-title">{t("Arming checks")}</h2>
+            <h2 id="ac-title">{t("Arming checks")}{fromAssistant ? <span className="mw-tag">{t("From assistant")}</span> : null}</h2>
             <span>{t("A checked check stops arming when it fails. An unchecked one still runs and reports; it just does not stop arming.")}</span>
           </div>
-          <button type="button" className="mw-icon" disabled={busy} onClick={onClose} aria-label={t("Close")} title={t("Close")}>{Icon.x()}</button>
+          <button type="button" className="mw-icon" disabled={busy} onClick={() => onClose()} aria-label={t("Close")} title={t("Close")}>{Icon.x()}</button>
         </div>
         <div className="ac-list">
           {checks.map((c) => {
@@ -159,7 +160,7 @@ export function ArmingChecksWindow({ tick = [], onClose }: { tick?: number[]; on
             <span className="ac-param">{changed.length ? `${state.param} ${state.raw} → ${value}` : state.param}</span>
           </span>
           <span className="ac-foot-right">
-            <button type="button" className="mw-btn text" disabled={busy} onClick={onClose}>{t("Cancel")}</button>
+            <button type="button" className="mw-btn text" disabled={busy} onClick={() => onClose()}>{t("Cancel")}</button>
             <button type="button" className="mw-btn primary" disabled={busy || !changed.length || !live.ok || live.armed} onClick={() => void write()}>
               {busy ? t("Writing…") : changed.length ? t("Write {n} changes", { n: changed.length }) : t("Write")}
             </button>

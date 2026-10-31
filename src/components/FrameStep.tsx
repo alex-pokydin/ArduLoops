@@ -4,6 +4,7 @@ import { MotorDiagram } from "./MotorDiagram";
 import { Icon } from "./MotorSetup";
 import { StepNum } from "./OutputSetup";
 import { SensorWizard } from "./SensorWizard";
+import { type WizardClose } from "../wizards/close";
 import { useT } from "../i18n/i18n";
 import { addLog } from "../log";
 import { FRAME_DEFS } from "../lib/motorFrameData";
@@ -156,7 +157,7 @@ export function FrameStep() {
  * Pick the class, then the type, then write both; the board uses them after a reboot. The picked frame is drawn on
  * the left as it changes. Opened from Type, it starts there with the saved class.
  */
-export function FrameWizard({ start, onClose }: { start: "class" | "type"; onClose: () => void }) {
+export function FrameWizard({ start, onClose, fromAssistant }: { start: "class" | "type"; onClose: (report?: WizardClose) => void; fromAssistant?: boolean }) {
   const t = useT();
   const sample = useSyncExternalStore(subscribe, getSetupSnapshot, getSetupSnapshot);
   const armed = useStorePicked((s) => !!s.armed);
@@ -172,7 +173,7 @@ export function FrameWizard({ start, onClose }: { start: "class" | "type"; onClo
   const wasOk = useRef(sample.ok);
   useEffect(() => {
     // The board dropped for its reboot: the job is done.
-    if (phase === "done" && wasOk.current && !sample.ok) onClose();
+    if (phase === "done" && wasOk.current && !sample.ok) close();
     wasOk.current = sample.ok;
   }, [sample.ok, phase, onClose]);
 
@@ -181,6 +182,7 @@ export function FrameWizard({ start, onClose }: { start: "class" | "type"; onClo
   // Y6 and Tri accept any type: keep the saved one unless the class changes.
   const nextType = cls == null ? null : picked?.any ? (cls === savedCls && savedType != null ? savedType : ANY_TYPE) : type;
   const frame = cls != null ? motorFrame(cls, nextType) : null;
+  const close = () => onClose({ outcome: phase === "done" ? "completed" : "cancelled", measures: { FRAME_CLASS: phase === "done" ? cls : savedCls, FRAME_TYPE: phase === "done" ? nextType : savedType, written: phase === "done" ? 1 : 0, reboot_needed: phase === "done" ? 1 : 0 } });
   const changes = cls == null || nextType == null ? 0 : Number(cls !== savedCls) + Number(nextType !== savedType);
 
   function pickClass(next: number) {
@@ -246,7 +248,7 @@ export function FrameWizard({ start, onClose }: { start: "class" | "type"; onClo
     );
     footer = (
       <>
-        <button type="button" className="mw-btn text" onClick={onClose}>{t("Cancel")}</button>
+        <button type="button" className="mw-btn text" onClick={close}>{t("Cancel")}</button>
         <button type="button" className="mw-btn primary" disabled={cls == null} onClick={() => setPhase(cls === 7 ? "write" : "type")}><span>{t("Next")}</span>{Icon.chevR()}</button>
       </>
     );
@@ -296,7 +298,7 @@ export function FrameWizard({ start, onClose }: { start: "class" | "type"; onClo
         <button type="button" className="mw-btn text" onClick={() => setPhase(cls === 7 ? "class" : "type")}>{t("Back")}</button>
         {changes ? (
           <button type="button" className="mw-btn primary" disabled={busy || !sample.ok || armed} onClick={() => void write()}>{busy ? t("Writing…") : t("Write")}</button>
-        ) : <button type="button" className="mw-btn primary" onClick={onClose}>{t("Close")}</button>}
+        ) : <button type="button" className="mw-btn primary" onClick={close}>{t("Close")}</button>}
       </>
     );
   } else {
@@ -308,14 +310,15 @@ export function FrameWizard({ start, onClose }: { start: "class" | "type"; onClo
     );
     footer = (
       <>
-        <button type="button" className="mw-btn text" onClick={onClose}>{t("Finish")}</button>
-        <button type="button" className="mw-btn warn-solid" disabled={!sample.ok || armed} onClick={() => { sendCmd({ op: "reboot" }); addLog(t("Reboot requested"), "cmd"); onClose(); }}>{Icon.power()}<span>{t("Reboot & finish")}</span></button>
+        <button type="button" className="mw-btn text" onClick={close}>{t("Finish")}</button>
+        <button type="button" className="mw-btn warn-solid" disabled={!sample.ok || armed} onClick={() => { sendCmd({ op: "reboot" }); addLog(t("Reboot requested"), "cmd"); close(); }}>{Icon.power()}<span>{t("Reboot & finish")}</span></button>
       </>
     );
   }
   return (
     <SensorWizard
       title={t("Frame")}
+      fromAssistant={fromAssistant}
       steps={[t("Class"), t("Type"), t("Write")]}
       step={phase === "class" ? 0 : phase === "type" ? 1 : 2}
       left={left}
@@ -323,7 +326,7 @@ export function FrameWizard({ start, onClose }: { start: "class" | "type"; onClo
       footer={footer}
       blocker={phase === "done" ? null : sample.ok ? (armed ? "armed" : null) : "lost"}
       busy={busy}
-      onClose={onClose}
+      onClose={close}
     />
   );
 }

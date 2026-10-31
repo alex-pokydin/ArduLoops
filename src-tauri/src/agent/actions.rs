@@ -117,6 +117,8 @@ const WIZARDS: &[WizardSpec] = &[
     WizardSpec { name: "compass_orient", copter: true, plane: true },
     WizardSpec { name: "compass_mot", copter: true, plane: false },
     WizardSpec { name: "motors", copter: true, plane: false },
+    WizardSpec { name: "frame", copter: true, plane: false },
+    WizardSpec { name: "arming_checks", copter: true, plane: true },
     WizardSpec { name: "radio_ends", copter: true, plane: true },
     WizardSpec { name: "radio_directions", copter: true, plane: true },
     WizardSpec { name: "modes", copter: true, plane: true },
