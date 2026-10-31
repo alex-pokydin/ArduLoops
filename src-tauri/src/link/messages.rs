@@ -508,6 +508,7 @@ fn apply_cmd(
         }
         Cmd::Hover => {
             st.virtual_stick = true;
+            st.stick_at = Some(Instant::now());
             st.rc.thr = 1500;
             st.rc.roll = 1500;
             st.rc.pitch = 1500;
@@ -515,6 +516,7 @@ fn apply_cmd(
         }
         Cmd::Land => {
             st.virtual_stick = true;
+            st.stick_at = Some(Instant::now());
             st.rc.thr = 1100;
             st.rc.roll = 1500;
             st.rc.pitch = 1500;
@@ -527,6 +529,7 @@ fn apply_cmd(
             thr,
         } => {
             st.virtual_stick = true;
+            st.stick_at = Some(Instant::now());
             st.rc.roll = pwm(roll, 1500);
             st.rc.pitch = pwm(pitch, 1500);
             st.rc.yaw = pwm(yaw, 1500);
@@ -538,29 +541,7 @@ fn apply_cmd(
                 pwm(thr, 1500)
             };
         }
-        Cmd::Release => {
-            st.virtual_stick = false;
-            st.pulse_until = None;
-            st.rc.thr = 1500;
-            st.rc.roll = 1500;
-            st.rc.pitch = 1500;
-            st.rc.yaw = 1500;
-            send_msg(
-                conn,
-                &MavMessage::RC_CHANNELS_OVERRIDE(RC_CHANNELS_OVERRIDE_DATA {
-                    chan1_raw: 0,
-                    chan2_raw: 0,
-                    chan3_raw: 0,
-                    chan4_raw: 0,
-                    chan5_raw: 0,
-                    chan6_raw: 0,
-                    chan7_raw: 0,
-                    chan8_raw: 0,
-                    target_system: st.target_system,
-                    target_component: st.target_component,
-                }),
-            );
-        }
+        Cmd::Release => release_sticks(conn, st),
         Cmd::Connect { .. } | Cmd::Disconnect | Cmd::SitlStart { .. } | Cmd::SitlStop => {}
         Cmd::Reboot => reboot_fc(conn, st),
         Cmd::RebootBootloader => reboot_to_bootloader(conn, st),

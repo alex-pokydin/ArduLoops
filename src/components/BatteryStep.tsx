@@ -72,6 +72,9 @@ function parseNum(text: string): number | null {
 
 const round3 = (value: number) => Math.round(value * 1000) / 1000;
 
+/** Below this the board is on USB or a loose plug: a 1S pack never reads under about 3 V. */
+const PACK_MIN_V = 3;
+
 async function writeOne(name: string, value: number, from: number | null): Promise<string | null> {
   const err = await writeParam(name, value);
   if (!err) noteUi([{ kind: "param", name, value, from }]);
@@ -86,7 +89,7 @@ function PackArt({ pack, cells, marks, note }: { pack: Pack; cells: number; mark
   const lo = Math.min(3.3 * cells, ...lowest.map((m) => m - 0.3 * cells / 4));
   const hi = 4.2 * cells;
   const y = (v: number) => 196 - Math.max(0, Math.min(1, (v - lo) / (hi - lo))) * 168;
-  const v = pack.volts != null && pack.volts >= 1 ? pack.volts : null;
+  const v = pack.volts != null && pack.volts >= PACK_MIN_V ? pack.volts : null;
   const tone = v == null ? "mute" : marks.crit != null && v < marks.crit ? "hot" : marks.low != null && v < marks.low ? "amber" : "ok";
   const mark = (value: number | null, label: string, cls: string) =>
     value == null || value <= 0 ? null : (
@@ -129,7 +132,7 @@ export function BatteryStep() {
   const voltAnalog = monitor != null && VOLT_ANALOG.has(monitor);
   const ampAnalog = monitor != null && AMP_ANALOG.has(monitor);
   const digital = monitor != null && monitor !== 0 && !voltAnalog && monitor !== 31;
-  const hasPack = pack.volts != null && pack.volts >= 1;
+  const hasPack = pack.volts != null && pack.volts >= PACK_MIN_V;
   const marks = { arm: paramNum(params, "BATT_ARM_VOLT"), low: paramNum(params, "BATT_LOW_VOLT"), crit: paramNum(params, "BATT_CRT_VOLT") };
   // Cells from the pack, else from the motor voltage limit, else from the critical or low mark (about 3.3 or 3.5 V a cell).
   const fromMark = marks.crit && marks.crit > 2 ? Math.round(marks.crit / 3.3) : marks.low && marks.low > 2 ? Math.round(marks.low / 3.5) : null;
@@ -350,13 +353,13 @@ export function BatteryVoltageWizard({ onClose, fromAssistant }: { onClose: (rep
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState("");
   const [result, setResult] = useState<{ board: number; meter: number; from: number; to: number } | null>(null);
-  const steady = useSteady(pack.volts != null && pack.volts >= 1 ? pack.volts : null);
+  const steady = useSteady(pack.volts != null && pack.volts >= PACK_MIN_V ? pack.volts : null);
   const held = useRef<number | null>(null);
   if (steady != null) held.current = steady;
   const mult = paramNum(params, "BATT_VOLT_MULT");
   const monitor = paramNum(params, "BATT_MONITOR");
   const analog = monitor != null && VOLT_ANALOG.has(Math.round(monitor));
-  const hasPack = pack.volts != null && pack.volts >= 1;
+  const hasPack = pack.volts != null && pack.volts >= PACK_MIN_V;
   const meter = parseNum(meterText);
   const board = held.current;
   const ratio = meter != null && board != null && board > 0 ? meter / board : null;

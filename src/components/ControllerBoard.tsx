@@ -229,8 +229,8 @@ const BatteryTile = memo(function BatteryTile() {
   // SYS_STATUS sends 0 or UINT16_MAX when no battery monitor is configured.
   if (monitorRaw === "0" || mv == null || mv <= 0 || mv >= 65535) return <Tile label={t("Battery")} value="—" sub={t("No monitor")} title={t("No battery monitor")} tone="mute" />;
   const volts = mv / 1000;
-  // A monitor reading under 1 V has no pack on it (powered over USB) or a wrong voltage pin; its percentage means nothing.
-  if (volts < 1) return <Tile label={t("Battery")} value={`${volts.toFixed(1)} V`} sub={t("No voltage read")} title={t("No pack connected, or the voltage pin or multiplier is wrong")} tone="amber" />;
+  // A monitor reading under 3 V has no pack on it (powered over USB) or a wrong voltage pin; its percentage means nothing.
+  if (volts < 3) return <Tile label={t("Battery")} value={`${volts.toFixed(1)} V`} sub={t("No voltage read")} title={t("No pack connected, or the voltage pin or multiplier is wrong")} tone="amber" />;
   const pct = pctRaw === "" ? -1 : Number(pctRaw);
   const arm = armRaw === "" ? 0 : Number(armRaw);
   const tone: Tone = arm > 0 && volts < arm ? "amber" : "ok";
@@ -242,10 +242,11 @@ const RcTile = memo(function RcTile() {
   const key = usePicked((s) => {
     if (!s.ok) return "off";
     const live = (s.rc ?? []).filter((v) => v >= 800 && v <= 2200).length;
-    return `${live}|${num(s, "RC_CHANNELS.chancount") ?? ""}|${num(s, "RC_CHANNELS.rssi") ?? ""}`;
+    return `${live}|${num(s, "RC_CHANNELS.chancount") ?? ""}|${num(s, "RC_CHANNELS.rssi") ?? ""}|${s.rc_override ? 1 : 0}`;
   });
   if (key === "off") return <Tile label={t("RC")} value="—" tone="mute" />;
-  const [liveRaw, countRaw, rssiRaw] = key.split("|");
+  const [liveRaw, countRaw, rssiRaw, overrideRaw] = key.split("|");
+  if (overrideRaw === "1") return <Tile label={t("RC")} value={t("Virtual")} sub={t("App sticks override")} tone="amber" title={t("The app's virtual sticks are overriding channels 1–4. Release them on the Radio step or the pilot-stick panel.")} />;
   const live = Number(liveRaw);
   const count = countRaw === "" ? live : Number(countRaw);
   const rssi = rssiRaw === "" ? null : Number(rssiRaw);
@@ -441,6 +442,72 @@ function Actions({ controller }: { controller: Controller | null }) {
   );
 }
 
+const EDIT_VEHICLE = "arduloops:edit-vehicle";
+const VEHICLE_SAVED = "arduloops:vehicle-saved";
+
+/** Open the header's profile form or note editor from anywhere. */
+export function editVehicle(what: "profile" | "note") {
+  window.dispatchEvent(new CustomEvent(EDIT_VEHICLE, { detail: what }));
+}
+
+/**
+ * The vehicle as the user described it: the note's name and body and the profile facts, on the Frame step.
+ * Editing opens the header's own forms, so there is one place that saves.
+ */
+export function useVehicleFacts(): { linked: boolean; title: string; body: string; chips: string[]; profiled: boolean; canEdit: boolean } {
+  const t = useT();
+  const identity = usePicked((s) => `${s.ok ? 1 : 0}|${s.boot_uid ?? ""}|${s.frame}`);
+  const vehicle = usePicked((s) => (s.frame === "plane" ? "plane" : "copter"));
+  const [controller, setController] = useState<Controller | null>(null);
+  useEffect(() => {
+    let ac = new AbortController();
+    const load = () => {
+      ac.abort();
+      ac = new AbortController();
+      void fetch(`${APP_HTTP}/firmware-library`, { cache: "no-store", signal: ac.signal })
+        .then((response) => (response.ok ? response.json() : null))
+        .then((value: { controller?: Controller | null } | null) => setController(value?.controller ?? null))
+        .catch(() => {});
+    };
+    load();
+    window.addEventListener(VEHICLE_SAVED, load);
+    return () => {
+      ac.abort();
+      window.removeEventListener(VEHICLE_SAVED, load);
+    };
+  }, [identity]);
+  const note = splitNote(controller?.comment);
+  const profile = readProfile(controller?.profile);
+  const chips = profile ? profileChips(profile, vehicle, t) : [];
+  if (profile?.capacity_mah != null) chips.splice(Math.min(2, chips.length), 0, `${profile.capacity_mah} mAh`);
+  return { linked: !identity.startsWith("0"), title: note.title, body: note.body, chips, profiled: hasProfile(profile), canEdit: !!controller?.key };
+}
+
+export function VehicleCard() {
+  const t = useT();
+  const { linked, title, body, chips, canEdit } = useVehicleFacts();
+  if (!linked) return null;
+  const note = { title, body };
+  return (
+    <div className="ms-card vc-card">
+      <div className="ms-card-head">
+        <b>{note.title || t("Name this vehicle")}</b>
+        <span className="vc-actions">
+          <button type="button" className="frs-btn quiet" disabled={!canEdit} onClick={() => editVehicle("note")}>{t("Edit note")}</button>
+          <button type="button" className="frs-btn quiet" disabled={!canEdit} onClick={() => editVehicle("profile")}>{t("Vehicle profile")}</button>
+        </span>
+      </div>
+      {note.body ? <p className="vc-note">{note.body}</p> : <span className="ms-hint">{t("Add a note: what this vehicle is, what changed, what to watch.")}</span>}
+      {chips.length ? (
+        <div className="vb-chips">{chips.map((text) => <span key={text} className="vb-chip prof">{text}</span>)}</div>
+      ) : (
+        <span className="ms-hint">{t("Props, cells, weight and how it flies: the assistant uses them for starting values.")}</span>
+      )}
+      {!canEdit ? <span className="ms-hint">{t("Simulators have no board id yet, so a profile cannot be saved.")}</span> : null}
+    </div>
+  );
+}
+
 export function ControllerBoard() {
   const t = useT();
   const view = useVehicle();
@@ -465,6 +532,20 @@ export function ControllerBoard() {
     return () => ac.abort();
   }, []);
   useEffect(() => load(), [load, identity]);
+  const saved = useCallback(() => {
+    load();
+    window.dispatchEvent(new Event(VEHICLE_SAVED));
+  }, [load]);
+  // Other views (the Frame step) open the header's own note and profile editors.
+  useEffect(() => {
+    const open = (event: Event) => {
+      const what = (event as CustomEvent<"profile" | "note">).detail;
+      if (what === "profile") setProfileOpen(true);
+      else setEditing(splitNote(controller?.comment).title ? "note" : "name");
+    };
+    window.addEventListener(EDIT_VEHICLE, open);
+    return () => window.removeEventListener(EDIT_VEHICLE, open);
+  }, [controller]);
 
   const parts = structure.split("|");
   const heartbeatFrame = parts[0] as "copter" | "plane" | "";
@@ -563,8 +644,8 @@ export function ControllerBoard() {
               )}
             </div>
           </div>
-          {profileOpen ? <ProfileEditor controller={controller} blocked={profileBlocked} onClose={() => setProfileOpen(false)} onSaved={load} /> : null}
-          {editing && controller?.key ? <NoteEditor initial={controller.comment ?? ""} focus={editing} controllerKey={controller.key} onClose={() => setEditing(null)} onSaved={load} /> : null}
+          {profileOpen ? <ProfileEditor controller={controller} blocked={profileBlocked} onClose={() => setProfileOpen(false)} onSaved={saved} /> : null}
+          {editing && controller?.key ? <NoteEditor initial={controller.comment ?? ""} focus={editing} controllerKey={controller.key} onClose={() => setEditing(null)} onSaved={saved} /> : null}
         </div>
         <div className="vb-tiles">
           <PreArmTile />

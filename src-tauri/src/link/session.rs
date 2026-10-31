@@ -573,6 +573,7 @@ pub fn run_loop(
                 break;
             }
             if now.duration_since(last_rc) > Duration::from_millis(50) {
+                expire_virtual_sticks(&*conn, &mut st);
                 send_rc(&*conn, &st);
                 last_rc = now;
             }

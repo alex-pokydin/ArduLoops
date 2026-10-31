@@ -1,13 +1,13 @@
-import { Fragment, memo, useEffect, useState, useSyncExternalStore } from "react";
+import { memo, useEffect, useState, useSyncExternalStore } from "react";
 import { useT } from "../i18n/i18n";
-import { getSetupSnapshot, subscribe } from "../mav/store";
 import { useStorePicked, useVehicle } from "../mav/view";
 import { BatteryStep } from "./BatteryStep";
 import { AccelStep } from "./AccelStep";
 import { CompassPanel } from "./CompassPanel";
 import { FrameStep } from "./FrameStep";
 import { PlaneAirframeStep } from "./PlaneAirframeStep";
-import { AirspeedWizard, FailsafeWizard, ModeWizard, RadioWizard, stepGlance } from "./SetupWizards";
+import { AirspeedWizard, FailsafeWizard, ModeWizard, stepGlance } from "./SetupWizards";
+import { RadioStep } from "./RadioStep";
 import { MotorsStep } from "./MotorsStep";
 import { PlaneOutputsStep } from "./PlaneOutputsStep";
 import { PreArmHead } from "./ArmingChecks";
@@ -30,47 +30,7 @@ function liveNum(sample: Sample, key: string): number | null {
 const COPTER_GUIDE = "https://ardupilot.org/copter/docs/configuring-hardware.html";
 const PLANE_GUIDE = "https://ardupilot.org/plane/docs/plane-configuration-landing-page.html";
 
-const AXES = [
-  { label: "roll", key: "RCMAP_ROLL", fallback: 1 },
-  { label: "pitch", key: "RCMAP_PITCH", fallback: 2 },
-  { label: "Thr", key: "RCMAP_THROTTLE", fallback: 3 },
-  { label: "yaw", key: "RCMAP_YAW", fallback: 4 },
-] as const;
-
-function pwmShare(raw: number): number {
-  return Math.min(1, Math.max(0, (raw - 1000) / 1000));
-}
-
-export function sticksLive(rc: number[] | undefined): boolean {
-  return (rc ?? []).some((value) => value >= 800 && value <= 2200);
-}
-
-export function RcLive() {
-  const t = useT();
-  const sample = useSyncExternalStore(subscribe, getSetupSnapshot, getSetupSnapshot);
-  const rc = sample.rc ?? [];
-  const live = sticksLive(rc);
-  return (
-    <div className="rc-live" aria-label={t("rc")}>
-      {AXES.map((axis) => {
-        const mapped = sample.params?.[axis.key];
-        const index = (Number.isFinite(mapped) ? Math.round(mapped as number) : axis.fallback) - 1;
-        const raw = rc[index] ?? 0;
-        const known = raw >= 800 && raw <= 2200;
-        return (
-          <Fragment key={axis.key}>
-            <span>{t(axis.label)}</span>
-            <i><b style={{ width: known ? `${pwmShare(raw) * 100}%` : "0%" }} /></i>
-            <span>{known ? raw : "—"}</span>
-          </Fragment>
-        );
-      })}
-      {live ? null : <p>{t("No RC frames yet.")}</p>}
-    </div>
-  );
-}
-
-type Group = "Airframe" | "Sensors" | "Control" | "Safety";
+type Group = "Airframe" | "Sensors" | "Outputs" | "Control" | "Safety";
 
 type Step = {
   id: string;
@@ -91,7 +51,7 @@ type Step = {
 const RADIO: Step = {
   id: "radio",
   title: "Radio",
-  body: "Watch every channel, save the stick ends, and reverse a stick that moves the wrong way. The receiver port stays as it is.",
+  body: "What the receiver sends, and whether each stick moves the right way.",
   kind: "radio",
   group: "Control",
   params: ["RCMAP_*", "RC*"],
@@ -141,7 +101,8 @@ const MODES: Step = {
   wizard: "modes",
 };
 
-const GROUPS: Group[] = ["Airframe", "Sensors", "Control", "Safety"];
+// The frame first; outputs after the sensors, since motor tests and ESC setup run on a pack the battery step has calibrated.
+const GROUPS: Group[] = ["Airframe", "Sensors", "Outputs", "Control", "Safety"];
 
 const COPTER_FS = ["FS_THR_ENABLE", "FS_THR_VALUE", "FS_GCS_ENABLE", "FS_EKF_ACTION", "FS_EKF_THRESH", "BATT_FS_LOW_ACT", "BATT_FS_CRT_ACT", "FS_*"];
 const PLANE_FS = ["THR_FAILSAFE", "THR_FS_VALUE", "FS_SHORT_ACTN", "FS_SHORT_TIMEOUT", "FS_LONG_ACTN", "FS_LONG_TIMEOUT", "FS_GCS_ENABL", "BATT_FS_LOW_ACT", "BATT_FS_CRT_ACT", "FS_*"];
@@ -149,22 +110,22 @@ const PLANE_FS = ["THR_FAILSAFE", "THR_FS_VALUE", "FS_SHORT_ACTN", "FS_SHORT_TIM
 // Step ids are also the `setup_status` sections: keep the enum in src-tauri/src/agent/schema.rs the same.
 const COPTER: Step[] = [
   { id: "frame", title: "Frame", body: "How many arms, and how the motors are laid out.", kind: "frame", group: "Airframe", params: ["FRAME_CLASS", "FRAME_TYPE"] },
-  { id: "motors", title: "Motors & outputs", body: "What is on each output: which motor, which way it spins, and every servo or payload.", kind: "motors", group: "Airframe", params: ["MOT_*", "SERVO_DSHOT_ESC", "SERVO_BLH_*", "SERVO*"], wizard: "motors" },
   LEVEL,
   COMPASS,
   BATTERY,
+  { id: "motors", title: "Motors & outputs", body: "What is on each output: which motor, which way it spins, and every servo or payload.", kind: "motors", group: "Outputs", params: ["MOT_*", "SERVO_DSHOT_ESC", "SERVO_BLH_*", "SERVO*"], wizard: "motors" },
   RADIO,
   MODES,
   { id: "failsafe", title: "Failsafes", body: "Choose what the vehicle does when the radio or the battery is lost, before the first flight.", kind: "failsafe", group: "Safety", params: COPTER_FS, wizard: "failsafe" },
 ];
 
 const PLANE: Step[] = [
-  { id: "airframe", title: "Airframe type", body: "Pick the surface layout. Outputs are matched on the next step.", kind: "airframe", group: "Airframe", params: ["Q_ENABLE", "Q_FRAME_CLASS", "Q_FRAME_TYPE", "Q_TILT_ENABLE", "Q_TAILSIT_ENABLE"] },
-  { id: "servos", title: "Outputs", body: "Everything on an output: each surface, the throttle, the lift motors with QuadPlane, and anything else.", kind: "servos", group: "Airframe", params: ["SERVO*", "THR_MIN", "THR_MAX", "THR_SLEWRATE", "THR_PASS_STAB", "TRIM_THROTTLE", "Q_M_PWM_TYPE", "Q_TRANSITION_MS", "Q_TRANS_DECEL", "Q_ASSIST_SPEED", "MIXING_GAIN", "KFF_RDDRMIX", "DSPOILER_AILMTCH"], wizard: "servos" },
+  { id: "airframe", title: "Airframe type", body: "Pick the surface layout. Outputs are matched on the Outputs step.", kind: "airframe", group: "Airframe", params: ["Q_ENABLE", "Q_FRAME_CLASS", "Q_FRAME_TYPE", "Q_TILT_ENABLE", "Q_TAILSIT_ENABLE"] },
   LEVEL,
   COMPASS,
   { id: "airspeed", title: "Airspeed", body: "If there is no airspeed sensor, say so. The usual default expects a sensor that may not be fitted.", kind: "airspeed", group: "Sensors", params: ["ARSPD*"], wizard: "airspeed", needs: "ARSPD_TYPE" },
   BATTERY,
+  { id: "servos", title: "Outputs", body: "Everything on an output: each surface, the throttle, the lift motors with QuadPlane, and anything else.", kind: "servos", group: "Outputs", params: ["SERVO*", "THR_MIN", "THR_MAX", "THR_SLEWRATE", "THR_PASS_STAB", "TRIM_THROTTLE", "Q_M_PWM_TYPE", "Q_TRANSITION_MS", "Q_TRANS_DECEL", "Q_ASSIST_SPEED", "MIXING_GAIN", "KFF_RDDRMIX", "DSPOILER_AILMTCH"], wizard: "servos" },
   RADIO,
   MODES,
   { id: "failsafe", title: "Failsafes", body: "Choose what the plane does when the radio or the battery is lost. The EKF threshold stays in the wiki.", kind: "failsafe", group: "Safety", params: PLANE_FS, wizard: "failsafe" },
@@ -553,7 +514,7 @@ function waitingOn(steps: Step[], cards: WaitingCard[]): Set<string> {
   const ids = new Set<string>();
   for (const card of cards) {
     if (card.kind === "wizard") {
-      const wizard = card.name === "compass_mot" || card.name === "compass_orient" ? "compass" : card.name === "board_orientation" ? "accel" : card.name.startsWith("battery_") ? "battery" : card.name;
+      const wizard = card.name === "compass_mot" || card.name === "compass_orient" ? "compass" : card.name === "board_orientation" ? "accel" : card.name.startsWith("battery_") ? "battery" : card.name.startsWith("radio_") ? "radio" : card.name;
       const step = steps.find((item) => item.wizard === wizard);
       if (step) ids.add(step.id);
     } else {
@@ -780,7 +741,7 @@ export const HardwareSetup = memo(function HardwareSetup() {
             <div className="setup-pbody">
               {step.kind === "frame" ? <FrameStep /> : null}
               {step.kind === "motors" ? <MotorsStep /> : null}
-              {step.kind === "radio" ? <><RcLive /><RadioWizard /></> : null}
+              {step.kind === "radio" ? <RadioStep /> : null}
               {step.kind === "level" ? <AccelStep /> : null}
               {step.kind === "compass" ? <CompassPanel /> : null}
               {step.kind === "modes" ? <ModeWizard frame={frame} /> : null}

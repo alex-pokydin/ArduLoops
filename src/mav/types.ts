@@ -41,6 +41,8 @@ export type Sample = {
   climb_des: number | null;
   /** Throttle stick throw, % (−100…+100). 0 = mid / no override. */
   thr_cmd: number;
+  /** The app's virtual sticks are overriding RC channels; RC_CHANNELS then shows them, not the receiver. */
+  rc_override?: boolean;
   /** VFR_HUD airspeed m/s. Plane plant scaler. */
   aspd: number | null;
   gspd: number | null;

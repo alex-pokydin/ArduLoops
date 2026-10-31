@@ -124,30 +124,54 @@ fn override_channels(st: &LinkState, roll: i32, pitch: i32, thr: i32, yaw: i32) 
     ch
 }
 
+/// Seconds a disarmed vehicle keeps a virtual-stick override with no new stick command.
+const STICK_IDLE_S: u64 = 10;
+
+/// Release the virtual sticks once they sit unused on a disarmed vehicle, so the receiver is not hidden for good.
+/// In flight they hold: letting go there would hand the vehicle to whatever the receiver says.
+fn expire_virtual_sticks(conn: &dyn MavConnection<MavMessage>, st: &mut LinkState) {
+    if st.virtual_stick && !st.sample.armed && st.stick_at.map_or(true, |t| t.elapsed() > Duration::from_secs(STICK_IDLE_S)) {
+        release_sticks(conn, st);
+    }
+    st.sample.rc_override = st.virtual_stick;
+}
+
+/// Stop overriding: every channel back to the receiver (0 = release in RC_CHANNELS_OVERRIDE).
+fn release_sticks(conn: &dyn MavConnection<MavMessage>, st: &mut LinkState) {
+    st.virtual_stick = false;
+    st.pulse_until = None;
+    st.stick_at = None;
+    st.rc.thr = 1500;
+    st.rc.roll = 1500;
+    st.rc.pitch = 1500;
+    st.rc.yaw = 1500;
+    st.sample.rc_override = false;
+    send_msg(
+        conn,
+        &MavMessage::RC_CHANNELS_OVERRIDE(RC_CHANNELS_OVERRIDE_DATA {
+            target_system: st.target_system,
+            target_component: st.target_component,
+            ..Default::default()
+        }),
+    );
+}
+
+/// Overrides go out only while the virtual sticks are on (or a roll pulse runs). Nothing is sent otherwise,
+/// so a physical receiver always shows through.
 fn send_rc(conn: &dyn MavConnection<MavMessage>, st: &LinkState) {
-    let now = Instant::now();
-    let pulsing = st.pulse_until.map(|t| now < t).unwrap_or(false);
-    let hover = st.rc.thr > 0;
-    if !st.virtual_stick && !hover && !pulsing {
+    let pulsing = st.pulse_until.map(|t| Instant::now() < t).unwrap_or(false);
+    if !st.virtual_stick && !pulsing {
         return;
     }
-    let mut roll = 0;
-    let mut pitch = 0;
-    let mut yaw = 0;
-    let mut thr = 0;
+    let (mut roll, mut pitch, mut yaw, mut thr) = (0, 0, 0, 0);
     if st.virtual_stick {
         roll = st.rc.roll;
         pitch = st.rc.pitch;
         yaw = st.rc.yaw;
         thr = if st.rc.thr >= 800 && st.rc.thr <= 2200 { st.rc.thr } else { 1500 };
-    } else if hover {
-        thr = st.rc.thr;
     }
     if pulsing {
         roll = st.pulse_roll;
-    }
-    if hover && thr <= 0 {
-        thr = st.rc.thr;
     }
     let ch = override_channels(st, roll, pitch, thr, yaw);
     send_msg(

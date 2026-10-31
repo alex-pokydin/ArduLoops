@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState, useSyncExternalStore } from "react";
+import { VehicleCard } from "./ControllerBoard";
 import { useViewDraft } from "../lib/setupView";
 import { useT } from "../i18n/i18n";
 import { addLog } from "../log";
@@ -178,6 +179,7 @@ export function PlaneAirframeStep() {
   return (
     <div className="frs">
       {!sample.ok ? <div className="frs-note info">{t("Connect a vehicle to read its outputs.")}</div> : null}
+      <VehicleCard />
       {loading ? <div className="frs-note info">{t("Reading parameters from the board ({n}). The layout shows when they have all arrived.", { n: loading })}</div> : null}
       <h4 className="sov-sect">{t("Surfaces")}</h4>
       <div className="pas-cards" role="listbox" aria-label={t("Surface layout")}>

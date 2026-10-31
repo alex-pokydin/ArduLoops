@@ -1,11 +1,11 @@
 import { useEffect, useState, useSyncExternalStore } from "react";
+import { sticksCalibrated } from "../lib/radio";
 import type { Glance } from "../lib/setupSteps";
 import { ModeSetup, modeSlot } from "./ModeSetup";
 import { MotorDiagram } from "./MotorDiagram";
 import { MotorSetup, type MotorScope } from "./MotorSetup";
 import { CLASS_NAMES, frameFromParams, motorFrame, motorFunction, motorOfFunction } from "../lib/motorFrames";
 import { LAYOUT_NAMES, classifyLayout, surfacesFor } from "../lib/planeAirframe";
-import { RcSetup } from "./RcSetup";
 import { compassGlance } from "./CompassPanel";
 import { useT } from "../i18n/i18n";
 import { addLog } from "../log";
@@ -188,21 +188,6 @@ export function MotorWizard() {
   );
 }
 
-export function RadioWizard() {
-  const t = useT();
-  const sample = useSample();
-  const [open, setOpen] = useState(false);
-  return (
-    <div className="wiz">
-      <p className="wiz-msg">{t("The setup watches every channel, then saves the ends and can reverse one stick.")}</p>
-      <div className="wiz-apply">
-        <button type="button" className="wiz-go" disabled={!sample.ok} onClick={() => setOpen(true)}>{t("Set up the radio")}</button>
-      </div>
-      {open ? <RcSetup onClose={() => setOpen(false)} /> : null}
-    </div>
-  );
-}
-
 export function stepGlance(
   kind: "frame" | "motors" | "radio" | "level" | "compass" | "modes" | "failsafe" | "battery" | "servos" | "airspeed" | "airframe",
   vehicle: "copter" | "plane",
@@ -232,8 +217,12 @@ export function stepGlance(
     return { text: protocol ? `${frame.spots.length} motors · ${protocol}` : `${frame.spots.length} motors`, live: true };
   }
   if (kind === "radio") {
-    const live = rc.some((value) => value >= 800 && value <= 2200);
-    return { text: live ? "Sticks are arriving." : "No sticks yet.", live };
+    // With no receiver ArduPilot can still send one channel (the throttle failsafe value), so a signal means several.
+    const live = rc.filter((value) => value >= 800 && value <= 2200).length >= 4;
+    if (!live) return { text: "No signal", live: false };
+    // ArduPilot's 1100 to 1900 defaults mean the stick ends were never calibrated.
+    if (sticksCalibrated(params) === false) return { text: "Stick ends not calibrated", live: false };
+    return { text: "Calibrated", live: true };
   }
   if (kind === "modes") {
     const channel = whole(param(params, "FLTMODE_CH")) ?? 5;

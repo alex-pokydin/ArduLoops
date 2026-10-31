@@ -641,6 +641,51 @@ body.split-drag iframe, body.split-drag canvas { pointer-events: none; }
 .sov-chip.amber { background: #2a2214; border-color: #5a4524; color: var(--amber); }
 .sov-sect { margin: 0; padding-top: 8px; color: #a9b6c4; font-size: 11px; font-weight: 700; letter-spacing: 0.06em; text-transform: uppercase; }
 .sov-pre { display: flex; flex-direction: column; gap: 4px; }
+.vc-card { gap: 8px; }
+.rs-art { width: 280px; }
+.rs-override { align-items: center; } .rs-override > span { flex: 1; } .rs-override .mw-btn { flex: none; }
+.tx { width: 280px; height: auto; }
+.tx.dim { opacity: 0.4; }
+.tx-body { fill: #1c232e; stroke: #4a5666; stroke-width: 2; }
+.tx-antenna { stroke: #4a5666; stroke-width: 4; stroke-linecap: round; }
+.tx-switch { fill: #2a333c; stroke: #4a5666; }
+.tx-well { fill: #11151a; stroke: #3a4552; stroke-width: 1.5; }
+.tx-well.lit { stroke: var(--cyan); stroke-width: 2; }
+.tx-cross { stroke: #222a36; }
+.tx-ends { fill: none; stroke: var(--ok); stroke-width: 2; stroke-dasharray: 6 4; }
+.tx-arrow { stroke: var(--cyan); stroke-width: 2.5; stroke-dasharray: 4 3; }
+.tx-arrowhead { fill: var(--cyan); }
+.tx-shaft { stroke: #4a5666; stroke-width: 5; stroke-linecap: round; }
+.tx-knob { fill: #232b37; stroke: #a9b6c4; stroke-width: 2; }
+.tx-knob.lit { stroke: var(--cyan); }
+.tx-label { fill: var(--dim); font-size: 10px; text-anchor: middle; }
+.sw-art .tx { width: 300px; }
+.rs-check { display: flex; flex-direction: column; gap: 4px; padding: 0 0 4px 30px; color: #a9b6c4; font-size: 12px; }
+.rs-check span::before { content: "○ "; color: var(--dim); }
+.rs-check .setup-fix { align-self: flex-start; margin-top: 4px; }
+.rs-tel { font-size: 12px; color: #a9b6c4; }
+.rs-tr { display: grid; grid-template-columns: 24px minmax(0, 1.2fr) minmax(0, 1.4fr) 48px minmax(0, 1fr); align-items: center; gap: 10px; padding: 7px 12px; border-top: 1px solid #1d232c; font-size: 12px; }
+.rs-tr.head { border-top: 0; padding-bottom: 4px; color: #5a6778; font-size: 10px; font-weight: 700; letter-spacing: 0.06em; text-transform: uppercase; }
+.rs-tr.off > :not(.rs-bar) { opacity: 0.55; }
+.rs-rev { margin-left: 6px; padding: 0 5px; border-radius: 4px; background: #2c2212; color: var(--amber); font-size: 10px; font-style: normal; font-weight: 600; }
+.rs-bar { position: relative; display: block; height: 8px; border-radius: 4px; background: #222a36; }
+.rs-bar i { position: absolute; top: 0; bottom: 0; border-radius: 4px; background: rgba(79, 195, 247, 0.28); }
+.rs-bar b { position: absolute; top: -2px; width: 1px; height: 12px; background: var(--dim); }
+.rs-bar em { position: absolute; top: -3px; width: 3px; height: 14px; margin-left: -1px; border-radius: 2px; background: var(--ink); }
+.rs-rrs, .rs-drs { display: flex; flex-direction: column; gap: 6px; }
+.rs-rr { display: grid; grid-template-columns: 40px 70px 1fr 84px; gap: 10px; align-items: center; padding: 6px 10px; border-radius: 8px; background: #141a22; border: 1px solid #222a36; font-size: 12px; }
+.rs-rr .rs-bar b { width: 2px; background: var(--cyan); }
+.rs-rr.done { border-color: #2e5a38; } .rs-rr.done .rs-bar i { background: rgba(129, 199, 132, 0.5); }
+.rs-dr { display: flex; align-items: center; gap: 10px; padding: 7px 10px; border-radius: 8px; background: #141a22; border: 1px solid #222a36; font-size: 12px; }
+.rs-dr b { width: 70px; } .rs-dr span { color: var(--dim); }
+.rs-dr.on { border-color: var(--cyan); background: #0f2230; } .rs-dr.ok span { color: #a5d6a7; } .rs-dr.rev { border-color: #5a4320; } .rs-dr.rev span { color: var(--amber); }
+.rs-dr-dot { width: 14px; height: 14px; border-radius: 50%; border: 1.5px solid #4a5666; } .rs-dr.on .rs-dr-dot { border-color: var(--cyan); }
+.rs-sums { flex-wrap: wrap; } .rs-sums .mw-sum { flex: 1 1 40%; }
+.fs-art { width: 240px; }
+.fs-empty { display: flex; align-items: center; justify-content: center; width: 220px; height: 220px; border-radius: 50%; border: 1.5px dashed #3a4552; color: var(--dim); font-size: 12px; }
+.fs-classes { grid-template-columns: repeat(auto-fill, minmax(92px, 1fr)); }
+.vc-actions { display: inline-flex; gap: 6px; }
+.vc-note { margin: 0; color: #a9b6c4; font-size: 12px; line-height: 1.5; white-space: pre-wrap; }
 .bs-art { gap: 2px; }
 .bs-pack { width: 230px; height: auto; }
 .bs-cap { fill: #2a333c; }

@@ -8,7 +8,7 @@ import { CompassCalWizard } from "./CompassPanel";
 import { BatteryCurrentWizard, BatterySensorWizard, BatteryVoltageWizard } from "./BatteryStep";
 import { ModeSetup } from "./ModeSetup";
 import { MotorSetup, type MotorScope, type MotorStep } from "./MotorSetup";
-import { RcSetup } from "./RcSetup";
+import { RadioDirectionsWizard, RadioEndsWizard } from "./RadioStep";
 import { AirspeedWizard, FailsafeWizard, ServoWizard } from "./SetupWizards";
 import { useT } from "../i18n/i18n";
 import { getLatest, subscribe } from "../mav/store";
@@ -87,7 +87,8 @@ export function WizardHost({
   if (ask.wizard === "compass") return <CompassCalWizard onClose={finish} fromAssistant />;
   if (ask.wizard === "compass_orient") return <CompassOrient autoOpen fromAssistant onClose={(report) => finish(report)} />;
   if (ask.wizard === "compass_mot") return <CompassMot onClose={finish} fromAssistant />;
-  if (ask.wizard === "radio") return <RcSetup onClose={finish} />;
+  if (ask.wizard === "radio_ends") return <RadioEndsWizard onClose={finish} fromAssistant />;
+  if (ask.wizard === "radio_directions") return <RadioDirectionsWizard onClose={finish} fromAssistant />;
   if (ask.wizard === "modes") return <ModeSetup frame={sample.frame === "plane" ? "plane" : "copter"} onClose={finish} />;
   if (ask.wizard === "battery_sensor") return <BatterySensorWizard onClose={finish} fromAssistant />;
   if (ask.wizard === "battery_voltage") return <BatteryVoltageWizard onClose={finish} fromAssistant />;

@@ -175,6 +175,8 @@ pub struct Sample {
     pub climb: Option<f64>,
     pub climb_des: Option<f64>,
     pub thr_cmd: f64,
+    /// The app's virtual sticks are overriding RC channels (RC_CHANNELS_OVERRIDE), so RC_CHANNELS shows them, not the receiver.
+    pub rc_override: bool,
     pub aspd: Option<f64>,
     pub gspd: Option<f64>,
     pub hdg: Option<f64>,
@@ -329,6 +331,7 @@ impl Sample {
             climb: None,
             climb_des: None,
             thr_cmd: 0.0,
+            rc_override: false,
             aspd: None,
             gspd: None,
             hdg: None,
@@ -602,6 +605,8 @@ struct LinkState {
     rc: RcState,
     rcmap: HashMap<&'static str, u8>,
     virtual_stick: bool,
+    /// When the last stick command arrived; a disarmed override with none for a while is released.
+    stick_at: Option<Instant>,
     pulse_until: Option<Instant>,
     pulse_roll: i32,
     rc_in_roll: i32,
@@ -639,6 +644,7 @@ impl LinkState {
             },
             rcmap,
             virtual_stick: false,
+            stick_at: None,
             pulse_until: None,
             pulse_roll: 1740,
             rc_in_roll: 1500,

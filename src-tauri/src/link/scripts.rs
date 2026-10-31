@@ -188,6 +188,7 @@ impl<'a> Ftp<'a> {
                         self.atts_from = Instant::now();
                     }
                     if self.last_rc.elapsed() >= Duration::from_millis(50) {
+                        expire_virtual_sticks(self.conn, self.st);
                         send_rc(self.conn, self.st);
                         self.last_rc = Instant::now();
                     }
