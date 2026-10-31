@@ -53,7 +53,7 @@ jobs:
           unsigned=$(find src-tauri/gen/android -name '*.apk' -print -quit)
           aligned="$RUNNER_TEMP/arduloops-aligned.apk"
           "$ANDROID_HOME/build-tools/35.0.0/zipalign" -f -p 4 "$unsigned" "$aligned"
-          version=$(node -p "require('./src-tauri/tauri.conf.json').version")
+          version=$(sed -n 's/^version = "\(.*\)"/\1/p' src-tauri/Cargo.toml | head -1)
           out="dist-apk/ArduLoops_${version}_aarch64.apk"
           "$ANDROID_HOME/build-tools/35.0.0/apksigner" sign \
             --ks src-tauri/arduloops-sideload.p12 \
