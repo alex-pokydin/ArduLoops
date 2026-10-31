@@ -236,8 +236,8 @@ fn apply_cmd(
             let result = compass_mot(conn, st, &action, on_sample, latest, sitl);
             let _ = reply.send(result);
         }
-        Cmd::MotorTest { seq, percent, seconds, reply } => {
-            let result = motor_test(conn, st, seq, percent, seconds, on_sample, latest, sitl);
+        Cmd::MotorTest { seq, percent, seconds, count, reply } => {
+            let result = motor_test(conn, st, seq, percent, seconds, count, on_sample, latest, sitl);
             let _ = reply.send(result);
         }
         Cmd::ParamsList => request_param_list(conn, st),
@@ -816,6 +816,7 @@ fn motor_test(
     seq: u8,
     percent: f32,
     seconds: f32,
+    count: u8,
     on_sample: &OnSample,
     latest: &Mutex<Sample>,
     sitl: &SitlCtl,
@@ -840,7 +841,7 @@ fn motor_test(
         param2: 0.0,
         param3: percent,
         param4: seconds,
-        param5: 1.0,
+        param5: count.max(1) as f32,
         param6: 0.0,
         param7: 0.0,
     });

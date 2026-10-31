@@ -3156,4 +3156,8 @@ export const uk: Record<string, string> = {
   "Let go of roll, pitch and yaw so they rest in the middle, and put the throttle in the middle too, then press Next. This plane uses a centred throttle (FLIGHT_OPTIONS 1024): its trim is the zero-thrust point.": "Відпустіть крен, тангаж і рискання, щоб вони стали посередині, газ теж поставте посередині, і натисніть «Далі». Цей літак використовує центрований газ (FLIGHT_OPTIONS 1024): його трим — точка нульової тяги.",
   "All four sticks are centred.": "Усі чотири стіки по центру.",
   "Let go of roll, pitch and yaw so they rest in the middle, pull the throttle fully down, then press Next.": "Відпустіть крен, тангаж і рискання, щоб вони стали посередині, опустіть газ повністю і натисніть «Далі».",
+  "Spin each motor": "Прокрутити кожен мотор",
+  "Spinning each motor in turn at {p}%.": "Мотори крутяться по черзі на {p}%.",
+  "Props off. Each motor spins {s} s in turn: all should start at once and run evenly.": "Пропелери зняті. Кожен мотор крутиться {s} с по черзі: усі мають стартувати одразу й крутитися рівно.",
+  "Confirm propellers off and the vehicle held on the safety screen first.": "Спершу підтвердіть на екрані безпеки, що пропелери зняті й апарат утримується.",
 };

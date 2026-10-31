@@ -75,9 +75,10 @@ function escName(v: number | null): string {
   return ["—", "BLHeli32 / AM32 / Kiss", "BLHeli_S / BlueJay", "BLHeli32 / AM32 + EDT", "BLHeli_S / BlueJay + EDT"][Math.round(v)] ?? `Type ${Math.round(v)}`;
 }
 
-async function motorTest(seq: number, percent: number): Promise<string> {
+/** Spin motor `seq` (ArduPilot's test order), or `count` motors one after another from it. */
+async function motorTest(seq: number, percent: number, count = 1): Promise<string> {
   try {
-    const r = await fetch(`${APP_HTTP}/motor-test?seq=${seq}&percent=${percent}&seconds=${SPIN_S}`, { method: "POST" });
+    const r = await fetch(`${APP_HTTP}/motor-test?seq=${seq}&percent=${percent}&seconds=${SPIN_S}&count=${count}`, { method: "POST" });
     return ((await r.json()) as { message?: string }).message || "Could not send calibration command";
   } catch {
     return "Connection lost during calibration";
@@ -406,18 +407,18 @@ export function MotorSetup({ onClose, scope, fromAssistant = false }: { onClose:
     });
   }
 
-  async function runTest(key: string, seq: number): Promise<boolean> {
+  async function runTest(key: string, seq: number, count = 1): Promise<boolean> {
     if (busy || blocked) return false;
     setBusy(true);
     setNote(null);
-    const message = await motorTest(seq, testPct);
+    const message = await motorTest(seq, testPct, count);
     setBusy(false);
     if (message !== "Motor test started") {
       failNote(message);
       return false;
     }
-    setSpin({ key, until: Date.now() + SPIN_S * 1000 + 200 });
-    setTestHold(Date.now() + SPIN_S * 1000 + 3000);
+    setSpin({ key, until: Date.now() + SPIN_S * 1000 * count + 200 });
+    setTestHold(Date.now() + SPIN_S * 1000 * count + 3000);
     return true;
   }
 
@@ -1047,6 +1048,19 @@ export function MotorSetup({ onClose, scope, fromAssistant = false }: { onClose:
                   <div className="mw-ticks"><span>0</span><span className="ok">{t("typical 6–10%")}</span><span>25</span></div>
                 </div>
                 <div className="mw-dim mw-sm">{t("Used by every test spin.")} <span className="mw-mono">MOT_SPIN_ARM {(pct / 100).toFixed(2)}</span></div>
+                {frame ? (
+                  <div className="mw-idle-test">
+                    {spin?.key === "all" ? (
+                      <button type="button" className="mw-btn quiet" onClick={stopSpin}>{Icon.x("currentColor", 12)}<span>{t("Stop")}</span></button>
+                    ) : (
+                      <button type="button" className="mw-btn quiet" disabled={busy || blocked || !!spin || !props || !secured} title={!props || !secured ? t("Confirm propellers off and the vehicle held on the safety screen first.") : undefined} onClick={() => void runTest("all", 1, frame.spots.length)}>
+                        <svg width="11" height="11" viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="M5 3.5v9l7.5-4.5L5 3.5z" fill="currentColor" /></svg>
+                        <span>{t("Spin each motor")}</span>
+                      </button>
+                    )}
+                    <span className="mw-dim mw-sm">{spin?.key === "all" ? t("Spinning each motor in turn at {p}%.", { p: testPct }) : t("Props off. Each motor spins {s} s in turn: all should start at once and run evenly.", { s: SPIN_S })}</span>
+                  </div>
+                ) : null}
               </div>
               <div className="mw-sec">{t("ESC")}</div>
               <div className="mw-esc">

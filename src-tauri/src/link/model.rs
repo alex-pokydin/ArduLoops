@@ -423,12 +423,14 @@ pub enum Cmd {
     /// CompassMot. `start` asks the vehicle to arm and pass the throttle stick through. `finish` sends the ack that stops it.
     #[serde(skip)]
     CompassMot { action: String, reply: std::sync::mpsc::Sender<String> },
-    /// Spin one motor for a few seconds. Percent is of the output range, not a flight throttle.
+    /// Spin one motor for a few seconds, or `count` motors one after another from `seq`.
+    /// Percent is of the output range, not a flight throttle.
     #[serde(skip)]
     MotorTest {
         seq: u8,
         percent: f32,
         seconds: f32,
+        count: u8,
         reply: std::sync::mpsc::Sender<String>,
     },
     #[serde(rename = "param")]

@@ -1338,6 +1338,8 @@ body.split-drag iframe, body.split-drag canvas { pointer-events: none; }
 .mw-idle { display: flex; flex-direction: column; gap: 10px; padding: 12px; border: 1px solid #222a36; border-radius: 12px; background: #141a22; }
 .mw-idle b { font-size: 13px; }
 .mw-saved { display: inline-flex; align-items: center; gap: 4px; color: var(--ok); font-size: 11px; }
+.mw-idle-test { display: flex; align-items: center; gap: 10px; padding-top: 4px; }
+.mw-idle-test .mw-btn { flex: none; }
 .mw-idle-row { display: flex; align-items: center; justify-content: space-between; }
 .mw-step-btn { width: 36px; height: 36px; padding: 0; border-radius: 10px; font-size: 18px; }
 .mw-val { display: flex; align-items: baseline; gap: 2px; }

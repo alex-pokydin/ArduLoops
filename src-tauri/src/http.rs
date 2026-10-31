@@ -177,12 +177,14 @@ fn handle(stream: TcpStream, latest: Arc<Mutex<Sample>>, tx: Sender<Cmd>) -> std
         let seq = query.get("seq").and_then(|s| s.parse::<u8>().ok()).unwrap_or(if stop { 1 } else { 0 });
         let percent = if stop { 0.0 } else { query.get("percent").and_then(|s| s.parse::<f32>().ok()).unwrap_or(0.0) };
         let seconds = if stop { 0.0 } else { query.get("seconds").and_then(|s| s.parse::<f32>().ok()).unwrap_or(2.0) };
+        // `count` > 1: ArduPilot spins that many motors in turn, `seconds` each, starting at `seq`.
+        let count = query.get("count").and_then(|s| s.parse::<u8>().ok()).unwrap_or(1).clamp(1, 12);
         let mut socket = reader.into_inner();
         if !(1..=12).contains(&seq) || (!stop && (!(1.0..=25.0).contains(&percent) || !(1.0..=3.0).contains(&seconds))) {
             return reply(&mut socket, 400, "application/json", br#"{"message":"Motor test rejected. Check the vehicle message."}"#);
         }
         let (result_tx, result_rx) = std::sync::mpsc::channel();
-        if tx.send(Cmd::MotorTest { seq, percent, seconds, reply: result_tx }).is_err() {
+        if tx.send(Cmd::MotorTest { seq, percent, seconds, count, reply: result_tx }).is_err() {
             return reply(&mut socket, 503, "application/json", br#"{"message":"Could not send calibration command"}"#);
         }
         let message = result_rx.recv_timeout(Duration::from_secs(10))
