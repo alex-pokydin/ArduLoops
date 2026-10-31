@@ -95,6 +95,8 @@ export type Sample = {
   texts?: string[];
   /** Distinct `PreArm:` lines and the unix time each last arrived, newest first. */
   prearm?: { text: string; at: number }[];
+  /** PreArm lines of skipped checks (sent at DEBUG): they would fail but do not stop arming. */
+  prearm_skipped?: { text: string; at: number }[];
   /** Face the vehicle is asking for during a six-face accelerometer calibration. */
   accel_cal?: { pos: number; at: number };
   /** Compass calibration progress and the latest report for each compass id. */

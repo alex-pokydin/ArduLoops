@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState, useSyncExternalStore, type ReactNode } from "react";
+import type { Glance } from "../lib/setupSteps";
 import { useT } from "../i18n/i18n";
 import { noteUi, send as sendCmd, writeParam } from "../mav/cmd";
 import { APP_HTTP } from "../mav/link";
@@ -68,9 +69,17 @@ function factoryDefaults(params: Record<string, number>, n: number): boolean {
     && odi.every((value) => near(value, 0, 0.02));
 }
 
-export function compassGlance(params: Record<string, number>): { text: string; live: boolean } {
+export function compassGlance(params: Record<string, number>): Glance {
   if (num(params, "COMPASS_DEV_ID") == null && num(params, "COMPASS_USE") == null) {
     return { text: "", live: false };
+  }
+  // Turned off on purpose. Settled only when the EKF takes its yaw from elsewhere: not the compass (1, 3) and not
+  // None (0), where the heading has no source and drifts.
+  if (num(params, "COMPASS_ENABLE") === 0) {
+    const yaw = num(params, "EK3_SRC1_YAW");
+    if (yaw === 1 || yaw === 3) return { text: "Off · the EKF still expects a compass", live: false };
+    if (yaw === 0) return { text: "Off · no heading source", live: false };
+    return { text: "Off", live: false, off: true };
   }
   let any = false;
   let stored = false;

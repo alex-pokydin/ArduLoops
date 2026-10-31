@@ -5,6 +5,7 @@ import { send as sendCmd } from "../mav/cmd";
 import { APP_HTTP } from "../mav/link";
 import { downloadParamBackup } from "../mav/paramBackup";
 import { openSetupOverview } from "../lib/setupNav";
+import { prearmAsk } from "../lib/setupSteps";
 import { FixButton } from "./HardwareSetup";
 import { ProfileForm, useProfileStart } from "./ProfileForm";
 import { hasProfile, profileChips, readProfile, type VehicleProfile } from "../lib/vehicleProfile";
@@ -165,7 +166,7 @@ function PreArmFailing({ lines }: { lines: string[] }) {
           {lines.map((line) => (
             <div className="vb-pa-row" key={line}>
               <span>{line.replace(/^PreArm:\s*/, "")}</span>
-              <FixButton small text={t("Fix: {line}", { line: /^PreArm:/.test(line) ? line : `PreArm: ${line}` })} focus={line.slice(0, 32)} onSent={() => setOpen(false)} />
+              <FixButton small text={t(prearmAsk(line), { line: /^PreArm:/.test(line) ? line : `PreArm: ${line}` })} focus={line.slice(0, 32)} onSent={() => setOpen(false)} />
             </div>
           ))}
           <button type="button" className="vb-pa-more" onClick={() => { setOpen(false); openSetupOverview(); }}>{t("Open the Setup overview")} →</button>
@@ -179,8 +180,15 @@ const FIX_NAMES: Record<number, string> = { 2: "2D", 3: "3D", 4: "DGPS", 5: "RTK
 
 const GpsTile = memo(function GpsTile() {
   const t = useT();
-  const key = usePicked((s) => (s.ok ? `${s.gps_fix ?? ""}|${s.gps_sats ?? ""}|${num(s, "GPS_RAW_INT.eph") ?? ""}` : "off"));
+  const key = usePicked((s) => {
+    if (!s.ok) return "off";
+    // No GPS configured (GPS1_TYPE, GPS_TYPE before 4.6, and GPS2_TYPE all 0): the tile says so instead of "No fix".
+    const type1 = s.params?.GPS1_TYPE ?? s.params?.GPS_TYPE;
+    if (type1 === 0 && !s.params?.GPS2_TYPE) return "none";
+    return `${s.gps_fix ?? ""}|${s.gps_sats ?? ""}|${num(s, "GPS_RAW_INT.eph") ?? ""}`;
+  });
   if (key === "off") return <Tile label={t("GPS")} value="—" tone="mute" />;
+  if (key === "none") return <Tile label={t("GPS")} value={t("Off")} sub={t("No GPS set")} tone="mute" />;
   const [fixRaw, satsRaw, ephRaw] = key.split("|");
   const fix = fixRaw === "" ? null : Number(fixRaw);
   const sats = satsRaw === "" ? null : Number(satsRaw);
@@ -214,13 +222,15 @@ const EkfTile = memo(function EkfTile() {
 
 const BatteryTile = memo(function BatteryTile() {
   const t = useT();
-  const key = usePicked((s) => (s.ok ? `${num(s, "SYS_STATUS.voltage_battery") ?? ""}|${num(s, "SYS_STATUS.battery_remaining") ?? ""}|${s.params?.BATT_ARM_VOLT ?? ""}` : "off"));
+  const key = usePicked((s) => (s.ok ? `${num(s, "SYS_STATUS.voltage_battery") ?? ""}|${num(s, "SYS_STATUS.battery_remaining") ?? ""}|${s.params?.BATT_ARM_VOLT ?? ""}|${s.params?.BATT_MONITOR ?? ""}` : "off"));
   if (key === "off") return <Tile label={t("Battery")} value="—" tone="mute" />;
-  const [mvRaw, pctRaw, armRaw] = key.split("|");
+  const [mvRaw, pctRaw, armRaw, monitorRaw] = key.split("|");
   const mv = mvRaw === "" ? null : Number(mvRaw);
   // SYS_STATUS sends 0 or UINT16_MAX when no battery monitor is configured.
-  if (mv == null || mv <= 0 || mv >= 65535) return <Tile label={t("Battery")} value="—" sub={t("No monitor")} title={t("No battery monitor")} tone="mute" />;
+  if (monitorRaw === "0" || mv == null || mv <= 0 || mv >= 65535) return <Tile label={t("Battery")} value="—" sub={t("No monitor")} title={t("No battery monitor")} tone="mute" />;
   const volts = mv / 1000;
+  // A monitor reading under 1 V has no pack on it (powered over USB) or a wrong voltage pin; its percentage means nothing.
+  if (volts < 1) return <Tile label={t("Battery")} value={`${volts.toFixed(1)} V`} sub={t("No voltage read")} title={t("No pack connected, or the voltage pin or multiplier is wrong")} tone="amber" />;
   const pct = pctRaw === "" ? -1 : Number(pctRaw);
   const arm = armRaw === "" ? 0 : Number(armRaw);
   const tone: Tone = arm > 0 && volts < arm ? "amber" : "ok";
@@ -239,7 +249,8 @@ const RcTile = memo(function RcTile() {
   const live = Number(liveRaw);
   const count = countRaw === "" ? live : Number(countRaw);
   const rssi = rssiRaw === "" ? null : Number(rssiRaw);
-  if (!live) return <Tile label={t("RC")} value={t("No signal")} tone="hot" />;
+  // RC_CHANNELS.chancount 0: no receiver is sending, whatever the channel values hold.
+  if (!live || count === 0) return <Tile label={t("RC")} value={t("No signal")} tone="hot" />;
   const sub = [t("{n} ch", { n: count }), rssi != null && rssi < 255 ? t("RSSI {v} %", { v: Math.round((rssi / 254) * 100) }) : ""].filter(Boolean).join(" · ");
   return <Tile label={t("RC")} value={t("OK")} sub={sub} tone="ok" />;
 });

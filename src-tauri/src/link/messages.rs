@@ -1368,7 +1368,9 @@ fn handle_msg(st: &mut LinkState, header: &MavHeader, msg: MavMessage) {
             }
             let sev = format!("{severity:?}").replace("MAV_SEVERITY_", "");
             if msg.starts_with("PreArm:") {
-                note_prearm(&mut st.sample.prearm, &msg, wall_time());
+                // A skipped check's failure comes at DEBUG (AP_Arming::check_failed); it does not block arming.
+                let list = if sev == "DEBUG" { &mut st.sample.prearm_skipped } else { &mut st.sample.prearm };
+                note_prearm(list, &msg, wall_time());
             }
             st.sample.texts.insert(0, format!("{sev} {msg}"));
             st.sample.texts.truncate(256);

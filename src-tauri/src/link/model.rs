@@ -251,6 +251,9 @@ pub struct Sample {
     pub texts: Vec<String>,
     /// Distinct `PreArm:` lines with the time each last arrived. Newest first.
     pub prearm: Vec<PreArmLine>,
+    /// `PreArm:` lines of checks skipped in ARMING_SKIPCHK: ArduPilot still reports them, at DEBUG severity,
+    /// and they do not stop arming. Kept apart so `prearm` stays the list of what blocks.
+    pub prearm_skipped: Vec<PreArmLine>,
     /// Compass calibration progress and the latest report, one slot per compass id.
     #[serde(default)]
     pub mag_cal: Vec<MagCalSlot>,
@@ -365,6 +368,7 @@ impl Sample {
             events: Vec::new(),
             texts: Vec::new(),
             prearm: Vec::new(),
+            prearm_skipped: Vec::new(),
             mag_cal: Vec::new(),
             accel_cal: AccelCal { pos: 0, at: 0.0 },
             init_done: 0,

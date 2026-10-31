@@ -10,7 +10,11 @@ import { PlaneAirframeStep } from "./PlaneAirframeStep";
 import { AirspeedWizard, FailsafeWizard, ModeWizard, RadioWizard, stepGlance } from "./SetupWizards";
 import { MotorsStep } from "./MotorsStep";
 import { PlaneOutputsStep } from "./PlaneOutputsStep";
-import { nextSteps, prearmStep, stepOfParam, stepParamNames, stepState, type StepState } from "../lib/setupSteps";
+import { PreArmHead } from "./ArmingChecks";
+import { nextSteps, prearmAsk, prearmStep, prearmTopic, stepOfParam, stepParamNames, stepState, type Glance, type StepState } from "../lib/setupSteps";
+
+/** Done, or turned off on purpose: either way nothing is left to do on the step. */
+const settled = (state: StepState) => state === "done" || state === "off";
 import { OPEN_SETUP_OVERVIEW } from "../lib/setupNav";
 import { askAssistant, openAssistant, showAssistant } from "../lib/assistantAsk";
 import { getSetupView, getWaitingCards, setSetupView, setViewFocus, subscribeSetupView, type WaitingCard } from "../lib/setupView";
@@ -166,13 +170,14 @@ const PLANE: Step[] = [
   { id: "failsafe", title: "Failsafes", body: "Choose what the plane does when the radio or the battery is lost. The EKF threshold stays in the wiki.", kind: "failsafe", group: "Safety", params: PLANE_FS, wizard: "failsafe" },
 ];
 
-const STATE_LABEL: Record<StepState, string> = { done: "Done", warn: "Needs attention", fail: "Blocks arming", todo: "To do", opt: "Optional" };
+const STATE_LABEL: Record<StepState, string> = { done: "Done", warn: "Needs attention", fail: "Blocks arming", todo: "To do", opt: "Optional", off: "Off" };
 
 function StateIcon({ state }: { state: StepState }) {
   if (state === "done") return <svg viewBox="0 0 16 16" aria-hidden="true"><circle cx="8" cy="8" r="7" className="si-ok" /><path d="M4.8 8.2l2.2 2.2 4.2-4.6" className="si-mark" /></svg>;
   if (state === "warn") return <svg viewBox="0 0 16 16" aria-hidden="true"><circle cx="8" cy="8" r="7" className="si-warn" /><path d="M8 4.4v4.4" className="si-mark" /><circle cx="8" cy="11.4" r="1" className="si-dot" /></svg>;
   if (state === "fail") return <svg viewBox="0 0 16 16" aria-hidden="true"><circle cx="8" cy="8" r="7" className="si-hot" /><path d="M5.6 5.6l4.8 4.8M10.4 5.6l-4.8 4.8" className="si-mark" /></svg>;
   if (state === "opt") return <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M5 8h6" className="si-dash" /></svg>;
+  if (state === "off") return <svg viewBox="0 0 16 16" aria-hidden="true"><circle cx="8" cy="8" r="6.2" className="si-todo" /><path d="M5 8h6" className="si-dash" /></svg>;
   return <svg viewBox="0 0 16 16" aria-hidden="true"><circle cx="8" cy="8" r="6.2" className="si-todo" /></svg>;
 }
 
@@ -389,7 +394,7 @@ function SetupOverview({
         </div>
       </div>
 
-      <h4 className="sov-sect">{t("Pre-arm · live from the vehicle")}</h4>
+      <PreArmHead failing={lines.length} />
       <div className="sov-pre">
         {lines.length ? (
           lines.map((text) => {
@@ -405,9 +410,9 @@ function SetupOverview({
                     <Chevron />
                   </button>
                 ) : (
-                  <span className="sov-none">{t("No setup step")}</span>
+                  <span className="sov-none">{t(prearmTopic(text)?.label ?? "No setup step")}</span>
                 )}
-                <FixButton text={t("Fix: {line}", { line: text })} focus={text.slice(0, 32)} />
+                <FixButton text={t(prearmAsk(text), { line: text })} focus={text.slice(0, 32)} />
               </div>
             );
           })
@@ -451,7 +456,7 @@ function SetupOverview({
         {GROUPS.map((group) => {
           const members = rows.filter(({ item }) => item.group === group);
           if (!members.length) return null;
-          const groupDone = members.filter(({ st }) => st.state === "done").length;
+          const groupDone = members.filter(({ st }) => settled(st.state)).length;
           const worst = members.find(({ st }) => st.state === "fail") ?? members.find(({ st }) => st.state === "warn") ?? members.find(({ st }) => st.state === "todo");
           const groupTone = worst?.st.state === "fail" ? "hot" : worst?.st.state === "warn" ? "amber" : worst ? "" : "ok";
           return (
@@ -481,7 +486,7 @@ type Face = {
   frame: "copter" | "plane";
   /** Step ids this firmware has no parameters for (only once the full list has arrived). */
   hidden: string[];
-  glances: { text: string; live: boolean }[];
+  glances: Glance[];
   prearm: string[][];
   lines: string[];
   arm: ArmKind;
@@ -530,7 +535,7 @@ function sameFace(a: Face, b: Face): boolean {
     a.hidden.join() === b.hidden.join() &&
     a.lines.join("\n") === b.lines.join("\n") &&
     a.glances.length === b.glances.length &&
-    a.glances.every((g, i) => g.text === b.glances[i].text && g.live === b.glances[i].live) &&
+    a.glances.every((g, i) => g.text === b.glances[i].text && g.live === b.glances[i].live && g.off === b.glances[i].off) &&
     a.prearm.every((p, i) => p.join("\n") === (b.prearm[i] ?? []).join("\n"))
   );
 }
@@ -567,7 +572,7 @@ export function SetupStatusFeed() {
   const { face, steps, states } = useSetupFace();
   const params = useStorePicked((s) => s.params || {}, (a, b) => Object.keys(a).length === Object.keys(b).length);
   const required = steps.filter((item) => !item.optional);
-  const done = steps.filter((item, i) => !item.optional && states[i].state === "done").length;
+  const done = steps.filter((item, i) => !item.optional && settled(states[i].state)).length;
   const all = face.frame === "plane" ? PLANE : COPTER;
   const body = JSON.stringify({
     vehicle: face.frame,
@@ -621,7 +626,7 @@ export const HardwareSetup = memo(function HardwareSetup() {
   const waitingCards = useSyncExternalStore(subscribeSetupView, getWaitingCards, getWaitingCards);
   const waiting = waitingOn(steps, waitingCards);
   const required = steps.filter((item) => !item.optional);
-  const done = steps.filter((item, i) => !item.optional && states[i].state === "done").length;
+  const done = steps.filter((item, i) => !item.optional && settled(states[i].state)).length;
   const attention = states.filter((st) => st.state === "warn" || st.state === "fail").length;
   const blocking = states.filter((st) => st.state === "fail").length;
   useEffect(() => {
@@ -650,7 +655,7 @@ export const HardwareSetup = memo(function HardwareSetup() {
     if (face.arm === "off") return t("Walk me through setup for this {frame}. No vehicle is linked yet.", { frame: t(frame) });
     const open = steps
       .map((item, i) => ({ item, st: states[i] }))
-      .filter(({ item, st }) => !item.optional && st.state !== "done")
+      .filter(({ item, st }) => !item.optional && !settled(st.state))
       .map(({ item, st }) => `${t(item.title)} (${labelOf(st)})`);
     const parts = [t("Walk me through setup for this {frame}. {done} of {total} required steps are done.", { frame: t(frame), done, total: required.length })];
     if (open.length) parts.push(t("Open steps: {list}.", { list: open.join("; ") }));
@@ -693,7 +698,7 @@ export const HardwareSetup = memo(function HardwareSetup() {
             const members = steps.map((item, i) => ({ item, i })).filter(({ item }) => item.group === group && (!requiredOnly || !item.optional));
             if (!members.length) return null;
             const need = members.filter(({ item }) => !item.optional);
-            const groupDone = need.filter(({ i }) => states[i].state === "done").length;
+            const groupDone = need.filter(({ i }) => settled(states[i].state)).length;
             return (
               <div className="setup-group" key={group}>
                 <div className="setup-group-head"><span>{t(group)}</span><span>{need.length ? `${groupDone}/${need.length}` : t("optional")}</span></div>

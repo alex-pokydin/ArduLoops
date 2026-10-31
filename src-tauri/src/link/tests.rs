@@ -153,6 +153,14 @@ mod live_buffer_tests {
         let lines: Vec<&str> = st.sample.prearm.iter().map(|line| line.text.as_str()).collect();
         assert_eq!(lines, ["PreArm: Compass not calibrated", "PreArm: Battery 1 below minimum arming voltage"]);
         assert!(st.sample.prearm.iter().all(|line| line.at > 0.0));
+
+        // A skipped check still reports, at DEBUG: kept apart, it does not block.
+        let mut buf = [0u8; 50];
+        let skipped = "PreArm: Logging failed";
+        buf[..skipped.len()].copy_from_slice(skipped.as_bytes());
+        handle_msg(&mut st, &hdr, MavMessage::STATUSTEXT(STATUSTEXT_DATA { severity: MavSeverity::MAV_SEVERITY_DEBUG, text: buf, ..Default::default() }));
+        assert_eq!(st.sample.prearm.len(), 2);
+        assert_eq!(st.sample.prearm_skipped.iter().map(|line| line.text.as_str()).collect::<Vec<_>>(), [skipped]);
     }
 
     #[test]

@@ -1,4 +1,5 @@
 import { useEffect, useState, useSyncExternalStore } from "react";
+import type { Glance } from "../lib/setupSteps";
 import { ModeSetup, modeSlot } from "./ModeSetup";
 import { MotorDiagram } from "./MotorDiagram";
 import { MotorSetup, type MotorScope } from "./MotorSetup";
@@ -202,7 +203,7 @@ export function stepGlance(
   vehicle: "copter" | "plane",
   params: Record<string, number>,
   rc: number[],
-): { text: string; live: boolean } {
+): Glance {
   if (kind === "frame") {
     const cls = whole(param(params, "FRAME_CLASS"));
     const type = whole(param(params, "FRAME_TYPE"));
