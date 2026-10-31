@@ -6,7 +6,9 @@ import { AccelStep } from "./AccelStep";
 import { CompassPanel } from "./CompassPanel";
 import { FrameStep } from "./FrameStep";
 import { PlaneAirframeStep } from "./PlaneAirframeStep";
-import { AirspeedWizard, FailsafeWizard, ModeWizard, stepGlance } from "./SetupWizards";
+import { AirspeedWizard, stepGlance } from "./SetupWizards";
+import { FailsafeStep } from "./FailsafeStep";
+import { ModesStep } from "./ModesStep";
 import { RadioStep } from "./RadioStep";
 import { MotorsStep } from "./MotorsStep";
 import { PlaneOutputsStep } from "./PlaneOutputsStep";
@@ -514,7 +516,7 @@ function waitingOn(steps: Step[], cards: WaitingCard[]): Set<string> {
   const ids = new Set<string>();
   for (const card of cards) {
     if (card.kind === "wizard") {
-      const wizard = card.name === "compass_mot" || card.name === "compass_orient" ? "compass" : card.name === "board_orientation" ? "accel" : card.name.startsWith("battery_") ? "battery" : card.name.startsWith("radio_") ? "radio" : card.name;
+      const wizard = card.name === "compass_mot" || card.name === "compass_orient" ? "compass" : card.name === "board_orientation" ? "accel" : card.name.startsWith("battery_") ? "battery" : card.name.startsWith("radio_") ? "radio" : card.name === "failsafe_test" ? "failsafe" : card.name;
       const step = steps.find((item) => item.wizard === wizard);
       if (step) ids.add(step.id);
     } else {
@@ -744,8 +746,8 @@ export const HardwareSetup = memo(function HardwareSetup() {
               {step.kind === "radio" ? <RadioStep /> : null}
               {step.kind === "level" ? <AccelStep /> : null}
               {step.kind === "compass" ? <CompassPanel /> : null}
-              {step.kind === "modes" ? <ModeWizard frame={frame} /> : null}
-              {step.kind === "failsafe" ? <FailsafeWizard frame={frame} /> : null}
+              {step.kind === "modes" ? <ModesStep frame={frame} /> : null}
+              {step.kind === "failsafe" ? <FailsafeStep frame={frame} /> : null}
               {step.kind === "battery" ? <BatteryStep /> : null}
               {step.kind === "servos" ? <PlaneOutputsStep /> : null}
               {step.kind === "airspeed" ? <AirspeedWizard /> : null}

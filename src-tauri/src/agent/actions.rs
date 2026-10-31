@@ -124,6 +124,7 @@ const WIZARDS: &[WizardSpec] = &[
     WizardSpec { name: "battery_voltage", copter: true, plane: true },
     WizardSpec { name: "battery_current", copter: true, plane: true },
     WizardSpec { name: "failsafe", copter: true, plane: true },
+    WizardSpec { name: "failsafe_test", copter: true, plane: true },
     WizardSpec { name: "servos", copter: false, plane: true },
     WizardSpec { name: "airspeed", copter: false, plane: true },
 ];

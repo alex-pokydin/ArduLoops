@@ -161,6 +161,7 @@ function wizardTitle(tr: typeof import("../i18n/i18n").t, name: string): string 
   if (name === "battery_voltage") return tr("Match the voltage to a meter");
   if (name === "battery_current") return tr("Scale the current from a charge");
   if (name === "failsafe") return tr("Failsafe");
+  if (name === "failsafe_test") return tr("Radio failsafe test");
   if (name === "servos") return tr("Servo outputs");
   if (name === "airspeed") return tr("Airspeed");
   return name;

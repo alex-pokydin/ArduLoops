@@ -1,7 +1,7 @@
 import { useEffect, useState, useSyncExternalStore } from "react";
 import { sticksCalibrated } from "../lib/radio";
 import type { Glance } from "../lib/setupSteps";
-import { ModeSetup, modeSlot } from "./ModeSetup";
+import { modeSlot } from "../lib/flightModes";
 import { MotorDiagram } from "./MotorDiagram";
 import { MotorSetup, type MotorScope } from "./MotorSetup";
 import { CLASS_NAMES, frameFromParams, motorFrame, motorFunction, motorOfFunction } from "../lib/motorFrames";
@@ -304,21 +304,6 @@ export function stepGlance(
   }
   if (kind === "compass") return compassGlance(params);
   return { text: "", live: false };
-}
-
-export function ModeWizard({ frame }: { frame: "copter" | "plane" }) {
-  const t = useT();
-  const sample = useSample();
-  const [open, setOpen] = useState(false);
-  return (
-    <div className="wiz">
-      <p className="wiz-msg">{t("The lit slot is where the switch is now.")}</p>
-      <div className="wiz-apply">
-        <button type="button" className="wiz-go" disabled={!sample.ok} onClick={() => setOpen(true)}>{t("Set up flight modes")}</button>
-      </div>
-      {open ? <ModeSetup frame={frame} onClose={() => setOpen(false)} /> : null}
-    </div>
-  );
 }
 
 function ChoiceRow({
