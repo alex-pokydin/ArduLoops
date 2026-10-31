@@ -64,11 +64,13 @@ jobs:
       - uses: tauri-apps/tauri-action@v1
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         with:
           releaseId: ${{ needs.github-release.outputs.release-id }}
-          uploadUpdaterJson: false
+          uploadUpdaterJson: true
           tauriScript: node scripts/with-cargo.mjs tauri
-          args: --bundles deb,rpm,appimage
+          args: --bundles deb,rpm,appimage --config src-tauri/tauri.updater.conf.json
 
   windows:
     needs: github-release
@@ -88,11 +90,14 @@ jobs:
       - uses: tauri-apps/tauri-action@v1
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         with:
           releaseId: ${{ needs.github-release.outputs.release-id }}
-          uploadUpdaterJson: false
+          uploadUpdaterJson: true
+          updaterJsonPreferNsis: true
           tauriScript: node scripts/with-cargo.mjs tauri
-          args: --bundles nsis,msi
+          args: --bundles nsis,msi --config src-tauri/tauri.updater.conf.json
 
   macos:
     needs: github-release

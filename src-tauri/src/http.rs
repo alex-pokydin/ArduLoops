@@ -762,8 +762,16 @@ fn handle(stream: TcpStream, latest: Arc<Mutex<Sample>>, tx: Sender<Cmd>) -> std
             .get("refresh")
             .map(|value| value == "1" || value.eq_ignore_ascii_case("true"))
             .unwrap_or(false);
-        let json = serde_json::to_vec(&crate::app::status(refresh)).unwrap_or_else(|_| b"{}".to_vec());
+        let mut status = crate::app::status(refresh);
+        status["update"] = crate::update::status();
+        let json = serde_json::to_vec(&status).unwrap_or_else(|_| b"{}".to_vec());
         reply(&mut socket, 200, "application/json", &json)?;
+        return Ok(());
+    }
+    if method == "POST" && path == "/app/update" {
+        let started = crate::update::start();
+        let json = serde_json::to_vec(&crate::update::status()).unwrap_or_else(|_| b"{}".to_vec());
+        reply(&mut socket, if started { 202 } else { 409 }, "application/json", &json)?;
         return Ok(());
     }
     if method == "GET" && (path == "/" || path == "/health") {

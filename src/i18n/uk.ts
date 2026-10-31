@@ -3256,4 +3256,12 @@ export const uk: Record<string, string> = {
   "Switch the transmitter off and see the board notice. Propellers off.": "Вимкніть пульт і подивіться, чи помітить це плата. Пропелери зняті.",
   "Battery levels are set on the Battery step. RTL needs GPS.": "Рівні батареї задають на кроці «Батарея». RTL потребує GPS.",
   "Battery levels are set on the Battery step. RTL needs a position.": "Рівні батареї задають на кроці «Батарея». RTL потребує позиції.",
+  "Looking for the update…": "Пошук оновлення…",
+  "Downloading": "Завантаження",
+  "Installing. ArduLoops restarts when it is done.": "Встановлення. ArduLoops перезапуститься, коли воно завершиться.",
+  "This release has no automatic update. Download it from the release page.": "Цей реліз не має автоматичного оновлення. Завантажте його зі сторінки релізу.",
+  "The update failed.": "Оновлення не вдалося.",
+  "Try again": "Спробувати ще",
+  "Update": "Оновити",
+  "Download and install the update, then restart": "Завантажити та встановити оновлення, потім перезапустити",
 };

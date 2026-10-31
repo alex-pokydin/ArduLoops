@@ -1,7 +1,6 @@
 {
   "$schema": "../node_modules/@tauri-apps/cli/config.schema.json",
   "productName": "ArduLoops",
-  "version": "2.4.0",
   "identifier": "com.iampm.arduloops",
   "build": {
     "frontendDist": "../dist",
@@ -25,6 +24,15 @@
     }
   },
   "plugins": {
+    "updater": {
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDRCMDM1N0ExQjFBQUEzMApSV1F3cWhvYmVqV3dCQkp2MTRnRVcyeTB5Z0V3YS9xcDI3YjNERitES0xtS0hZWlBtbWo2dW84bQo=",
+      "endpoints": [
+        "https://github.com/alex-pokydin/ArduLoops/releases/latest/download/latest.json"
+      ],
+      "windows": {
+        "installMode": "passive"
+      }
+    },
     "deep-link": {
       "mobile": [
         {

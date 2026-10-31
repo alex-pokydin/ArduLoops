@@ -18,6 +18,7 @@ mod serial_link;
 mod sitl;
 mod tlog;
 mod udp;
+mod update;
 
 pub fn migrate_force(on: bool) {
     migrate::force_latest(on);
@@ -81,6 +82,10 @@ mod desktop {
 
     static APP: OnceLock<tauri::AppHandle> = OnceLock::new();
 
+    pub fn app_handle() -> Option<tauri::AppHandle> {
+        APP.get().cloned()
+    }
+
     pub fn open_system_url(url: &str) -> Result<(), String> {
         let app = APP.get().ok_or_else(|| "open the link in the browser".to_string())?;
         let (tx, rx) = mpsc::channel();
@@ -102,10 +107,13 @@ mod desktop {
 
     pub fn run() {
         let (tx, rx) = mpsc::channel::<Cmd>();
-        tauri::Builder::default()
+        let builder = tauri::Builder::default()
             .plugin(tauri_plugin_log::Builder::default().build())
             .plugin(tauri_plugin_opener::init())
-            .plugin(tauri_plugin_deep_link::init())
+            .plugin(tauri_plugin_deep_link::init());
+        #[cfg(not(target_os = "android"))]
+        let builder = builder.plugin(tauri_plugin_updater::Builder::new().build());
+        builder
             .setup(move |app| {
                 if let Ok(path) = app.path().app_local_data_dir() {
                     crate::db::set_app_data_dir(path);
@@ -136,6 +144,11 @@ mod desktop {
 #[cfg(feature = "desktop")]
 pub fn open_system_url(url: &str) -> Result<(), String> {
     desktop::open_system_url(url)
+}
+
+#[cfg(feature = "desktop")]
+pub(crate) fn app_handle() -> Option<tauri::AppHandle> {
+    desktop::app_handle()
 }
 
 #[cfg(not(feature = "desktop"))]

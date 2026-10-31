@@ -28,12 +28,39 @@ function checkNote(status: string): string {
 }
 
 
+export type AppUpdate = {
+  can: boolean;
+  state: "idle" | "checking" | "downloading" | "installing" | "missing" | "failed";
+  done?: number;
+  total?: number | null;
+  error?: string;
+};
+
 export type AppRelease = {
   current: string;
   latest: string;
   newer: boolean;
   url: string;
+  update?: AppUpdate;
 };
+
+function updateNote(update: AppUpdate | undefined, t: (s: string) => string): string {
+  if (!update) return "";
+  if (update.state === "checking") return t("Looking for the update…");
+  if (update.state === "downloading") {
+    const mb = ((update.done ?? 0) / 1048576).toFixed(1);
+    if (update.total) return `${t("Downloading")} ${Math.round((100 * (update.done ?? 0)) / update.total)}% · ${mb} MB`;
+    return `${t("Downloading")} · ${mb} MB`;
+  }
+  if (update.state === "installing") return t("Installing. ArduLoops restarts when it is done.");
+  if (update.state === "missing") return t("This release has no automatic update. Download it from the release page.");
+  if (update.state === "failed") return `${t("The update failed.")} ${update.error ?? ""}`.trim();
+  return "";
+}
+
+function startUpdate(): void {
+  void fetch(`${APP_HTTP}/app/update`, { method: "POST" }).catch(() => undefined);
+}
 
 export function LabDialog({
   open,
@@ -180,6 +207,7 @@ export function LabDialog({
           <li className="opt">
             <div className="opt-body">
               <b>{t("Version")}</b>
+              {updateNote(release?.update, t) ? <span role="status">{updateNote(release?.update, t)}</span> : null}
             </div>
             <span className="opt-val">
               {release?.current ?? ""}
@@ -200,6 +228,11 @@ export function LabDialog({
                 </>
               ) : null}
             </span>
+            {release?.newer && release.update?.can && ["idle", "failed"].includes(release.update.state) ? (
+              <button type="button" onClick={startUpdate} title={t("Download and install the update, then restart")}>
+                {release.update.state === "failed" ? t("Try again") : t("Update")}
+              </button>
+            ) : null}
           </li>
           <li className="opt">
             <div className="opt-body">
