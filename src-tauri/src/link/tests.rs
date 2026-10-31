@@ -105,8 +105,8 @@ mod diagnostics_tests {
 mod live_buffer_tests {
     use super::{handle_msg, live_meta, wall_time, with_live_cleared, LinkState, Sample};
     use mavlink::ardupilotmega::{
-        ATTITUDE_DATA, DISTANCE_SENSOR_DATA, GLOBAL_POSITION_INT_DATA, OPTICAL_FLOW_DATA, RANGEFINDER_DATA,
-        SIM_STATE_DATA, SIMSTATE_DATA, MavMessage,
+        ATTITUDE_DATA, DISTANCE_SENSOR_DATA, ESC_TELEMETRY_1_TO_4_DATA, GLOBAL_POSITION_INT_DATA, OPTICAL_FLOW_DATA,
+        RANGEFINDER_DATA, SIM_STATE_DATA, SIMSTATE_DATA, MavMessage,
     };
     use mavlink::MavHeader;
 
@@ -161,6 +161,20 @@ mod live_buffer_tests {
         handle_msg(&mut st, &hdr, MavMessage::STATUSTEXT(STATUSTEXT_DATA { severity: MavSeverity::MAV_SEVERITY_DEBUG, text: buf, ..Default::default() }));
         assert_eq!(st.sample.prearm.len(), 2);
         assert_eq!(st.sample.prearm_skipped.iter().map(|line| line.text.as_str()).collect::<Vec<_>>(), [skipped]);
+    }
+
+    #[test]
+    fn esc_telemetry_arrays_become_one_number_each() {
+        let mut st = LinkState::new();
+        let hdr = MavHeader { system_id: 1, component_id: 1, sequence: 0 };
+        handle_msg(
+            &mut st,
+            &hdr,
+            MavMessage::ESC_TELEMETRY_1_TO_4(ESC_TELEMETRY_1_TO_4_DATA { voltage: [1580, 1579, 1581, 1580], current: [120, 0, 0, 0], ..Default::default() }),
+        );
+        assert_eq!(st.sample.live_nums.get("ESC_TELEMETRY_1_TO_4.voltage0"), Some(&1580.0));
+        assert_eq!(st.sample.live_nums.get("ESC_TELEMETRY_1_TO_4.current0"), Some(&120.0));
+        assert_eq!(st.sample.live_nums.get("ESC_TELEMETRY_1_TO_4.voltage3"), Some(&1580.0));
     }
 
     #[test]

@@ -826,7 +826,7 @@ mod link_wait_tests {
         assert_eq!(tools.len(), listed.len());
         assert!(tools.iter().any(|tool| tool.name.to_string() == "log_compute"));
         assert!(tools.iter().any(|tool| tool.name.to_string() == "wizard_widget"));
-        assert!(wizard_name_ok("accel") && wizard_name_ok("board_orientation") && wizard_name_ok("compass") && wizard_name_ok("compass_orient") && wizard_name_ok("compass_mot") && wizard_name_ok("motors") && wizard_name_ok("radio") && wizard_name_ok("modes") && wizard_name_ok("battery") && wizard_name_ok("failsafe") && wizard_name_ok("servos") && wizard_name_ok("airspeed"));
+        assert!(wizard_name_ok("accel") && wizard_name_ok("board_orientation") && wizard_name_ok("compass") && wizard_name_ok("compass_orient") && wizard_name_ok("compass_mot") && wizard_name_ok("motors") && wizard_name_ok("radio") && wizard_name_ok("modes") && wizard_name_ok("battery_sensor") && wizard_name_ok("battery_voltage") && wizard_name_ok("battery_current") && !wizard_name_ok("battery") && wizard_name_ok("failsafe") && wizard_name_ok("servos") && wizard_name_ok("airspeed"));
         assert!(!wizard_name_ok("horizon") && !wizard_name_ok(""));
         assert_eq!(wizard_vehicle(wizard_frame_ok("accel", "plane").unwrap()), "both");
         assert_eq!(wizard_vehicle(wizard_frame_ok("board_orientation", "copter").unwrap()), "both");

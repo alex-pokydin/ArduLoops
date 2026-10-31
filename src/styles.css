@@ -641,6 +641,43 @@ body.split-drag iframe, body.split-drag canvas { pointer-events: none; }
 .sov-chip.amber { background: #2a2214; border-color: #5a4524; color: var(--amber); }
 .sov-sect { margin: 0; padding-top: 8px; color: #a9b6c4; font-size: 11px; font-weight: 700; letter-spacing: 0.06em; text-transform: uppercase; }
 .sov-pre { display: flex; flex-direction: column; gap: 4px; }
+.bs-art { gap: 2px; }
+.bs-pack { width: 230px; height: auto; }
+.bs-cap { fill: #2a333c; }
+.bs-shell { fill: #11151a; stroke: #3a4552; stroke-width: 2; }
+.bs-fill { fill-opacity: 0.28; } .bs-fill.ok { fill: var(--ok); } .bs-fill.amber { fill: var(--amber); } .bs-fill.hot { fill: var(--hot); } .bs-fill.mute { fill: var(--dim); }
+.bs-mark line { stroke-width: 1.5; stroke-dasharray: 4 3; } .bs-mark text { font-size: 10px; }
+.bs-mark.cyan line { stroke: var(--cyan); } .bs-mark.cyan text { fill: var(--cyan); }
+.bs-mark.amber line { stroke: var(--amber); } .bs-mark.amber text { fill: var(--amber); }
+.bs-mark.hot line { stroke: var(--hot); } .bs-mark.hot text { fill: var(--hot); }
+.bs-volts { font-size: 26px; line-height: 1.1; } .bs-volts.ok { color: var(--ok); } .bs-volts.amber { color: var(--amber); } .bs-volts.hot { color: var(--hot); } .bs-volts.mute { color: var(--dim); }
+.bs-cross { display: flex; align-items: center; gap: 8px; font-size: 12px; color: #a9b6c4; }
+.bs-cross.warn { color: var(--amber); }
+.bs-th { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 0 10px; align-items: baseline; font-size: 13px; }
+.bs-th b { text-align: right; }
+.bs-th-hint { grid-column: 1 / -1; color: #5a6778; font-family: "Cascadia Mono", Consolas, monospace; font-size: 10px; }
+.bs-mods { display: flex; flex-direction: column; gap: 6px; width: 100%; }
+.bs-mod { display: flex; align-items: center; gap: 10px; margin: 0; padding: 9px 12px; border-radius: 10px; background: #141a22; border: 1.5px solid #2a333c; color: inherit; text-align: left; cursor: pointer; }
+.bs-mod.on { border-color: var(--cyan); background: #0f2230; }
+.bs-mod:disabled { cursor: default; }
+.bs-mod-dot { flex: none; width: 16px; height: 16px; border-radius: 50%; border: 2px solid #4a5666; }
+.bs-mod.on .bs-mod-dot { border-color: var(--cyan); background: radial-gradient(var(--cyan) 40%, transparent 45%); }
+.bs-mod-copy { display: flex; flex-direction: column; min-width: 0; } .bs-mod-copy b { font-size: 13px; } .bs-mod-copy span { color: var(--dim); font-size: 11px; }
+.bs-cmp { display: flex; align-items: center; gap: 12px; }
+.bs-cmp > div { display: flex; flex-direction: column; align-items: center; gap: 4px; padding: 16px 18px; border-radius: 12px; background: #141a22; border: 1px solid #222a36; }
+.bs-cmp span { color: var(--dim); font-size: 12px; } .bs-cmp b { font-size: 22px; } .bs-cmp b.ok { color: var(--ok); } .bs-cmp b.warn { color: var(--amber); }
+.bs-input { display: flex; flex-direction: column; gap: 4px; font-size: 12px; color: #a9b6c4; }
+.bs-input-box { display: inline-flex; align-items: center; gap: 6px; width: 200px; height: 44px; padding: 0 12px; border-radius: 10px; background: #0c0e11; border: 1.5px solid var(--cyan); }
+.bs-input-box input { flex: 1; min-width: 0; border: 0; outline: 0; background: transparent; color: var(--ink); font: inherit; font-size: 20px; font-weight: 600; }
+.bs-input-box span { color: var(--dim); }
+.bs-used { display: flex; flex-direction: column; align-items: center; gap: 6px; text-align: center; }
+.bs-used b { font-size: 34px; } .bs-used span { color: var(--dim); font-size: 12px; max-width: 220px; }
+.bs-meter { display: flex; flex-direction: column; align-items: center; gap: 4px; } .bs-meter svg { width: 300px; height: auto; } .bs-meter > span { color: var(--dim); font-size: 11px; }
+.bs-m-body { fill: #1c232e; stroke: #4a5666; stroke-width: 2; } .bs-m-lcd { fill: #0c1a12; stroke: #2e5a38; }
+.bs-m-text { fill: var(--ok); font: 700 22px Consolas, monospace; text-anchor: middle; }
+.bs-m-dial { fill: #141a22; stroke: #4a5666; stroke-width: 2; } .bs-m-needle { stroke: var(--ink); stroke-width: 3; stroke-linecap: round; }
+.bs-m-pack { fill: #232b37; stroke: #4a5666; stroke-width: 2; } .bs-m-plug { fill: #3b2f12; stroke: var(--amber); }
+.bs-m-red { fill: none; stroke: var(--hot); stroke-width: 3; } .bs-m-black { fill: none; stroke: var(--ink); stroke-width: 3; }
 .ac-head { display: inline-flex; align-items: baseline; gap: 10px; }
 .ac-link { margin: 0; padding: 0; border: 0; background: none; color: var(--cyan); font: inherit; font-size: 12px; font-weight: 600; letter-spacing: 0; text-transform: none; cursor: pointer; }
 .ac-link:hover { text-decoration: underline; }

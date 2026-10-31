@@ -29,6 +29,11 @@ function fsName(names: Record<number, string>, value: number): string {
   return names[value] ?? String(value);
 }
 
+/** What the vehicle does at a battery failsafe level (BATT_FS_LOW_ACT, BATT_FS_CRT_ACT). */
+export function battActionName(vehicle: "copter" | "plane", value: number): string {
+  return fsName(vehicle === "plane" ? FS_NAMES.planeBatt : FS_NAMES.copterBatt, value);
+}
+
 /** The usual choices, plus the stored value when it is another one, so the current setting is always shown. */
 function fsOptions(names: Record<number, string>, usual: number[], current: number | null): { label: string; value: number }[] {
   const values = current != null && !usual.includes(current) ? [...usual, current] : usual;
@@ -261,10 +266,12 @@ export function stepGlance(
     return { text: batt == null ? radioText : `${radioText} · ${battText}`, live };
   }
   if (kind === "battery") {
-    if (whole(param(params, "BATT_MONITOR")) === 0) return { text: "No battery monitor", live: false };
+    const monitor = whole(param(params, "BATT_MONITOR"));
+    if (monitor == null) return { text: "", live: false };
+    if (monitor === 0) return { text: "No battery monitor", live: false };
+    if (monitor === 3) return { text: "Voltage only · no mAh", live: false };
     const cap = whole(param(params, "BATT_CAPACITY"));
-    if (cap == null) return { text: "", live: false };
-    return { text: `${cap} mAh`, live: cap > 0 };
+    return { text: cap ? `${cap} mAh` : "No capacity set", live: !!cap };
   }
   if (kind === "servos") {
     if (vehicle === "copter") {

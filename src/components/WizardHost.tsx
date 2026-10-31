@@ -5,7 +5,7 @@ import { AccelWizard } from "./CalibrationPanel";
 import { CompassMot } from "./CompassMot";
 import { CompassOrient } from "./CompassOrient";
 import { CompassCalWizard } from "./CompassPanel";
-import { BatterySetup } from "./BatterySetup";
+import { BatteryCurrentWizard, BatterySensorWizard, BatteryVoltageWizard } from "./BatteryStep";
 import { ModeSetup } from "./ModeSetup";
 import { MotorSetup, type MotorScope, type MotorStep } from "./MotorSetup";
 import { RcSetup } from "./RcSetup";
@@ -89,7 +89,9 @@ export function WizardHost({
   if (ask.wizard === "compass_mot") return <CompassMot onClose={finish} fromAssistant />;
   if (ask.wizard === "radio") return <RcSetup onClose={finish} />;
   if (ask.wizard === "modes") return <ModeSetup frame={sample.frame === "plane" ? "plane" : "copter"} onClose={finish} />;
-  if (ask.wizard === "battery") return <BatterySetup onClose={finish} />;
+  if (ask.wizard === "battery_sensor") return <BatterySensorWizard onClose={finish} fromAssistant />;
+  if (ask.wizard === "battery_voltage") return <BatteryVoltageWizard onClose={finish} fromAssistant />;
+  if (ask.wizard === "battery_current") return <BatteryCurrentWizard onClose={finish} fromAssistant />;
   if (ask.wizard === "failsafe") {
     const frame = sample.frame === "plane" ? "plane" : "copter";
     return (

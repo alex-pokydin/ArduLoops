@@ -44,6 +44,18 @@ fn absorb_message(nums: &mut HashMap<String, f64>, msg: &MavMessage) {
         if key == "type" || key == "axis" {
             continue;
         }
+        // Short number arrays (ESC_TELEMETRY_1_TO_4 voltage and current, BATTERY_STATUS cell voltages) become
+        // one entry per item: `voltage0`, `voltage1`…
+        if let Some(list) = item.as_array() {
+            if list.len() <= 16 {
+                for (i, v) in list.iter().enumerate() {
+                    if let Some(n) = v.as_f64().filter(|n| n.is_finite()) {
+                        nums.insert(format!("{message}.{key}{i}"), n);
+                    }
+                }
+            }
+            continue;
+        }
         // Bitflag fields serialize as {"bits": N}; keep N so flags such as
         // SYS_STATUS health or EKF_STATUS_REPORT.flags reach the UI.
         let Some(n) = item.as_f64().or_else(|| item.get("bits").and_then(|bits| bits.as_f64())) else { continue };

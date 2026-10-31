@@ -11,7 +11,7 @@
 5. **Compass.** The offsets on screen are the last calibration. Start runs a new one: turn the vehicle until every compass fills.
 6. **Flight modes.** Find the switch channel, then give each position a mode you can fly.
 7. **Failsafe.** Choose what the vehicle does when the radio or the battery is lost.
-8. **Battery.** Set the sensor and the capacity, then match the voltage and zero the current if you want to. What happens when the battery is low stays on the failsafe step.
+8. **Battery.** Say what measures the pack, then match the voltage to a meter and the current to the mAh a charger puts back. The assistant sets the thresholds and the capacity from the pack you name.
 9. **Servos.** Output channel settings. The motor names belong to the motor step.
 
 ## Plane
