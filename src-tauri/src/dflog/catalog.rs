@@ -244,6 +244,11 @@ fn reveal_path(path: &std::path::Path) -> std::io::Result<()> {
 }
 
 pub fn resolve(id: &str) -> Result<PathBuf, String> {
+    // A log that is only in the account's cloud storage is downloaded when something reads it.
+    if let Some(hash) = id.strip_prefix("cloud:") {
+        let local = crate::cloud::download(hash)?;
+        return resolve(&local);
+    }
     if id.is_empty() || id.contains("..") || id.contains(':') || id.starts_with('/') || id.starts_with('\\') {
         return Err("log id is not in local storage".into());
     }

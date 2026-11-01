@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { type LogRow } from "./components/Aside";
 import { Assistant } from "./components/Assistant";
 import { SetupStatusFeed } from "./components/HardwareSetup";
+import { LogAutoDownload } from "./components/VehicleLogs";
 import { LinkChip } from "./components/LinkChip";
 import { LabDialog, type AppRelease } from "./components/LabDialog";
 import { StudioRecorder } from "./components/StudioRecorder";
@@ -542,6 +543,7 @@ export function App() {
       {/* The Setup verdicts for setup_status, from the vehicle on the link, whatever the user is looking at. */}
       <VehicleView vehicle={live === "plane" ? "plane" : "copter"}>
         <SetupStatusFeed />
+        <LogAutoDownload />
       </VehicleView>
       <Assistant home={shell === "home"} onOpenOptions={() => setLabOpen(true)} onOpenHome={() => onShell("home")} />
       {import.meta.env.DEV && <StudioRecorder />}

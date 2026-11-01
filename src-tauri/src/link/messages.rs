@@ -1056,6 +1056,7 @@ fn handle_msg(st: &mut LinkState, header: &MavHeader, msg: MavMessage) {
             if header.system_id != 0 {
                 st.target_system = header.system_id;
             }
+            st.sample.log_dir = log_dir_key(st);
             if header.component_id != 0 {
                 st.target_component = header.component_id;
             }
@@ -1347,6 +1348,7 @@ fn handle_msg(st: &mut LinkState, header: &MavHeader, msg: MavMessage) {
             if let Some((name, uid)) = boot_identity(&msg) {
                 st.sample.board_name = name;
                 st.sample.boot_uid = uid;
+                st.sample.log_dir = log_dir_key(st);
             }
             let sev = format!("{severity:?}").replace("MAV_SEVERITY_", "");
             if msg.starts_with("PreArm:") {

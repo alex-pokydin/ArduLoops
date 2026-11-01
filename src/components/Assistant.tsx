@@ -575,6 +575,11 @@ export function Assistant({
       // Ask: a new chat with the view chip on and nothing sent. A running turn is not cut.
       if (!busyRef.current) newThreadRef.current?.();
       setAskStarters(detail.starters ?? []);
+      if (detail.log) {
+        const log = detail.log;
+        setLogId(log);
+        void ai.logs().then((r) => setLogs(r.logs)).catch(() => {});
+      }
     };
     window.addEventListener(ASK_ASSISTANT, ask);
     return () => window.removeEventListener(ASK_ASSISTANT, ask);

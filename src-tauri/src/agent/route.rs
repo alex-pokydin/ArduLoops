@@ -91,7 +91,7 @@ pub fn route(
         ("POST", "/ai/send") => send(&c, body, sample, tx),
         ("POST", "/ai/proposal") => decide(&c, body, sample, tx),
         ("POST", "/ai/wizard") => settle_wizard(&c, body, sample, tx),
-        ("GET", "/ai/logs") => Ok(crate::dflog::list_logs()),
+        ("GET", "/ai/logs") => Ok(crate::dflog::list_logs_with_cloud()),
         ("GET", "/ai/audit") => Ok(audit_list(&c)),
         ("POST", "/ai/revert") => revert_audit(&c, body, sample),
         ("POST", "/ai/note") => note_ui(&c, body),

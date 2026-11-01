@@ -39,5 +39,11 @@ include!("motors.rs");
 // PIDReview stability margins and rate tuning.
 include!("pid_review.rs");
 
+// Logs table: per-file scan, changes, delete to the Recycle Bin.
+include!("scan.rs");
+
+// Share: anonymised copies in a .zip.
+include!("share.rs");
+
 // Tests.
 include!("tests.rs");

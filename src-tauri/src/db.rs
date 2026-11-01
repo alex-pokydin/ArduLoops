@@ -269,6 +269,83 @@ pub fn set_firmware_comment(artifact_id: &str, comment: &str) -> Result<Value, S
     Ok(json!({"artifact_id": artifact_id, "comment": comment}))
 }
 
+/// Star and note per log, keyed by the sha256_16 of the file contents.
+pub fn log_notes() -> Result<std::collections::HashMap<String, (bool, String, i64)>, String> {
+    let conn = open()?;
+    let mut stmt = conn
+        .prepare("SELECT hash, star, note, updated_at FROM log_notes")
+        .map_err(|e| e.to_string())?;
+    let rows = stmt
+        .query_map([], |row| {
+            Ok((row.get::<_, String>(0)?, (row.get::<_, i64>(1)? != 0, row.get::<_, String>(2)?, row.get::<_, i64>(3)?)))
+        })
+        .map_err(|e| e.to_string())?;
+    Ok(rows.flatten().collect())
+}
+
+/// Every stored note with what identifies its log: hash, board, onboard id, bytes, star, note, updated_at.
+pub fn log_notes_full() -> Result<Vec<Value>, String> {
+    let conn = open()?;
+    let mut stmt = conn
+        .prepare("SELECT hash, board, onboard_id, bytes, star, note, updated_at FROM log_notes")
+        .map_err(|e| e.to_string())?;
+    let rows = stmt
+        .query_map([], |row| {
+            Ok(json!({
+                "hash": row.get::<_, String>(0)?,
+                "board": row.get::<_, String>(1)?,
+                "onboard_id": row.get::<_, Option<i64>>(2)?,
+                "bytes": row.get::<_, i64>(3)?,
+                "star": row.get::<_, i64>(4)? != 0,
+                "note": row.get::<_, String>(5)?,
+                "updated_at": row.get::<_, i64>(6)?,
+            }))
+        })
+        .map_err(|e| e.to_string())?;
+    Ok(rows.flatten().collect())
+}
+
+/// Sets the star, the note, or both. A field left as None keeps what is stored.
+pub fn set_log_note(hash: &str, board: &str, onboard_id: Option<i64>, bytes: i64, star: Option<bool>, note: Option<&str>) -> Result<Value, String> {
+    if hash.len() != 16 || !hash.bytes().all(|b| b.is_ascii_hexdigit()) {
+        return Err("hash must be 16 hex characters".into());
+    }
+    let note = note.map(user_comment).transpose()?;
+    let conn = open()?;
+    conn.execute(
+        "INSERT INTO log_notes (hash, board, onboard_id, bytes, star, note, updated_at)
+         VALUES (?1, ?2, ?3, ?4, COALESCE(?5, 0), COALESCE(?6, ''), ?7)
+         ON CONFLICT(hash) DO UPDATE SET
+           board = CASE WHEN ?2 = '' THEN board ELSE ?2 END,
+           onboard_id = COALESCE(?3, onboard_id),
+           bytes = CASE WHEN ?4 = 0 THEN bytes ELSE ?4 END,
+           star = COALESCE(?5, star),
+           note = COALESCE(?6, note),
+           updated_at = ?7",
+        params![hash, board, onboard_id, bytes, star.map(i64::from), note, now()],
+    )
+    .map_err(|e| e.to_string())?;
+    let (star, note, updated_at) = conn
+        .query_row("SELECT star, note, updated_at FROM log_notes WHERE hash=?1", params![hash], |row| {
+            Ok((row.get::<_, i64>(0)? != 0, row.get::<_, String>(1)?, row.get::<_, i64>(2)?))
+        })
+        .map_err(|e| e.to_string())?;
+    Ok(json!({"hash": hash, "star": star, "note": note, "updated_at": updated_at}))
+}
+
+/// Applies a note from another device when it is newer than the one here.
+pub fn merge_log_note(hash: &str, star: bool, note: &str, updated_at: i64) -> Result<bool, String> {
+    let conn = open()?;
+    let changed = conn
+        .execute(
+            "INSERT INTO log_notes (hash, star, note, updated_at) VALUES (?1, ?2, ?3, ?4)
+             ON CONFLICT(hash) DO UPDATE SET star = ?2, note = ?3, updated_at = ?4 WHERE log_notes.updated_at < ?4",
+            params![hash, i64::from(star), user_comment(note)?, updated_at],
+        )
+        .map_err(|e| e.to_string())?;
+    Ok(changed > 0)
+}
+
 fn user_comment(value: &str) -> Result<String, String> {
     let comment = value.trim();
     if comment.chars().count() > 2_000 {

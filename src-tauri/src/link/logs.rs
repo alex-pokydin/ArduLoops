@@ -214,16 +214,18 @@ fn fail_log_peek(st: &mut LinkState, id: u16, size: u32, error: &str) {
     );
 }
 
-fn save_completed_log(st: &mut LinkState, active: ActiveLogDownload) {
-    let key = if st.sample.boot_uid.is_empty() {
+/// The folder under logs/ for this board: its boot uid, or system-{id} before the boot banner is seen.
+fn log_dir_key(st: &LinkState) -> String {
+    if st.sample.boot_uid.is_empty() {
         format!("system-{}", st.target_system)
     } else {
-        st.sample
-            .boot_uid
-            .chars()
-            .filter(|c| c.is_ascii_alphanumeric())
-            .collect()
-    };
+        st.sample.boot_uid.chars().filter(|c| c.is_ascii_alphanumeric()).collect()
+    }
+}
+
+fn save_completed_log(st: &mut LinkState, active: ActiveLogDownload) {
+    let key = log_dir_key(st);
+    st.sample.log_dir = key.clone();
     let root = crate::db::data_dir().join("logs").join(key);
     let time_utc = st.sample.logs.iter().find(|log| log.id == active.id).map(|log| log.time_utc).unwrap_or(0);
     let path = root.join(crate::dflog::downloaded_log_name(active.id, &active.bytes, time_utc));

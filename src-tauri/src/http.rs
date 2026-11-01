@@ -356,6 +356,57 @@ fn handle(stream: TcpStream, latest: Arc<Mutex<Sample>>, tx: Sender<Cmd>) -> std
         return Ok(());
     }
 
+    if path.starts_with("/logs/") && matches!(path.as_str(), "/logs/local" | "/logs/scan" | "/logs/note" | "/logs/delete" | "/logs/share" | "/logs/reveal-shared")
+        || path == "/logs/cloud" || path.starts_with("/logs/cloud/")
+    {
+        let body = if method == "POST" { read_json_body(&mut reader, &headers, 1_048_576)? } else { serde_json::Value::Null };
+        let mut socket = reader.into_inner();
+        let result: Result<serde_json::Value, String> = match (method.as_str(), path.as_str()) {
+            ("GET", "/logs/local") => Ok(crate::dflog::local_logs()),
+            ("GET", "/logs/scan") => {
+                let id = query.get("id").map(String::as_str).unwrap_or("");
+                let scanned = crate::dflog::scan_log(id);
+                if scanned["ok"].as_bool() == Some(true) { Ok(scanned) } else { Err(scanned["error"].as_str().unwrap_or("Could not read the log").to_string()) }
+            }
+            ("POST", "/logs/note") => {
+                let hash = body["hash"].as_str().unwrap_or("");
+                let board = body["board"].as_str().unwrap_or("");
+                let onboard = body["onboard_id"].as_i64();
+                let bytes = body["bytes"].as_i64().unwrap_or(0);
+                crate::db::set_log_note(hash, board, onboard, bytes, body["star"].as_bool(), body["note"].as_str()).inspect(|saved| {
+                    crate::cloud::push_note(
+                        hash,
+                        saved["star"].as_bool().unwrap_or(false),
+                        saved["note"].as_str().unwrap_or(""),
+                        saved["updated_at"].as_i64().unwrap_or(0),
+                        board,
+                        onboard,
+                        bytes,
+                    );
+                })
+            }
+            ("POST", "/logs/delete") => {
+                let ids: Vec<String> = body["ids"].as_array().map(|a| a.iter().filter_map(|v| v.as_str().map(str::to_string)).collect()).unwrap_or_default();
+                Ok(crate::dflog::delete_logs(&ids))
+            }
+            ("POST", "/logs/share") => {
+                let ids: Vec<String> = body["ids"].as_array().map(|a| a.iter().filter_map(|v| v.as_str().map(str::to_string)).collect()).unwrap_or_default();
+                crate::dflog::share_logs(&ids, &body)
+            }
+            ("POST", "/logs/reveal-shared") => crate::dflog::reveal_shared(body["path"].as_str().unwrap_or("")).map(|()| serde_json::json!({ "ok": true })),
+            ("GET", "/logs/cloud") => Ok(crate::cloud::state()),
+            ("GET", "/logs/cloud/progress") => Ok(serde_json::json!({ "progress": crate::cloud::progress() })),
+            ("POST", "/logs/cloud/settings") => crate::cloud::set_mode(body["mode"].as_str().unwrap_or("")),
+            ("POST", "/logs/cloud/upload") => crate::cloud::upload(body["id"].as_str().unwrap_or("")),
+            ("POST", "/logs/cloud/download") => crate::cloud::download(body["hash"].as_str().unwrap_or("")).map(|id| serde_json::json!({ "ok": true, "id": id })),
+            ("POST", "/logs/cloud/remove") => crate::cloud::remove(body["hash"].as_str().unwrap_or("")),
+            _ => Err("not found".into()),
+        };
+        return match result {
+            Ok(value) => reply(&mut socket, 200, "application/json", &serde_json::to_vec(&value)?),
+            Err(error) => reply(&mut socket, 400, "application/json", &serde_json::to_vec(&serde_json::json!({ "error": error }))?),
+        };
+    }
     if method == "POST" && path == "/logs/cancel" {
         tx.send(Cmd::LogCancel)
             .map_err(|_| std::io::Error::other("link stopped"))?;
@@ -1593,6 +1644,16 @@ fn mission_items_ok(items: &[MissionItem]) -> Result<(), &'static str> {
         }
     }
     Ok(())
+}
+
+/// A JSON request body of at most `limit` bytes; anything else reads as null.
+fn read_json_body(reader: &mut BufReader<TcpStream>, headers: &HashMap<String, String>, limit: usize) -> std::io::Result<serde_json::Value> {
+    let len = headers.get("content-length").and_then(|v| v.parse::<usize>().ok()).unwrap_or(0).min(limit);
+    let mut body = vec![0u8; len];
+    if len > 0 {
+        reader.read_exact(&mut body)?;
+    }
+    Ok(serde_json::from_slice(&body).unwrap_or(serde_json::Value::Null))
 }
 
 fn reply(socket: &mut TcpStream, code: u16, ctype: &str, body: &[u8]) -> std::io::Result<()> {

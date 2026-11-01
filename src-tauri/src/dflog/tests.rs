@@ -1306,4 +1306,100 @@ mod tests {
         assert_eq!(res["ok"], json!(true), "{res}");
         assert!(res["metrics"]["phase_margin_deg"].as_f64().unwrap() > 0.0);
     }
+
+    fn arm_row(buf: &mut Vec<u8>, us: u64, armed: u8) {
+        buf.extend_from_slice(&[HEAD1, HEAD2, 10]);
+        buf.extend_from_slice(&us.to_le_bytes());
+        buf.push(armed);
+        buf.extend_from_slice(&0u32.to_le_bytes());
+    }
+
+    fn err_row(buf: &mut Vec<u8>, us: u64, subsystem: u8, code: u8) {
+        buf.extend_from_slice(&[HEAD1, HEAD2, 11, ]);
+        buf.extend_from_slice(&us.to_le_bytes());
+        buf.extend_from_slice(&[subsystem, code]);
+    }
+
+    fn gps_row(buf: &mut Vec<u8>, us: u64, lat: f64, lng: f64, week: u16) {
+        buf.extend_from_slice(&[HEAD1, HEAD2, 12]);
+        buf.extend_from_slice(&us.to_le_bytes());
+        buf.extend_from_slice(&((lat * 1e7).round() as i32).to_le_bytes());
+        buf.extend_from_slice(&((lng * 1e7).round() as i32).to_le_bytes());
+        buf.extend_from_slice(&week.to_le_bytes());
+        buf.extend_from_slice(&1000u32.to_le_bytes());
+    }
+
+    fn flight_log() -> Vec<u8> {
+        let mut buf = Vec::new();
+        push_fmt(&mut buf, 10, "ARM", "QBI", "TimeUS,ArmState,ArmChecks");
+        push_fmt(&mut buf, 11, "ERR", "QBB", "TimeUS,Subsys,ECode");
+        push_fmt(&mut buf, 12, "GPS", "QLLHI", "TimeUS,Lat,Lng,GWk,GMS");
+        push_fmt(&mut buf, 13, "MSG", "QZ", "TimeUS,Message");
+        push_qz(&mut buf, 13, 500_000, "ArduCopter V4.8.0-dev (113108bd)");
+        push_qz(&mut buf, 13, 600_000, "DAKEFPVH743 004B0039 30365107 33363732");
+        gps_row(&mut buf, 900_000, 50.45, 30.52, 2390);
+        arm_row(&mut buf, 1_000_000, 1);
+        gps_row(&mut buf, 2_000_000, 50.45 + 0.001, 30.52 + 0.001, 2390);
+        err_row(&mut buf, 3_000_000, 6, 1);
+        err_row(&mut buf, 3_500_000, 12, 1);
+        err_row(&mut buf, 3_600_000, 16, 0);
+        arm_row(&mut buf, 5_000_000, 0);
+        buf
+    }
+
+    #[test]
+    fn scan_counts_armed_time_flights_and_flags() {
+        let (scan, _) = scan_bytes(&flight_log());
+        assert_eq!(scan["armed_s"], json!(4.0), "{scan}");
+        assert_eq!(scan["flights"], json!(1));
+        let kinds: Vec<_> = scan["flags"].as_array().unwrap().iter().map(|f| f["kind"].as_str().unwrap().to_string()).collect();
+        assert_eq!(kinds, vec!["crash", "batt"], "a resolved ERR (code 0) is not a flag");
+    }
+
+    #[test]
+    fn a_boot_without_arming_is_never_armed() {
+        let mut buf = Vec::new();
+        push_fmt(&mut buf, 10, "ARM", "QBI", "TimeUS,ArmState,ArmChecks");
+        push_fmt(&mut buf, 13, "MSG", "QZ", "TimeUS,Message");
+        push_qz(&mut buf, 13, 500_000, "ArduCopter V4.8.0-dev (113108bd)");
+        let (scan, _) = scan_bytes(&buf);
+        assert_eq!(scan["flights"], json!(0));
+        assert_eq!(scan["armed_s"], json!(0.0));
+    }
+
+    #[test]
+    fn values_the_firmware_writes_at_boot_are_not_changes() {
+        let before: BTreeMap<String, f64> = [("ATC_RAT_RLL_P".to_string(), 0.135), ("BARO1_GND_PRESS".to_string(), 101287.0), ("STAT_BOOTCNT".to_string(), 4.0)].into();
+        let after: BTreeMap<String, f64> = [("ATC_RAT_RLL_P".to_string(), 0.15), ("BARO1_GND_PRESS".to_string(), 101324.0), ("STAT_BOOTCNT".to_string(), 5.0)].into();
+        let changes = param_changes(&before, &after);
+        assert_eq!(changes.len(), 1);
+        assert_eq!(changes[0]["name"], json!("ATC_RAT_RLL_P"));
+    }
+
+    #[test]
+    fn share_moves_home_to_zero_shifts_the_date_and_clears_the_serial() {
+        let original = flight_log();
+        let mut copy = original.clone();
+        anonymise(&mut copy, &ShareOptions { location: true, date: true, board: true, messages: false });
+        assert_eq!(copy.len(), original.len(), "fields are rewritten in place");
+        let formats = parse_formats(&copy);
+        let mut fixes = Vec::new();
+        let mut texts = Vec::new();
+        let mut incomplete = false;
+        walk(&copy, &formats, |fmt, _, values| {
+            if fmt.name == "GPS" {
+                fixes.push((field_f64(fmt, values, "Lat").unwrap(), field_f64(fmt, values, "Lng").unwrap(), field_u64(fmt, values, "GWk").unwrap()));
+            }
+            if fmt.name == "MSG" {
+                texts.push(field_str(fmt, values, "Message").unwrap_or_default());
+            }
+        }, &mut incomplete);
+        assert_eq!((fixes[0].0, fixes[0].1), (0.0, 0.0), "home is at 0 N 0 E");
+        assert!((fixes[1].0 - 0.001).abs() < 1e-6, "north offset kept");
+        let east = 0.001 * 50.45f64.to_radians().cos();
+        assert!((fixes[1].1 - east).abs() < 1e-6, "east offset kept in metres");
+        assert_eq!(fixes[0].2, SHARE_WEEK);
+        assert_eq!(texts[0], "ArduCopter V4.8.0-dev (113108bd)", "the firmware line stays");
+        assert_eq!(texts[1], "DAKEFPVH743 00000000 00000000 00000000");
+    }
 }

@@ -227,6 +227,8 @@ pub struct Sample {
     /// COMMAND_ACK events push the banner out of the short diagnostics queue.
     pub board_name: String,
     pub boot_uid: String,
+    /// Folder under logs/ that downloads from this board go into: the boot uid, or system-{id} without one.
+    pub log_dir: String,
     pub params: HashMap<String, f64>,
     /// RC_CHANNELS raw PWM, channel 1 first.
     pub rc: Vec<u16>,
@@ -358,6 +360,7 @@ impl Sample {
             frame: String::new(),
             board_name: String::new(),
             boot_uid: String::new(),
+            log_dir: String::new(),
             params: HashMap::new(),
             rc: Vec::new(),
             param_received: HashMap::new(),

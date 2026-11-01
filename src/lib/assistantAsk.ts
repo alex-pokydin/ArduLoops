@@ -5,7 +5,7 @@
  */
 export const ASK_ASSISTANT = "arduloops:assistant-ask";
 
-export type AskDetail = { text: string; send: boolean; starters?: string[]; keep?: boolean };
+export type AskDetail = { text: string; send: boolean; starters?: string[]; keep?: boolean; log?: string };
 
 export function askAssistant(text: string): void {
   window.dispatchEvent(new CustomEvent<AskDetail>(ASK_ASSISTANT, { detail: { text, send: true } }));
@@ -20,9 +20,10 @@ export function takeFocusRequest(): boolean {
   return wanted;
 }
 
-export function openAssistant(starters: string[] = []): void {
+/** `log` attaches a stored log to the new chat (an id from /ai/logs, or cloud:{hash}). */
+export function openAssistant(starters: string[] = [], log = ""): void {
   focusWanted = true;
-  window.dispatchEvent(new CustomEvent<AskDetail>(ASK_ASSISTANT, { detail: { text: "", send: false, starters } }));
+  window.dispatchEvent(new CustomEvent<AskDetail>(ASK_ASSISTANT, { detail: { text: "", send: false, starters, log } }));
 }
 
 /** Opens the chat on the conversation already there, e.g. where an assistant card waits. */

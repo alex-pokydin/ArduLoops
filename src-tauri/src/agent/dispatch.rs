@@ -685,7 +685,7 @@ fn run_tool(
             json!({ "limit": n, "lines": sample.texts.iter().take(n).cloned().collect::<Vec<_>>() })
         }
         "propose_param" | "set_param" => set_param_tool(args, sample, c, chat),
-        "list_logs" => crate::dflog::list_logs(),
+        "list_logs" => crate::dflog::list_logs_with_cloud(),
         "log_inspect" => log_inspect_tool(args, file),
         "log_params" => log_params_tool(args, file),
         "log_schema" => log_schema_tool(args, file),

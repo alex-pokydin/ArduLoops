@@ -3,6 +3,7 @@
 mod agent;
 mod app;
 mod cli;
+mod cloud;
 mod db;
 mod dflog;
 mod firmware;

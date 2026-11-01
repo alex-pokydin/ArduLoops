@@ -629,3 +629,56 @@ mod cloud_and_own_key {
         assert_eq!(ok, Some(true));
     }
 }
+
+/// Signed-in account calls for log sync (crate::cloud). The same session and API as the assistant.
+pub(crate) fn cloud_post(path: &str, body: &Value) -> Result<Value, String> {
+    api_post(path, body)
+}
+
+/// PUT a body to a signed upload URL, reporting bytes sent.
+pub(crate) fn cloud_put(url: &str, body: Vec<u8>, content_type: &str, progress: impl Fn(u64, u64) + Send + Sync + 'static) -> Result<(), String> {
+    let url = url.to_string();
+    let kind = content_type.to_string();
+    let total = body.len() as u64;
+    api_block_on(async move {
+        let chunks: Vec<Result<Vec<u8>, std::io::Error>> = body.chunks(256 * 1024).map(|c| Ok(c.to_vec())).collect();
+        let sent = std::sync::Arc::new(std::sync::atomic::AtomicU64::new(0));
+        let counter = sent.clone();
+        let stream = futures_util::stream::iter(chunks).map(move |chunk| {
+            if let Ok(bytes) = &chunk {
+                let now = counter.fetch_add(bytes.len() as u64, std::sync::atomic::Ordering::Relaxed) + bytes.len() as u64;
+                progress(now, total);
+            }
+            chunk
+        });
+        let resp = api_http(1_800)
+            .put(url)
+            .header("content-type", kind)
+            .header("content-length", total.to_string())
+            .body(reqwest::Body::wrap_stream(stream))
+            .send()
+            .await
+            .map_err(hosted_err)?;
+        if resp.status().is_success() {
+            Ok(())
+        } else {
+            let status = resp.status();
+            Err(format!("Upload failed: {status} {}", resp.text().await.unwrap_or_default()))
+        }
+    })
+}
+
+/// GET a signed download URL.
+pub(crate) fn cloud_get(url: &str) -> Result<Vec<u8>, String> {
+    let url = url.to_string();
+    api_block_on(async move {
+        let resp = api_http(1_800).get(url).send().await.map_err(hosted_err)?;
+        let status = resp.status();
+        let bytes = resp.bytes().await.map_err(hosted_err)?;
+        if status.is_success() {
+            Ok(bytes.to_vec())
+        } else {
+            Err(format!("Download failed: {status}"))
+        }
+    })
+}

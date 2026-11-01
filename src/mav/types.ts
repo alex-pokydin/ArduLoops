@@ -82,6 +82,8 @@ export type Sample = {
   frame: "copter" | "plane" | "";
   board_name?: string;
   boot_uid?: string;
+  /** Folder under logs/ that downloads from this board go into (boot uid, or system-{id}). */
+  log_dir?: string;
   params: Record<string, number>;
   /** PARAM_VALUE count announced by the vehicle. The backup is full only when `params` reaches it. */
   param_count?: number;
