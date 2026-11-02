@@ -411,6 +411,9 @@ mod link_wait_tests {
         assert_eq!(provider_failure("empty provider response"), "The model returned no text.");
         assert_eq!(provider_failure("ARDULOOPS_FIREBASE_API_KEY is not set."), "Sign in required.");
         assert_eq!(provider_failure("429 Too many tools in this request."), "paused_limit");
+        assert_eq!(provider_failure("429 This request reached its cost limit."), "paused_limit");
+        assert_eq!(provider_failure("429 The AI budget for this period is used up."), "The AI budget for this period is used up.");
+        assert_eq!(provider_failure("429 Daily quota exceeded."), "quota exceeded");
         assert_eq!(failure_body("ARDULOOPS_FIREBASE_API_KEY is not set.", "Sign in required."), "Sign in required.");
         assert_eq!(
             provider_failure("400 the input token count exceeds the maximum number of input tokens"),
@@ -1011,5 +1014,106 @@ mod link_wait_tests {
             [provider],
             |row| row.get(0),
         ).ok()
+    }
+}
+
+#[cfg(test)]
+mod turn_model_tests {
+    use super::turn_model;
+
+    #[test]
+    fn cloud_always_uses_its_one_model() {
+        let flash = ("gemini".to_string(), "gemini-3.8-flash".to_string());
+        assert_eq!(turn_model("openai".into(), "gpt-6-luna".into(), true), flash);
+        assert_eq!(turn_model("gemini".into(), "gemini-3.1-pro-preview".into(), true), flash);
+        // An own key keeps its provider and model.
+        assert_eq!(turn_model("openai".into(), "gpt-6-sol".into(), false), ("openai".into(), "gpt-6-sol".into()));
+    }
+}
+
+#[cfg(test)]
+mod log_file_tests {
+    use super::log_file;
+    use serde_json::json;
+
+    #[test]
+    fn a_garbled_id_falls_back_to_the_attached_log() {
+        let attached = "imported/251cc83934bf83ce_wing.bin";
+        assert_eq!(log_file(&json!({"file": "imported/251bc83934bf83ce_wing.bin"}), attached), attached);
+        assert_eq!(log_file(&json!({}), attached), attached);
+        assert_eq!(log_file(&json!({"file": ""}), attached), attached);
+        // Without an attached log the model's id stands, and the tool reports it.
+        assert_eq!(log_file(&json!({"file": "imported/none.bin"}), ""), "imported/none.bin");
+    }
+}
+
+#[cfg(test)]
+mod eval_dump {
+    use super::{conn, fit_result, run_tool, safe_mode_clause, system_prompt, tool_schema, tool_text, SKILL_ROOT};
+    use crate::link::Sample;
+    use serde_json::{json, Value};
+    use std::io::BufRead;
+
+    /// Tools that only read a local log or the bundled docs. Everything else answers as if no vehicle is linked.
+    fn eval_reads(name: &str) -> bool {
+        name == "list_logs" || name.starts_with("log_") || name == "param_doc" || name == "ardupilot_doc"
+            || name == "show_chart" || name == "show_spectrum" || name == "show_spectrogram" || name == "suggest_next"
+    }
+
+    /// Local log tools over stdin for arduloops-api/eval/diagnose.ts. Run with LOCALAPPDATA set to a scratch dir.
+    /// One JSON request per line; one `EVAL>`-prefixed JSON reply per line.
+    ///   {"op":"import","path":...}  {"op":"prompt","lang":"uk","log_id":...}  {"op":"call","name":...,"args":{},"log_id":...}
+    #[test]
+    #[ignore]
+    fn tool_server() {
+        let sample = Sample::empty();
+        let (tx, _rx) = std::sync::mpsc::channel();
+        let c = conn().expect("db");
+        for line in std::io::stdin().lock().lines() {
+            let Ok(line) = line else { break };
+            let req: Value = serde_json::from_str(&line).unwrap_or(json!({}));
+            let reply = match req["op"].as_str().unwrap_or("") {
+                "import" => {
+                    let path = req["path"].as_str().unwrap_or("");
+                    match std::fs::read(path) {
+                        Ok(bytes) => {
+                            let name = std::path::Path::new(path).file_name().and_then(|n| n.to_str()).unwrap_or("log.bin");
+                            crate::dflog::import_log(&bytes, name).unwrap_or_else(|e| json!({ "error": e }))
+                        }
+                        Err(e) => json!({ "error": e.to_string() }),
+                    }
+                }
+                "prompt" => json!({
+                    "system": system_prompt(req["lang"].as_str().unwrap_or("en"), &sample, false, req["log_id"].as_str().unwrap_or(""), false),
+                    "tools": tool_schema(),
+                }),
+                "call" => {
+                    let name = req["name"].as_str().unwrap_or("");
+                    let text = if eval_reads(name) {
+                        tool_text(&fit_result(name, run_tool(name, &req["args"], &sample, &c, &tx, "eval", req["log_id"].as_str().unwrap_or(""))))
+                    } else {
+                        json!({ "ok": false, "error": "No vehicle is linked in this session. Only the attached log and docs are available." }).to_string()
+                    };
+                    json!({ "text": text })
+                }
+                "quit" => break,
+                _ => json!({ "error": "unknown op" }),
+            };
+            println!("EVAL>{}", reply);
+        }
+    }
+
+    /// The fixed parts of a hosted request, for the model comparison in arduloops-api.
+    /// ARDULOOPS_EVAL_OUT=<file> cargo test --lib eval_dump -- --ignored
+    #[test]
+    #[ignore]
+    fn dump_request_parts() {
+        let out = std::env::var("ARDULOOPS_EVAL_OUT").expect("ARDULOOPS_EVAL_OUT");
+        let body = serde_json::json!({
+            "skill_root": SKILL_ROOT,
+            "safe_mode_off": safe_mode_clause(false),
+            "tools": tool_schema(),
+        });
+        std::fs::write(out, serde_json::to_string_pretty(&body).unwrap()).unwrap();
     }
 }

@@ -107,6 +107,20 @@ pub fn route(
     }
 }
 
+/// The one Cloud model. Users ask it to download a log and investigate it, and on real crash logs
+/// Flash found the evidence where Luna stopped early (arduloops-api/eval/diagnose.ts, November 2026).
+/// Every plan includes it.
+const HOSTED_MODEL: (&str, &str) = ("gemini", "gemini-3.8-flash");
+
+/// Cloud has no model choice. A key of the user's own keeps the provider and model they set.
+fn turn_model(provider: String, model: String, hosted: bool) -> (String, String) {
+    if hosted {
+        (HOSTED_MODEL.0.to_string(), HOSTED_MODEL.1.to_string())
+    } else {
+        (provider, model)
+    }
+}
+
 fn arm_default_hosted(c: &Connection) {
     let hosted_active: i64 = c
         .query_row("SELECT COUNT(*) FROM ai_provider WHERE active=1 AND storage='hosted'", [], |row| row.get(0))
@@ -114,12 +128,12 @@ fn arm_default_hosted(c: &Connection) {
     if hosted_active > 0 {
         return;
     }
-    let model = default_model("gemini");
+    let (provider, model) = HOSTED_MODEL;
     let _ = c.execute("UPDATE ai_provider SET active=0", []).ok();
     let _ = c.execute(
-        "INSERT INTO ai_provider (provider, active, model, status, storage, updated_at) VALUES ('gemini', 1, ?1, 'ready', 'hosted', ?2)
+        "INSERT INTO ai_provider (provider, active, model, status, storage, updated_at) VALUES (?1, 1, ?2, 'ready', 'hosted', ?3)
          ON CONFLICT(provider) DO UPDATE SET active=1, model=excluded.model, status='ready', storage='hosted', updated_at=excluded.updated_at",
-        params![model, now()],
+        params![provider, model, now()],
     );
 }
 
@@ -280,8 +294,10 @@ fn provider_failure(err: &str) -> &'static str {
         "invalid key"
     } else if code_of(&lower) == 404 || lower.contains("no longer available") || lower.contains("not_found") {
         "model unavailable"
-    } else if lower.contains("too many tools") {
+    } else if lower.contains("too many tools") || lower.contains("cost limit") {
         "paused_limit"
+    } else if lower.contains("ai budget") {
+        "The AI budget for this period is used up."
     } else if lower.contains("credit balance") || lower.contains("insufficient_quota") || lower.contains("billing") {
         "The provider account has no credit."
     } else if code_of(&lower) == 429 || lower.contains("resource_exhausted") || lower.contains("quota") {
@@ -392,8 +408,10 @@ fn classify(err: &str) -> String {
         "invalid key".into()
     } else if code == 404 || lower.contains("no longer available") || lower.contains("not_found") {
         "model unavailable".into()
-    } else if lower.contains("too many tools") {
+    } else if lower.contains("too many tools") || lower.contains("cost limit") {
         "paused_limit".into()
+    } else if lower.contains("ai budget") {
+        "The AI budget for this period is used up.".into()
     } else if code == 429 || lower.contains("resource_exhausted") || lower.contains("quota") {
         "quota exceeded".into()
     } else {
@@ -662,6 +680,7 @@ fn complete_turn(
     // A follow-up without a new log keeps the log this chat already has.
     let earlier = if log_id.is_empty() { latest_chat_log(c, chat) } else { None };
     let log_id = earlier.as_deref().unwrap_or(log_id);
+    let (provider, model) = turn_model(provider, model, key.is_empty());
     let bench = bench_left(c).is_some() || sample.is_simulator();
     let system = system_prompt(lang, sample, bench, log_id, earlier.is_some());
     let prompt = conversation_prompt(&history, log_id, earlier.is_some());

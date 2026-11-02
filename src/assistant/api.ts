@@ -8,6 +8,8 @@ export type AiAccount = {
   plan?: string;
   used?: number | null;
   limit?: number | null;
+  /** AI credits (one cent of model spend each). left is what this period, rollover, and bought credits leave. */
+  credits?: { left: number; budget: number; rollover: number; extra: number } | null;
   models?: Record<string, string[]>;
 };
 

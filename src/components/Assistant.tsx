@@ -26,11 +26,14 @@ import type { Sample } from "../mav/types";
 
 const LuaSource = lazy(() => import("./LuaSource").then((mod) => ({ default: mod.LuaSource })));
 
-function hostedQuota(status: AiStatus | null): { left: number; limit: number } | null {
+/** Cloud: AI credits left, and today's requests only when the account has a daily cap (limit above 0). */
+function hostedQuota(status: AiStatus | null): { left: number; limit: number; credits: number | null } | null {
   const account = status?.account;
   if (!account?.signed_in || status?.active?.storage !== "hosted") return null;
-  if (account.limit == null || account.used == null) return null;
-  return { left: Math.max(0, account.limit - account.used), limit: account.limit };
+  const credits = account.credits?.left ?? null;
+  const limit = account.limit || 0;
+  if (credits == null && !limit) return null;
+  return { left: Math.max(0, limit - (account.used || 0)), limit, credits };
 }
 
 function sameDrone(chatKey: string | undefined, sample: { boot_uid?: string; board_name?: string; frame?: string }): boolean {
@@ -983,9 +986,9 @@ export function Assistant({
 
   const configured = !!status?.configured;
   const provider = status?.active?.provider || "";
-  const models = (status?.account?.signed_in && status.active?.storage === "hosted" && status.account.models?.[provider])
-    ? (status.account.models[provider] || [])
-    : (dynamicModels[provider] || MODELS[provider] || []);
+  // On Cloud the station uses one model; there is nothing to pick.
+  const cloud = Boolean(status?.account?.signed_in && status.active?.storage === "hosted");
+  const models = cloud ? [] : (dynamicModels[provider] || MODELS[provider] || []);
   useEffect(() => {
     const node = panel.current;
     if (!node) return;
@@ -1067,6 +1070,7 @@ export function Assistant({
             note={note}
             model={model}
             models={models}
+            cloud={cloud}
             bench={status?.bench || null}
             quota={hostedQuota(status)}
             onPick={(id) => { setViewOff(false); setAskStarters([]); setChatId(id); }}
@@ -1188,6 +1192,7 @@ export function Assistant({
               note={note}
               model={model}
               models={models}
+              cloud={cloud}
               bench={status?.bench || null}
               quota={hostedQuota(status)}
               compact
@@ -1306,7 +1311,7 @@ function boardKey(uid: string | undefined): string {
 const LOG_ROWS = 60;
 
 function ChatPane({
-  t, chats, chatId, messages, proposals, draft, busy, followUser, note, model, models, bench, quota, compact,
+  t, chats, chatId, messages, proposals, draft, busy, followUser, note, model, models, cloud, bench, quota, compact,
   onPick, onDraft, onModel, onSend, onRetry, onDecision, onCancelWait, onOpenWizard, wizardOpenId, onNew, onBench, onStop,
   query, onQuery, reasoning, onReasoning, provider, onRename, onCancel,
   logs, logId, onLog, images, onImages, onImported, onContinue, drone, live, flow,
@@ -1322,8 +1327,10 @@ function ChatPane({
   note: string;
   model: string;
   models: string[];
+  /** Cloud: no model choice; the button shows the chat's usage only. */
+  cloud: boolean;
   bench: { left_s: number } | null;
-  quota: { left: number; limit: number } | null;
+  quota: { left: number; limit: number; credits: number | null } | null;
   compact?: boolean;
   onPick: (id: string) => void;
   onDraft: (v: string) => void;
@@ -1766,7 +1773,12 @@ function ChatPane({
             ) : null}
             {nextButtons && !replyCarries(held.at(-1)) ? nextButtons : null}
             {busy ? <div className="ai-run-pad" /> : null}
-            {quota ? <p className="ai-quota">{t("{left} of {limit} requests left today.", quota)}</p> : null}
+            {quota ? (
+              <p className="ai-quota">
+                {quota.credits != null ? t("{n} AI credits left.", { n: quota.credits }) : ""}
+                {quota.limit ? ` ${t("{left} of {limit} requests left today.", { left: quota.left, limit: quota.limit })}` : ""}
+              </p>
+            ) : null}
           </div>
         </div>
         <div className="ai-dock">
@@ -1992,7 +2004,7 @@ function ChatPane({
               {bench || drone.sitl ? null : (
                 <button type="button" className="ai-safe" onClick={onBench}>{t("Safe mode")}</button>
               )}
-              {models.length ? (
+              {models.length || cloud ? (
                 <div className="ai-model-wrap">
                   <button
                     type="button"
@@ -2001,8 +2013,8 @@ function ChatPane({
                     aria-expanded={modelOpen}
                     onClick={() => setModelOpen((v) => !v)}
                   >
-                    <span className="ai-model-name">{shownModel}</span>
-                    {reasoning && provider === "gemini" ? <span className="ai-model-level">· {reasoning}</span> : null}
+                    <span className="ai-model-name">{cloud ? t("ArduLoops Cloud") : shownModel}</span>
+                    {!cloud && reasoning && provider === "gemini" ? <span className="ai-model-level">· {reasoning}</span> : null}
                     <span className="ai-model-cost">{`· ${formatUsd(chatCost) || "$0.00"}`}</span>
                     <span className="ai-model-caret" aria-hidden>▾</span>
                   </button>
@@ -2016,6 +2028,7 @@ function ChatPane({
                           {chatTurns > 0 ? ` · ${t("{n} turns", { n: chatTurns })}` : ""}
                         </span>
                       </div>
+                      {cloud ? null : <>
                       <span className="ai-model-head">{t("Model")}</span>
                       {modelList.map((id) => (
                         <button
@@ -2047,6 +2060,7 @@ function ChatPane({
                       ) : (
                         <p>{t("This model does not take a reasoning level. The provider default is used.")}</p>
                       )}
+                      </>}
                     </div>
                   ) : null}
                 </div>
@@ -2105,6 +2119,7 @@ const TURN_NOTICES = [
   "The model did not answer in time.",
   "The model request failed.",
   "The provider account has no credit.",
+  "The AI budget for this period is used up.",
   "Paused at the tool limit. Continue to give a new budget.",
   "Stopped.",
   "invalid key",
@@ -2119,6 +2134,7 @@ const FAILURES = new Set([
   "The model did not answer in time.",
   "The model request failed.",
   "The provider account has no credit.",
+  "The AI budget for this period is used up.",
   "invalid key",
   "model unavailable",
   "quota exceeded",

@@ -17,6 +17,9 @@ export const CLOUD_AUTH_ORIGIN =
 /** Cloud cabinet / account page */
 export const CLOUD_ACCOUNT_URL = `${CLOUD_AUTH_ORIGIN}/account`;
 
+/** Cloud plans, AI budget, and checkout */
+export const CLOUD_PLANS_URL = `${CLOUD_AUTH_ORIGIN}/me`;
+
 /** Mobile custom-scheme callback for OAuth */
 export const AUTH_CALLBACK_MOBILE = "arduloops://auth";
 

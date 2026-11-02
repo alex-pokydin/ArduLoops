@@ -602,6 +602,17 @@ fn rc_stick_tool(args: &Value, sample: &Sample, c: &Connection, chat: &str) -> V
     })
 }
 
+/// The log a tool reads. A model can garble the long attached id by one character; an id that names no
+/// stored log then means the attached one, rather than "log not found" for the rest of the turn.
+fn log_file<'a>(args: &'a Value, log_id: &'a str) -> &'a str {
+    let asked = args["file"].as_str().filter(|s| !s.is_empty()).unwrap_or(log_id);
+    if asked != log_id && !log_id.is_empty() && crate::dflog::resolve(asked).is_err() {
+        log_id
+    } else {
+        asked
+    }
+}
+
 fn run_tool(
     name: &str,
     args: &Value,
@@ -611,7 +622,7 @@ fn run_tool(
     chat: &str,
     log_id: &str,
 ) -> Value {
-    let file = args["file"].as_str().filter(|s| !s.is_empty()).unwrap_or(log_id);
+    let file = log_file(args, log_id);
     match name {
         "vehicle_state" => {
             let book = param_book(sample);

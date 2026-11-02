@@ -1,10 +1,17 @@
 import { useEffect, useState, type ReactNode } from "react";
 import { type Lang, useT, useLang, setLang } from "../i18n/i18n";
+
+/** The Cloud plan as the Options dialog names it. */
+function planLabel(plan: string | undefined): string {
+  if (plan === "start") return "Start";
+  if (plan === "plus") return "Plus";
+  return "Free";
+}
 import { ai, type AiAccount, type AiStatus } from "../assistant/api";
 import { openExternal } from "../lib/open";
 import { APP_HTTP } from "../mav/link";
 import { PLOT_SPANS, getPlotSpan, setPlotSpan, type PlotSpan } from "../mav/store";
-import { CLOUD_ACCOUNT_URL, defaultLoginUrl } from "../config";
+import { CLOUD_ACCOUNT_URL, CLOUD_PLANS_URL, defaultLoginUrl } from "../config";
 
 const KEY_PAGES: Record<string, string> = {
   gemini: "https://aistudio.google.com/apikey",
@@ -299,6 +306,22 @@ export function LabDialog({
                       {t("ArduLoops Cloud")}
                     </a>
                   ) : null}
+                  {account?.signed_in ? (
+                    <>
+                      {" / "}
+                      <a
+                        className="cabinet-link"
+                        href={CLOUD_PLANS_URL}
+                        title={t("Plans and AI credits")}
+                        onClick={(ev) => {
+                          ev.preventDefault();
+                          openExternal(CLOUD_PLANS_URL);
+                        }}
+                      >
+                        {t(planLabel(account.plan))}
+                      </a>
+                    </>
+                  ) : null}
                 </span>
                 {account?.signed_in ? (
                   <button type="button" onClick={() => void ai.logout().then(applyAi).catch((err: Error) => setAiState(err.message))}>
@@ -326,7 +349,10 @@ export function LabDialog({
                 {account?.signed_in
                   ? t("Signed in as {email}.", { email: account.email || "" })
                   : t("Sign in to activate the ArduLoops assistant. Your own key still works.")}
-                {account?.signed_in && account.limit != null
+                {account?.signed_in && account.credits
+                  ? ` ${t("{n} AI credits left.", { n: account.credits.left.toLocaleString(lang === "uk" ? "uk-UA" : "en-US") })}`
+                  : ""}
+                {account?.signed_in && account.limit
                   ? ` ${t("{left} of {limit} requests left today.", { left: Math.max(0, account.limit - (account.used || 0)), limit: account.limit })}`
                   : ""}
                 {!account?.signed_in && aiState && aiState !== "ready" && aiState !== "checking"

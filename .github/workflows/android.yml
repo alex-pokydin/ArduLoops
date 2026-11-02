@@ -45,16 +45,22 @@ jobs:
           sed -i 's/usesCleartextTraffic"\] = "false"/usesCleartextTraffic"] = "true"/' "$gradle"
           grep -q 'usesCleartextTraffic"\] = "false"' "$gradle" && exit 1
           grep -q 'usesCleartextTraffic"\] = "true"' "$gradle"
+      - name: Version
+        # The version lives in Cargo.toml only. Desktop builds read it from there; the Android build does
+        # not, and without it the APK is versionName 1.0 / versionCode 1, which cannot update an installed app.
+        run: |
+          version=$(sed -n 's/^version = "\(.*\)"/\1/p' src-tauri/Cargo.toml | head -1)
+          echo "APP_VERSION=$version" >> "$GITHUB_ENV"
+          echo "APP_VERSION_CODE=$(echo "$version" | awk -F. '{ print $1 * 1000000 + $2 * 1000 + $3 }')" >> "$GITHUB_ENV"
       - name: APK
-        run: npm run tauri -- android build --apk --target aarch64 --ci
+        run: npm run tauri -- android build --apk --target aarch64 --ci --config "{\"version\":\"$APP_VERSION\"}"
       - name: Sign APK
         run: |
           mkdir -p dist-apk
           unsigned=$(find src-tauri/gen/android -name '*.apk' -print -quit)
           aligned="$RUNNER_TEMP/arduloops-aligned.apk"
           "$ANDROID_HOME/build-tools/35.0.0/zipalign" -f -p 4 "$unsigned" "$aligned"
-          version=$(sed -n 's/^version = "\(.*\)"/\1/p' src-tauri/Cargo.toml | head -1)
-          out="dist-apk/ArduLoops_${version}_aarch64.apk"
+          out="dist-apk/ArduLoops_${APP_VERSION}_aarch64.apk"
           "$ANDROID_HOME/build-tools/35.0.0/apksigner" sign \
             --ks src-tauri/arduloops-sideload.p12 \
             --ks-pass pass:arduloops \
@@ -62,6 +68,10 @@ jobs:
             --out "$out" \
             "$aligned"
           "$ANDROID_HOME/build-tools/35.0.0/apksigner" verify --verbose "$out"
+          # An APK whose versionCode is not this release's cannot update the installed app.
+          badging=$("$ANDROID_HOME/build-tools/35.0.0/aapt2" dump badging "$out" | head -1)
+          echo "$badging"
+          echo "$badging" | grep -q "versionCode='$APP_VERSION_CODE' versionName='$APP_VERSION'" || { echo "APK version is not $APP_VERSION ($APP_VERSION_CODE)"; exit 1; }
           ls -l dist-apk
       - uses: actions/upload-artifact@v4
         with:

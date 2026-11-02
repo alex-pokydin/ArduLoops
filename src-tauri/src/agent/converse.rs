@@ -43,7 +43,7 @@ fn converse(
         let mut turn = if hosted {
             match hosted_turn(provider, model, reasoning, system, lang, &messages, quota, chat, &mut turn_id) {
                 Ok(turn) => turn,
-                Err(err) if err.to_ascii_lowercase().contains("too many tools") => return Err("paused_limit".into()),
+                Err(err) if is_step_limit(&err) => return Err("paused_limit".into()),
                 Err(err) => return Err(err),
             }
         } else {
@@ -84,6 +84,12 @@ fn converse(
         }
     }
     Err("paused_limit".into())
+}
+
+/// The server stops one request at its tool count or its cost limit. Continue opens a new request.
+pub(crate) fn is_step_limit(err: &str) -> bool {
+    let lower = err.to_ascii_lowercase();
+    lower.contains("too many tools") || lower.contains("cost limit")
 }
 
 fn tool_text(result: &Value) -> String {

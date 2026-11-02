@@ -87,7 +87,7 @@ dependencies = [
 
 [[package]]
 name = "arduloops"
-version = "2.4.1"
+version = "2.4.2"
 dependencies = [
  "base64 0.22.1",
  "flate2",
