@@ -5,7 +5,7 @@ use std::io::Write;
 use futures_util::StreamExt;
 use genai::chat::ToolCall;
 
-pub const DEFAULT_AUTH_ORIGIN: &str = "https://arduloops-api.firebaseapp.com";
+pub const DEFAULT_AUTH_ORIGIN: &str = "https://arduloops.web.app";
 pub const DEFAULT_HOSTED_API: &str = "https://api-qm4zps6yqa-ew.a.run.app";
 pub const LOCAL_DEV_API: &str = "http://127.0.0.1:8788";
 pub const AUTH_CALLBACK_MOBILE: &str = "arduloops://auth";

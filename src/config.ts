@@ -12,7 +12,7 @@ export const APP_HTTP = `http://127.0.0.1:${APP_HTTP_PORT}`;
 /** Cloud & Auth hosting origin (Firebase Hosting or custom domain) */
 export const CLOUD_AUTH_ORIGIN =
   (typeof import.meta !== "undefined" && import.meta.env?.VITE_AUTH_ORIGIN) ||
-  "https://arduloops-api.firebaseapp.com";
+  "https://arduloops.web.app";
 
 /** Cloud cabinet / account page */
 export const CLOUD_ACCOUNT_URL = `${CLOUD_AUTH_ORIGIN}/account`;
