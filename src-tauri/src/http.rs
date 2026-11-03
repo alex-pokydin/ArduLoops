@@ -912,6 +912,22 @@ fn handle(stream: TcpStream, latest: Arc<Mutex<Sample>>, tx: Sender<Cmd>) -> std
         }
         return Ok(());
     }
+    if method == "GET" && path == "/board-doc" {
+        // Copy the sample: the download must not hold the lock.
+        let sample = latest.lock().map_err(|_| std::io::Error::other("lock"))?.clone();
+        let body = crate::board_doc::board_doc(&sample, query.get("refresh").is_some_and(|v| v == "1"));
+        reply(&mut socket, 200, "application/json", &serde_json::to_vec(&body)?)?;
+        return Ok(());
+    }
+    if method == "GET" && path == "/board-doc/file" {
+        let board = query.get("board").cloned().unwrap_or_default();
+        let file = query.get("path").cloned().unwrap_or_default();
+        match crate::board_doc::board_file(&board, &file) {
+            Some((bytes, ctype)) => reply(&mut socket, 200, ctype, &bytes)?,
+            None => reply(&mut socket, 404, "text/plain", b"not found")?,
+        }
+        return Ok(());
+    }
     if method == "GET" && path == "/param-meta" {
         let kind = query.get("vehicle").map(String::as_str).unwrap_or("copter");
         let body = crate::research::param_index(kind);

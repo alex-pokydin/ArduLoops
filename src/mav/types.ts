@@ -82,6 +82,8 @@ export type Sample = {
   frame: "copter" | "plane" | "";
   board_name?: string;
   boot_uid?: string;
+  /** The last message of each kind the bridge keeps by name, e.g. AUTOPILOT_VERSION. */
+  telemetry?: Record<string, unknown>;
   /** Folder under logs/ that downloads from this board go into (boot uid, or system-{id}). */
   log_dir?: string;
   params: Record<string, number>;

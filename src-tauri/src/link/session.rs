@@ -501,6 +501,9 @@ pub fn run_loop(
         let mut att_n = 0u32;
         let mut att_t0 = Instant::now();
         let mut last_att: Option<Instant> = None;
+        // The one AUTOPILOT_VERSION request with the stream set-up can be lost (a busy serial link at connect).
+        let mut version_asked = Instant::now();
+        let mut version_asks = 0u32;
 
         loop {
             match drain_cmds(
@@ -582,6 +585,16 @@ pub fn run_loop(
                 last_hb = now;
             }
             drive_log_download(&*conn, &mut st);
+            // Without it the board has no id, so the header shows no name or note. Ask again every 3 s, up to 10 times.
+            if stream_followup
+                && version_asks < 10
+                && !st.sample.telemetry.contains_key("AUTOPILOT_VERSION")
+                && now.duration_since(version_asked) > Duration::from_secs(3)
+            {
+                request_autopilot_version(&*conn, &st);
+                version_asked = now;
+                version_asks += 1;
+            }
             if requested_initial {
                 note_param_identity(&mut st);
                 let streams_ok = last_att

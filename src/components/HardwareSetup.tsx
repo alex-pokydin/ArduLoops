@@ -13,6 +13,7 @@ import { RadioStep } from "./RadioStep";
 import { MotorsStep } from "./MotorsStep";
 import { PlaneOutputsStep } from "./PlaneOutputsStep";
 import { PreArmHead } from "./ArmingChecks";
+import { BoardDoc } from "./BoardDoc";
 import { nextSteps, prearmAsk, prearmStep, prearmTopic, stepOfParam, stepParamNames, stepState, type Glance, type StepState } from "../lib/setupSteps";
 
 /** Done, or turned off on purpose: either way nothing is left to do on the step. */
@@ -263,7 +264,7 @@ function Ring({ done, total, tone }: { done: number; total: number; tone: Tone }
 
 /**
  * The Setup landing view: can this vehicle arm, which live PreArm checks fail and where each is fixed,
- * what to do next, and how far each group is.
+ * what to do next, and the board's own README and hwdef.dat from the ArduPilot tree.
  */
 function SetupOverview({
   steps,
@@ -344,19 +345,20 @@ function SetupOverview({
           {counted(t, hidden.length, "1 step is hidden: this firmware has no parameters for {list}.", "{n} steps are hidden: this firmware has no parameters for {list}.").replace("{list}", hidden.map((item) => t(item.title)).join(", "))}
         </div>
       ) : null}
-      <div className={`sov-top ${tone}`}>
+      <div className="sov-main">
+      <div className={`sov-pic ${tone}`}>
         <Ring done={done} total={total} tone={tone} />
-        <div className="sov-head">
-          <h4>{title}</h4>
-          <p>{line}</p>
-          <div className="sov-chips">
-            {fail ? <span className="sov-chip hot">{counted(t, fail, "1 blocks arming", "{n} block arming")}</span> : null}
-            {warn ? <span className="sov-chip amber">{counted(t, warn, "1 needs attention", "{n} need attention")}</span> : null}
-            {todo ? <span className="sov-chip">{t("{n} to do", { n: todo })}</span> : null}
-          </div>
+        <h4>{title}</h4>
+        <span className="sov-count">{t("{done} of {total} required steps done", { done, total })}</span>
+        <p>{line}</p>
+        <div className="sov-chips">
+          {fail ? <span className="sov-chip hot">{counted(t, fail, "1 blocks arming", "{n} block arming")}</span> : null}
+          {warn ? <span className="sov-chip amber">{counted(t, warn, "1 needs attention", "{n} need attention")}</span> : null}
+          {todo ? <span className="sov-chip">{t("{n} to do", { n: todo })}</span> : null}
         </div>
       </div>
 
+      <div className="sov-side">
       <PreArmHead failing={lines.length} />
       <div className="sov-pre">
         {lines.length ? (
@@ -413,26 +415,10 @@ function SetupOverview({
       ) : (
         <div className="sov-prow done"><span className="setup-mark"><StateIcon state="done" /></span><span className="sov-empty">{t("Every required step is done.")}</span></div>
       )}
-
-      <h4 className="sov-sect">{t("Groups")}</h4>
-      <div className="sov-groups">
-        {GROUPS.map((group) => {
-          const members = rows.filter(({ item }) => item.group === group);
-          if (!members.length) return null;
-          const groupDone = members.filter(({ st }) => settled(st.state)).length;
-          const worst = members.find(({ st }) => st.state === "fail") ?? members.find(({ st }) => st.state === "warn") ?? members.find(({ st }) => st.state === "todo");
-          const groupTone = worst?.st.state === "fail" ? "hot" : worst?.st.state === "warn" ? "amber" : worst ? "" : "ok";
-          return (
-            <button type="button" key={group} className={`sov-gtile${groupTone ? ` is-${groupTone}` : ""}`} onClick={() => onOpen((worst ?? members[0]).item.id)}>
-              <span className="sov-gtile-row"><b>{t(group)}</b><span>{groupDone}/{members.length}</span></span>
-              <span className={groupTone === "ok" || !groupTone ? "setup-bar" : `setup-bar ${groupTone}`}><i style={{ width: `${Math.round((groupDone / members.length) * 100)}%` }} /></span>
-              <span className="sov-gtile-state">
-                {worst ? `${t(worst.item.title)}: ${reasonOf(worst.st) || t(STATE_LABEL[worst.st.state])}` : t("All done")}
-              </span>
-            </button>
-          );
-        })}
       </div>
+      </div>
+
+      <BoardDoc />
       {quadPlaneOff ? (
         <div className="sov-qnote">
           <span>{t("QuadPlane is off. Turning it on in Airframe type adds VTOL motors and a VTOL takeoff after a reboot.")}</span>

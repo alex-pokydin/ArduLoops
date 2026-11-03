@@ -2,6 +2,7 @@
 
 mod agent;
 mod app;
+mod board_doc;
 mod cli;
 mod cloud;
 mod db;

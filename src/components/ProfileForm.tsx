@@ -162,6 +162,7 @@ export function ProfileForm({
   busy,
   error,
   saveLabel,
+  skipLabel,
   noteless,
   onSave,
   onSkip,
@@ -172,6 +173,8 @@ export function ProfileForm({
   busy?: boolean;
   error?: string;
   saveLabel?: string;
+  /** The chat card says Skip (it answers the assistant); the header editor says Cancel. */
+  skipLabel?: string;
   /** The note could not be read: no "Anything else" row, and Save leaves the note as it is. */
   noteless?: boolean;
   onSave: (profile: VehicleProfile, note: string) => void;
@@ -306,7 +309,7 @@ export function ProfileForm({
       )}
       <div className="pf-foot">
         <span className={error ? "pf-err" : "pf-h"}>{error || blocked || t("Saved with the board id, next to the note.")}</span>
-        <button type="button" className="vb-text" onClick={onSkip}>{t("Skip")}</button>
+        <button type="button" className="vb-text" onClick={onSkip}>{skipLabel ?? t("Skip")}</button>
         <button type="submit" className="vb-primary" disabled={busy || !!blocked}>{busy ? t("Saving…") : saveLabel ?? t("Save")}</button>
       </div>
     </form>

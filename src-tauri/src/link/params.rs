@@ -654,6 +654,18 @@ fn request_diagnostics(conn: &dyn MavConnection<MavMessage>, st: &LinkState) {
     );
 }
 
+/// AUTOPILOT_VERSION names the board (board id, uid, firmware); the header and the controller library need it.
+fn request_autopilot_version(conn: &dyn MavConnection<MavMessage>, st: &LinkState) {
+    command_long(
+        conn,
+        st.target_system,
+        st.target_component,
+        MavCmd::MAV_CMD_REQUEST_MESSAGE,
+        148.0,
+        0.0,
+    );
+}
+
 fn request_param_list(conn: &dyn MavConnection<MavMessage>, st: &LinkState) {
     send_msg(
         conn,

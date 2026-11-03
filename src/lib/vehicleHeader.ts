@@ -1,4 +1,13 @@
 import { motorFrame, servoOnlyClass } from "./motorFrames";
+import type { Sample } from "../mav/types";
+
+/**
+ * The bridge names the board from AUTOPILOT_VERSION, which can arrive after the link is up (it is asked again until it does).
+ * Without it the controller, its note and profile are unknown, so its arrival must load them again.
+ */
+export function versionKnown(sample: Sample): boolean {
+  return !!sample.telemetry?.AUTOPILOT_VERSION;
+}
 
 /** AUTOPILOT_VERSION.flight_sw_version: major, minor, patch, then FIRMWARE_VERSION_TYPE in the low byte. */
 export function flightVersion(packed: number | null | undefined): string | null {

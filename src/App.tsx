@@ -2,6 +2,8 @@ import { useEffect, useRef, useState } from "react";
 import { type LogRow } from "./components/Aside";
 import { Assistant } from "./components/Assistant";
 import { SetupStatusFeed } from "./components/HardwareSetup";
+import { BoardWindow } from "./components/BoardDoc";
+import { ImageViewerHost } from "./components/ImageViewer";
 import { LogAutoDownload } from "./components/VehicleLogs";
 import { LinkChip } from "./components/LinkChip";
 import { LabDialog, type AppRelease } from "./components/LabDialog";
@@ -544,7 +546,10 @@ export function App() {
       <VehicleView vehicle={live === "plane" ? "plane" : "copter"}>
         <SetupStatusFeed />
         <LogAutoDownload />
+        {/* The board doc window stays open across tabs and workspaces. */}
+        <BoardWindow />
       </VehicleView>
+      <ImageViewerHost />
       <Assistant home={shell === "home"} onOpenOptions={() => setLabOpen(true)} onOpenHome={() => onShell("home")} />
       {import.meta.env.DEV && <StudioRecorder />}
     </div>

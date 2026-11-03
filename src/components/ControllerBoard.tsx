@@ -11,7 +11,7 @@ import { ProfileForm, useProfileStart } from "./ProfileForm";
 import { hasProfile, profileChips, readProfile, type VehicleProfile } from "../lib/vehicleProfile";
 import type { Sample } from "../mav/types";
 import { usePicked, useVehicle } from "../mav/view";
-import { NOTE_TITLE_MAX, flightVersion, genericMark, joinNote, markShape, preArmState, splitNote, type MarkShape } from "../lib/vehicleHeader";
+import { NOTE_TITLE_MAX, flightVersion, genericMark, joinNote, markShape, preArmState, splitNote, versionKnown, type MarkShape } from "../lib/vehicleHeader";
 
 type Controller = {
   board_id: number;
@@ -33,6 +33,20 @@ function linkIsSimulator(sample: Sample): boolean {
     || sample.truth_lat != null
     || sample.truth_lon != null
     || Object.keys(sample.params).some((name) => name.startsWith("SIM_"));
+}
+
+/**
+ * Why the note and profile cannot be saved now, or "" when they can. They are stored under the board id, which a simulator
+ * does not have and a real board reports in AUTOPILOT_VERSION a few seconds after the link comes up.
+ */
+function useSaveBlock(hasKey: boolean): string {
+  const t = useT();
+  const why = usePicked((s) => (linkIsSimulator(s) ? "sim" : !s.ok ? "link" : !versionKnown(s) ? "wait" : ""));
+  if (hasKey) return "";
+  if (why === "sim") return t("Simulators have no board id yet, so a profile cannot be saved.");
+  if (why === "link") return t("Needs the link");
+  if (why === "wait") return t("Waiting for the board to report its id. It comes a few seconds after the link.");
+  return t("The board did not report a usable id, so nothing can be saved for it.");
 }
 
 function num(sample: Sample, key: string): number | null {
@@ -373,7 +387,7 @@ function ProfileEditor({ controller, onClose, onSaved, blocked }: { controller: 
         <b>{t("Vehicle profile")}</b>
         <span>{t("A few facts the board cannot tell: they set the starting values and help the assistant.")}</span>
       </div>
-      <ProfileForm start={start} blocked={blocked} busy={busy} error={error} onSave={(p, n) => void save(p, n)} onSkip={onClose} />
+      <ProfileForm start={start} blocked={blocked} busy={busy} error={error} onSave={(p, n) => void save(p, n)} skipLabel={t("Cancel")} onSkip={onClose} />
     </div>
   );
 }
@@ -393,7 +407,10 @@ function Actions({ controller }: { controller: Controller | null }) {
     return () => window.clearTimeout(timer);
   }, [confirm]);
   useEffect(() => {
-    if (!menu) return;
+    if (!menu) {
+      setConfirm(false);
+      return;
+    }
     function away(event: MouseEvent) {
       if (menuRef.current && !menuRef.current.contains(event.target as Node)) setMenu(false);
     }
@@ -404,33 +421,39 @@ function Actions({ controller }: { controller: Controller | null }) {
     const result = downloadParamBackup();
     if (result.saved) addLog(t("Saved {count} parameters", { count: result.count }), "cmd");
     else addLog(t("Parameter list is incomplete. Wait until every parameter arrives, then back up again."), "bad");
+    setMenu(false);
   }
+  // The first click asks; a second within 4 s reboots.
   function reboot() {
     if (!confirm) {
       setConfirm(true);
       return;
     }
     setConfirm(false);
+    setMenu(false);
     sendCmd({ op: "reboot" });
     addLog(t("Reboot requested"), "cmd");
   }
   const id = controller?.uid || controller?.key || "";
-  const rebootTitle = !ok ? t("Needs the link") : armed ? t("Disarm first") : confirm ? t("Click again to reboot") : t("Reboot");
+  const rebootWhy = !ok ? t("Needs the link") : armed ? t("Disarm first") : rebooting ? t("Rebooting…") : "";
   return (
     <div className="vb-actions">
-      <button type="button" className="vb-icon" disabled={!ok} onClick={backup} title={ok ? t("Back up parameters") : t("Needs the link")} aria-label={t("Back up parameters")}>
-        <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M8 2.5v7.5M4.8 7l3.2 3.2L11.2 7M3 13h10" /></svg>
-      </button>
-      <button type="button" className={confirm ? "vb-icon confirm" : "vb-icon"} disabled={!ok || armed || rebooting} onClick={reboot} title={rebootTitle} aria-label={t("Reboot")}>
-        <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M12.8 8a4.8 4.8 0 1 1-1.5-3.5" /><path d="M12 2.2v2.8H9.2" /></svg>
-        {confirm ? <span>{t("Reboot now?")}</span> : null}
-      </button>
       <div className="vb-more" ref={menuRef}>
-        <button type="button" className="vb-icon ghost" onClick={() => setMenu((v) => !v)} aria-label={t("More")} aria-expanded={menu}>
+        <button type="button" className={rebooting ? "vb-icon ghost busy" : "vb-icon ghost"} onClick={() => setMenu((v) => !v)} aria-label={t("More")} aria-expanded={menu} title={rebooting ? t("Rebooting…") : t("Back up, reboot, board id")}>
           <svg viewBox="0 0 16 16" aria-hidden="true"><circle cx="3.5" cy="8" r="1.3" /><circle cx="8" cy="8" r="1.3" /><circle cx="12.5" cy="8" r="1.3" /></svg>
         </button>
         {menu ? (
           <div className="vb-menu" role="menu">
+            <button type="button" role="menuitem" className="vb-menu-act" disabled={!ok} onClick={backup} title={ok ? undefined : t("Needs the link")}>
+              <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M8 2.5v7.5M4.8 7l3.2 3.2L11.2 7M3 13h10" /></svg>
+              <span>{t("Back up parameters")}</span>
+            </button>
+            <button type="button" role="menuitem" className={confirm ? "vb-menu-act confirm" : "vb-menu-act"} disabled={!!rebootWhy} onClick={reboot}>
+              <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M12.8 8a4.8 4.8 0 1 1-1.5-3.5" /><path d="M12 2.2v2.8H9.2" /></svg>
+              <span>{confirm ? t("Click again to reboot") : t("Reboot")}</span>
+              {rebootWhy ? <em>{rebootWhy}</em> : null}
+            </button>
+            <span className="vb-menu-sep" />
             <button type="button" role="menuitem" disabled={!id} onClick={() => { void navigator.clipboard?.writeText(id); addLog(t("Board id copied"), "ok"); setMenu(false); }}>{t("Copy board id")}</button>
             <span className="vb-menu-info">{controller ? t("System ID {id}", { id: controller.system_id }) : t("No board id")}</span>
             {controller?.git_identity ? <span className="vb-menu-info">git {controller.git_identity}</span> : null}
@@ -456,7 +479,7 @@ export function editVehicle(what: "profile" | "note") {
  */
 export function useVehicleFacts(): { linked: boolean; title: string; body: string; chips: string[]; profiled: boolean; canEdit: boolean } {
   const t = useT();
-  const identity = usePicked((s) => `${s.ok ? 1 : 0}|${s.boot_uid ?? ""}|${s.frame}`);
+  const identity = usePicked((s) => `${s.ok ? 1 : 0}|${s.boot_uid ?? ""}|${s.frame}|${versionKnown(s) ? 1 : 0}`);
   const vehicle = usePicked((s) => (s.frame === "plane" ? "plane" : "copter"));
   const [controller, setController] = useState<Controller | null>(null);
   useEffect(() => {
@@ -486,6 +509,7 @@ export function useVehicleFacts(): { linked: boolean; title: string; body: strin
 export function VehicleCard() {
   const t = useT();
   const { linked, title, body, chips, canEdit } = useVehicleFacts();
+  const block = useSaveBlock(canEdit);
   if (!linked) return null;
   const note = { title, body };
   return (
@@ -503,7 +527,7 @@ export function VehicleCard() {
       ) : (
         <span className="ms-hint">{t("Props, cells, weight and how it flies: the assistant uses them for starting values.")}</span>
       )}
-      {!canEdit ? <span className="ms-hint">{t("Simulators have no board id yet, so a profile cannot be saved.")}</span> : null}
+      {block ? <span className="ms-hint">{block}</span> : null}
     </div>
   );
 }
@@ -511,7 +535,7 @@ export function VehicleCard() {
 export function ControllerBoard() {
   const t = useT();
   const view = useVehicle();
-  const identity = usePicked((s) => `${s.ok ? 1 : 0}|${s.board_name ?? ""}|${s.boot_uid ?? ""}|${s.frame}`);
+  const identity = usePicked((s) => `${s.ok ? 1 : 0}|${s.board_name ?? ""}|${s.boot_uid ?? ""}|${s.frame}|${versionKnown(s) ? 1 : 0}`);
   const structure = usePicked(
     (s) => {
       const p = s.params ?? {};
@@ -520,6 +544,7 @@ export function ControllerBoard() {
     },
   );
   const [controller, setController] = useState<Controller | null>(null);
+  const saveBlock = useSaveBlock(!!controller?.key);
   const [editing, setEditing] = useState<"name" | "note" | null>(null);
   const [profileOpen, setProfileOpen] = useState(false);
 
@@ -602,7 +627,7 @@ export function ControllerBoard() {
   // The board's BATT_CAPACITY wins; the profile's capacity shows only when the board has none.
   const shownCapacity = capacity != null && capacity > 0 ? capacity : profile?.capacity_mah ?? null;
   const capacityFromBoard = capacity != null && capacity > 0;
-  const profileBlocked = canEdit ? "" : t("Simulators have no board id yet, so a profile cannot be saved.");
+  const profileBlocked = saveBlock;
 
   return (
     <div className="vboard">
@@ -617,7 +642,7 @@ export function ControllerBoard() {
               {simulator ? <span className="vb-state sim">SITL</span> : null}
               {armed ? <span className="vb-state armed">{t("ARMED")}</span> : null}
               <button type="button" className="vb-pencil" disabled={!canEdit} onClick={() => setEditing(note.title ? "note" : "name")}
-                title={canEdit ? t("Edit note") : t("Simulators have no board id yet, so a note cannot be saved.")} aria-label={t("Edit note")}>
+                title={canEdit ? t("Edit note") : saveBlock} aria-label={t("Edit note")}>
                 <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M10.5 2.8l2.7 2.7-7.6 7.6H2.9v-2.7z" /></svg>
               </button>
               {boardLine ? <span className="vb-board" title={controller?.git_identity ? `git ${controller.git_identity}` : undefined}>{boardLine}</span> : null}
