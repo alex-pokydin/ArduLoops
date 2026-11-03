@@ -2,7 +2,7 @@ import { useEffect, useRef, useState, type ReactNode } from "react";
 import { useT } from "../i18n/i18n";
 import { addLog } from "../log";
 import { COPTER_FUNCTIONS, PLANE_FUNCTIONS } from "../lib/servoFunctionData";
-import { noteUi, sameParam, writeParam } from "../mav/cmd";
+import { noteUi, sameParam, send as sendCmd, writeParam } from "../mav/cmd";
 import { getSnapshot } from "../mav/store";
 import { useStorePicked } from "../mav/view";
 import { openAssistant } from "../lib/assistantAsk";
@@ -85,7 +85,10 @@ export function StepNum({ n, state }: { n: number; state: "done" | "warn" | "tod
   return <span className={`ms-num ${state}`} aria-hidden="true">{n}</span>;
 }
 
-/** Guide link on the left; changes, Discard and Write on the right, as every drawn step page has. */
+/**
+ * Guide link on the left; changes, Discard and Write on the right, as every drawn step page has. When a change only
+ * takes effect after a reboot, Write is Save & reboot: the board restarts once the write has gone through.
+ */
 export function StepFooter({
   draft,
   armed,
@@ -114,26 +117,32 @@ export function StepFooter({
   }, [ok, draft]);
   const needsReboot = draft.written.some((name) => rebootNames.includes(name));
   const pendingReboot = draft.changes.some(([name]) => rebootNames.includes(name));
+  async function save() {
+    const reboot = pendingReboot;
+    if (!(await draft.write()) || !reboot) return;
+    sendCmd({ op: "reboot" });
+    addLog(t("Reboot requested"), "cmd");
+  }
   return (
     <>
       {draft.error ? <div className="frs-note err">{t(draft.error)}</div> : null}
       {draft.written.length ? (
         <div className={`frs-note ${needsReboot ? "warn" : "ok"}`}>
-          {needsReboot ? t("Saved. Reboot the board to apply; the reboot button is in the header.") : t("Saved.")}
+          {needsReboot ? t("Saved. The board is rebooting to apply it.") : t("Saved.")}
         </div>
       ) : null}
       <div className="frs-foot">
         <a href={guide} target="_blank" rel="noreferrer">{t(guideLabel)} ↗</a>
         <div className="frs-foot-actions">
-          {armed ? <span className="frs-why">{t("Disarm to write.")}</span> : pendingReboot ? <span className="frs-why">{why ?? t("Needs a reboot after Write.")}</span> : null}
+          {armed ? <span className="frs-why">{t("Disarm to write.")}</span> : pendingReboot ? <span className="frs-why">{why ?? t("Applies after a reboot.")}</span> : null}
           {n ? (
             <>
               <span className="frs-changes">{n === 1 ? t("1 change") : t("{n} changes", { n })}</span>
               <button type="button" className="frs-btn text" onClick={draft.discard}>{t("Discard")}</button>
             </>
           ) : null}
-          <button type="button" className="frs-btn primary" disabled={!ok || armed || !n || draft.busy} onClick={() => void draft.write()}>
-            {draft.busy ? t("Writing…") : n ? t("Write") : t("Saved")}
+          <button type="button" className={`frs-btn ${pendingReboot ? "warn-solid" : "primary"}`} disabled={!ok || armed || !n || draft.busy} onClick={() => void save()}>
+            {draft.busy ? t("Writing…") : !n ? t("Saved") : pendingReboot ? t("Save & reboot") : t("Write")}
           </button>
         </div>
       </div>

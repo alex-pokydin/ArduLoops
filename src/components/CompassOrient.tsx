@@ -67,7 +67,7 @@ function latitude(live: Record<string, number> | undefined): number | null {
 }
 
 /** `ready` waits for Start, so the vehicle can be placed before anything is measured. */
-type Phase = "off" | "ready" | "north" | "spin" | "done" | "reboot" | "wait" | "check" | "finish";
+type Phase = "off" | "ready" | "north" | "spin" | "done" | "wait" | "check" | "finish";
 
 
 type Check = {
@@ -99,7 +99,7 @@ function assess(roll: number, pitch: number, yaw: number, field: V3 | null, down
 function railAt(phase: Phase): number {
   if (phase === "ready" || phase === "north") return 0;
   if (phase === "spin") return 1;
-  if (phase === "done" || phase === "reboot" || phase === "wait") return 2;
+  if (phase === "done" || phase === "wait") return 2;
   return 3;
 }
 
@@ -329,7 +329,8 @@ export const CompassOrient = forwardRef<OrientHandle, { autoOpen?: boolean; from
     }
     setBusy(false);
     setCustomSaved(true);
-    setPhase("reboot");
+    // ArduPilot reads custom rotations at boot, so the save ends in a reboot and the check follows it.
+    reboot();
   }
 
   function reboot() {
@@ -444,6 +445,7 @@ export const CompassOrient = forwardRef<OrientHandle, { autoOpen?: boolean; from
     );
   } else if (phase === "done" && fit && !customSaved) {
     const same = orient != null && Math.round(orient) === fit.nearestId && fit.nearestDeg <= 8;
+    const exact = t("Save exact angles & reboot");
     left = (
       <div className="sw-pair">
         <BoardTop yaw={yawOf(Math.round(orient ?? 0))} tone="dim" label={t("Set now")} value={orientLabel(Math.round(orient ?? 0))} />
@@ -466,16 +468,23 @@ export const CompassOrient = forwardRef<OrientHandle, { autoOpen?: boolean; from
         {fit.nearestDeg > 8 ? <div className="mw-note info"><span>{t("No fixed orientation is close. Save the exact angles as a custom rotation.")}</span></div> : null}
       </>
     );
-    // Within 8° of a fixed orientation, that one is the next step; otherwise the exact angles are.
-    footer = fit.nearestDeg <= 8 ? (
+    // Already set: nothing to write, straight to the check. Within 8° of a fixed orientation, that one is written
+    // (it applies at once); otherwise the exact angles are, which needs a reboot.
+    const saveDisabled = busy || !sample.ok || sample.armed;
+    footer = same ? (
       <>
-        <button type="button" className="mw-btn text" disabled={busy} onClick={() => void saveCustom()}>{t("Save the exact angles")}</button>
-        <button type="button" className="mw-btn primary" disabled={busy} onClick={() => void saveNamed()}>{t("Use {name}", { name: orientLabel(fit.nearestId) })}</button>
+        <button type="button" className="mw-btn text" onClick={begin}>{t("Measure again")}</button>
+        <button type="button" className="mw-btn primary" onClick={goCheck}><span>{t("Next")}</span>{Icon.chevR()}</button>
+      </>
+    ) : fit.nearestDeg <= 8 ? (
+      <>
+        <button type="button" className="mw-btn text" disabled={saveDisabled} onClick={() => void saveCustom()}>{exact}</button>
+        <button type="button" className="mw-btn primary" disabled={saveDisabled} onClick={() => void saveNamed()}>{t("Use {name}", { name: orientLabel(fit.nearestId) })}</button>
       </>
     ) : (
       <>
         <button type="button" className="mw-btn text" disabled={busy} onClick={begin}>{t("Measure again")}</button>
-        <button type="button" className="mw-btn primary" disabled={busy} onClick={() => void saveCustom()}>{t("Save the exact angles")}</button>
+        <button type="button" className="mw-btn warn-solid" disabled={saveDisabled} onClick={() => void saveCustom()}>{Icon.power()}<span>{exact}</span></button>
       </>
     );
   } else if (phase === "done") {
@@ -488,20 +497,15 @@ export const CompassOrient = forwardRef<OrientHandle, { autoOpen?: boolean; from
         <button type="button" className="mw-btn primary" onClick={begin}>{t("Measure again")}</button>
       </>
     );
-  } else if (phase === "reboot" || phase === "wait") {
+  } else if (phase === "wait") {
     body = (
       <>
-        <div className="mw-headline"><h3>{t("Reboot to use it")}</h3><p>{t("Custom angles are stored. Reboot the board so it uses them.")}</p></div>
+        <div className="mw-headline"><h3>{t("Saved. Rebooting")}</h3><p>{t("The custom angles are saved and the board is restarting to use them. The check starts when it is back.")}</p></div>
         <span className="mw-dim mw-sm">{angles}</span>
-        {phase === "wait" ? <span className="mw-dim mw-sm">{t(sample.ok ? "Waiting for the board to restart." : "The board dropped off. Open the link again when it is back.")}</span> : null}
+        <span className="mw-dim mw-sm">{t(sample.ok ? "Waiting for the board to restart." : "The board dropped off. Open the link again when it is back.")}</span>
       </>
     );
-    footer = phase === "reboot" ? (
-      <>
-        <button type="button" className="mw-btn text" onClick={goCheck}>{t("Next")}</button>
-        <button type="button" className="mw-btn warn-solid" disabled={busy} onClick={reboot}>{Icon.power()}<span>{t("Reboot the board")}</span></button>
-      </>
-    ) : (
+    footer = (
       <>
         <span />
         <button type="button" className="mw-btn primary" onClick={goCheck}>{t("Next")}</button>

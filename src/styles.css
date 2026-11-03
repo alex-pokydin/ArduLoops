@@ -1049,6 +1049,9 @@ body.split-drag iframe, body.split-drag canvas { pointer-events: none; }
 .frs-btn { display: inline-flex; align-items: center; justify-content: center; height: 32px; margin: 0; padding: 0 14px; border-radius: 8px; font-size: 13px; font-weight: 600; box-shadow: none; filter: none; }
 .frs-btn.primary { background: #15516a; color: var(--ink); }
 .frs-btn.primary:disabled { opacity: 0.4; }
+.frs-btn.warn-solid { background: var(--amber); color: #101214; }
+.frs-btn.warn-solid:hover:not(:disabled) { background: #ffc571; }
+.frs-btn.warn-solid:disabled { opacity: 0.4; }
 .frs-btn.text { background: transparent; color: #a9b6c4; padding: 0 8px; }
 .sov-gtile.is-hot .sov-gtile-state { color: #f4a3a2; } .sov-gtile.is-amber .sov-gtile-state { color: var(--amber); } .sov-gtile.is-ok .sov-gtile-state { color: var(--ok); }
 .wiz { display: flex; flex-direction: column; gap: 8px; }

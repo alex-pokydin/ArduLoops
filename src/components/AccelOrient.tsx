@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState, useSyncExternalStore } from "react";
 import { useT } from "../i18n/i18n";
+import { noteUi, send as sendCmd, writeParam } from "../mav/cmd";
 import { getLatest, subscribe } from "../mav/store";
 import type { WizardClose } from "../wizards/close";
 import { currentMatrix, fitBoard, mean, namedMatrix, orientLabel, toEuler, vlen, type BoardFit, type V3 } from "./compass-orient";
@@ -43,12 +44,11 @@ function yawOf(id: number): number {
 
 /**
  * Finds AHRS_ORIENTATION from the accelerometer: the vehicle held level, then nose down. Each pose is taken by itself
- * once it is held still for a second. From the step page the result goes into the draft (`onPick`); from the
- * assistant it is reported back and nothing is written either way.
+ * once it is held still for a second. A different result is written with Save & reboot, from the step page and from
+ * the assistant alike; the result is reported back either way.
  */
-export function AccelOrient({ current, onPick, onClose, fromAssistant }: {
+export function AccelOrient({ current, onClose, fromAssistant }: {
   current: number;
-  onPick?: (id: number) => void;
   onClose: (report?: WizardClose) => void;
   fromAssistant?: boolean;
 }) {
@@ -57,13 +57,15 @@ export function AccelOrient({ current, onPick, onClose, fromAssistant }: {
   const [phase, setPhase] = useState<Phase>("ready");
   const [fit, setFit] = useState<BoardFit | null>(null);
   const [held, setHeld] = useState(0);
+  const [busy, setBusy] = useState(false);
+  const [note, setNote] = useState("");
   const bag = useRef({ seen: -1, lastT: 0, held: 0, points: [] as V3[], level: null as V3 | null });
   const now = accelNow(sample.live_nums);
   const tilt = now && bag.current.level ? angle(now.acc, bag.current.level) : 0;
   const good = fit != null && fit.level >= GOOD && fit.nose >= GOOD;
   const craft = sample.frame === "plane" ? "plane" : "copter";
 
-  function report(used: boolean): WizardClose {
+  function report(written: boolean): WizardClose {
     return {
       outcome: phase === "done" ? (good ? "completed" : "failed") : "cancelled",
       measures: {
@@ -74,7 +76,8 @@ export function AccelOrient({ current, onPick, onClose, fromAssistant }: {
         closest: fit ? fit.id : null,
         fit_level_deg: fit ? deg(fit.level) : null,
         fit_nose_deg: fit ? deg(fit.nose) : null,
-        used: used ? 1 : 0,
+        written: written ? 1 : 0,
+        rebooted: written ? 1 : 0,
       },
     };
   }
@@ -109,9 +112,26 @@ export function AccelOrient({ current, onPick, onClose, fromAssistant }: {
     setPhase("done");
   });
 
+  /** Writes the detected orientation and reboots, since ArduPilot reads AHRS_ORIENTATION at boot. */
+  async function saveAndReboot() {
+    if (!fit || busy) return;
+    setBusy(true);
+    setNote("");
+    const err = await writeParam("AHRS_ORIENTATION", fit.id);
+    if (err) {
+      setBusy(false);
+      setNote(err);
+      return;
+    }
+    noteUi([{ kind: "param", name: "AHRS_ORIENTATION", value: fit.id, from: current }]);
+    sendCmd({ op: "reboot" });
+    onClose(report(true));
+  }
+
   function again() {
     bag.current = { seen: -1, lastT: 0, held: 0, points: [], level: null };
     setFit(null);
+    setNote("");
     setPhase("ready");
   }
 
@@ -129,7 +149,7 @@ export function AccelOrient({ current, onPick, onClose, fromAssistant }: {
       <>
         <div className="mw-headline"><h3>{t("Two still poses")}</h3><p>{t("Level on a flat surface, then nose down about 30°. After Start, each pose is taken once it has been held still for a second.")}</p></div>
         {!sample.ok ? <div className="mw-note warn">{Icon.warn()}<span>{t("Connect a vehicle first.")}</span></div> : null}
-        <span className="mw-dim mw-sm">{t("Nothing is written. The result goes into the step's draft.")}</span>
+        <span className="mw-dim mw-sm">{t("Nothing is written until Save & reboot.")}</span>
       </>
     );
     footer = (
@@ -146,7 +166,7 @@ export function AccelOrient({ current, onPick, onClose, fromAssistant }: {
           <div className={`mw-note ${now?.still ? "ok" : "warn"}`}><i className="sw-dot" /><span>{t(!now ? "No accelerometer frame yet." : now.still ? "Still. Hold it…" : "The vehicle is moving.")}</span></div>
         )}
         {holding ? <HoldRing pct={held * 100} label={t("Taking it…")} /> : null}
-        <span className="mw-dim mw-sm">{t("Nothing is written. The result goes into the step's draft.")}</span>
+        <span className="mw-dim mw-sm">{t("Nothing is written until Save & reboot.")}</span>
       </>
     );
   } else if (phase === "nose") {
@@ -180,20 +200,23 @@ export function AccelOrient({ current, onPick, onClose, fromAssistant }: {
           <p>{same ? t("AHRS_ORIENTATION {name} matches how the board sits.", { name: orientLabel(current) }) : t("AHRS_ORIENTATION is {name}.", { name: orientLabel(current) })}</p>
         </div>
         {same ? <div className="mw-note ok">{Icon.check("var(--ok)", 14)}<span>{t("Nothing to change.")}</span></div> : (
-          <div className="mw-note info"><span>{fromAssistant ? t("The assistant gets the result. A change still waits for your approval.") : t("Use puts it in the draft. Write, reboot, then set level again.")}</span></div>
+          <div className="mw-note info"><span>{t("Save & reboot writes {name} and restarts the board. Set level again after it.", { name: orientLabel(fit.id) })}</span></div>
         )}
+        {note ? <div className="mw-note warn">{Icon.warn()}<span>{t(note)}</span></div> : null}
         <span className="mw-dim mw-sm">{t("Fit: level {a}°, nose {b}°.", { a: deg(fit.level), b: deg(fit.nose) })}</span>
       </>
     );
-    footer = same || fromAssistant ? (
+    footer = same ? (
       <>
         <button type="button" className="mw-btn text" onClick={again}>{t("Measure again")}</button>
-        <button type="button" className="mw-btn primary" onClick={() => onClose(report(false))}>{t(fromAssistant && !same ? "Send to assistant" : "Close")}</button>
+        <button type="button" className="mw-btn primary" onClick={() => onClose(report(false))}>{t("Close")}</button>
       </>
     ) : (
       <>
-        <button type="button" className="mw-btn text" onClick={again}>{t("Measure again")}</button>
-        <button type="button" className="mw-btn primary" onClick={() => { onPick?.(fit.id); onClose(report(true)); }}>{t("Use {name}", { name: orientLabel(fit.id) })}</button>
+        <button type="button" className="mw-btn text" disabled={busy} onClick={again}>{t("Measure again")}</button>
+        <button type="button" className="mw-btn warn-solid" disabled={busy || !sample.ok || sample.armed} onClick={() => void saveAndReboot()}>
+          {Icon.power()}<span>{busy ? t("Writing…") : t("Save & reboot")}</span>
+        </button>
       </>
     );
   } else {

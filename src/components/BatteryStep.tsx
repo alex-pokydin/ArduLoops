@@ -247,29 +247,31 @@ const SENSORS: { id: string; monitor: number; title: string; sub: string }[] = [
   { id: "volt", monitor: 3, title: "Voltage only", sub: "No current: mAh and capacity will not work" },
 ];
 
-/** What measures the battery: one choice, written as BATT_MONITOR, then a reboot. Pins and module scales go to the assistant. */
+/** What measures the battery: one choice, written as BATT_MONITOR with a reboot in one step. Pins and module scales go to the assistant. */
 export function BatterySensorWizard({ onClose, fromAssistant }: { onClose: (report?: WizardClose) => void; fromAssistant?: boolean }) {
   const t = useT();
   const { sample, params, ready } = useBattery();
   const stored = paramNum(params, "BATT_MONITOR");
   const [pick, setPick] = useState<string>(() => SENSORS.find((s) => s.monitor === (stored == null ? -1 : Math.round(stored)))?.id ?? "board");
-  const [phase, setPhase] = useState<"pick" | "reboot">("pick");
+  const [phase, setPhase] = useState<"pick" | "result">("pick");
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState("");
   const choice = SENSORS.find((s) => s.id === pick) ?? SENSORS[0];
   const changed = stored == null || Math.round(stored) !== choice.monitor;
-  const leave = (rebooted = false) => onClose({ outcome: phase === "reboot" ? "completed" : "cancelled", measures: { sensor: choice.id, BATT_MONITOR: paramNum(getLatest().params, "BATT_MONITOR"), rebooted: rebooted ? 1 : 0 } });
+  const leave = (rebooted = false) => onClose({ outcome: phase === "result" ? "completed" : "cancelled", measures: { sensor: choice.id, BATT_MONITOR: paramNum(getLatest().params, "BATT_MONITOR"), written: rebooted ? 1 : 0, rebooted: rebooted ? 1 : 0 } });
 
-  async function next() {
-    if (!changed) {
-      setPhase("reboot");
-      return;
-    }
+  /** ArduPilot reads the sensor type at boot, so the write and the reboot are one action. */
+  async function saveAndReboot() {
     setBusy(true);
+    setMessage("");
     const err = await writeOne("BATT_MONITOR", choice.monitor, stored);
     setBusy(false);
-    if (err) setMessage(err);
-    else setPhase("reboot");
+    if (err) {
+      setMessage(err);
+      return;
+    }
+    sendCmd({ op: "reboot" });
+    leave(true);
   }
 
   const left = (
@@ -291,8 +293,8 @@ export function BatterySensorWizard({ onClose, fromAssistant }: { onClose: (repo
     </>
   ) : (
     <>
-      <div className="mw-headline"><h3>{t(changed ? "Reboot to use the new sensor" : "The sensor is already set")}</h3><p>{t("ArduPilot reads the sensor type at boot.")}</p></div>
-      <div className="mw-sums"><div className="mw-sum"><span className="mw-dim mw-sm">{t("Monitor")}</span><b>{t(MONITOR_NAMES[choice.monitor] ?? "Sensor {n}", { n: choice.monitor })}</b><span className="mw-dim mw-sm">BATT_MONITOR {choice.monitor}</span></div></div>
+      <div className="mw-headline"><h3>{t(changed ? "Save the new sensor" : "The sensor is already set")}</h3><p>{t(changed ? "ArduPilot reads the sensor type at boot, so Save & reboot restarts the board." : "Nothing to change.")}</p></div>
+      <div className="mw-sums"><div className="mw-sum"><span className="mw-dim mw-sm">{t("Monitor")}</span><b>{t(MONITOR_NAMES[choice.monitor] ?? "Sensor {n}", { n: choice.monitor })}</b><span className="mw-dim mw-sm">{changed ? `BATT_MONITOR ${stored ?? "—"} → ${choice.monitor}` : `BATT_MONITOR ${choice.monitor}`}</span></div></div>
       {pick === "module" || pick === "esc_pad" ? (
         <button type="button" className="setup-fix" onClick={() => askAssistant(t("I use a {what} for the battery. Set its voltage and current pins and scales for this board, and propose the parameters.", { what: t(choice.title).toLowerCase() }))}>{t("Set its pins and scales")}</button>
       ) : null}
@@ -301,12 +303,17 @@ export function BatterySensorWizard({ onClose, fromAssistant }: { onClose: (repo
   const footer = phase === "pick" ? (
     <>
       <button type="button" className="mw-btn text" onClick={() => leave()}>{t("Cancel")}</button>
-      <button type="button" className="mw-btn primary" disabled={!ready || busy} onClick={() => void next()}><span>{t("Next")}</span>{Icon.chevR()}</button>
+      <button type="button" className="mw-btn primary" disabled={!ready} onClick={() => { setMessage(""); setPhase("result"); }}><span>{t("Next")}</span>{Icon.chevR()}</button>
+    </>
+  ) : changed ? (
+    <>
+      <button type="button" className="mw-btn text" disabled={busy} onClick={() => setPhase("pick")}>{t("Back")}</button>
+      <button type="button" className="mw-btn warn-solid" disabled={busy || !ready} onClick={() => void saveAndReboot()}>{Icon.power()}<span>{busy ? t("Writing…") : t("Save & reboot")}</span></button>
     </>
   ) : (
     <>
-      <button type="button" className="mw-btn text" onClick={() => leave()}>{t("Finish")}</button>
-      <button type="button" className="mw-btn warn-solid" disabled={!sample.ok || sample.armed} onClick={() => { sendCmd({ op: "reboot" }); leave(true); }}>{Icon.power()}<span>{t("Reboot & finish")}</span></button>
+      <button type="button" className="mw-btn text" onClick={() => setPhase("pick")}>{t("Back")}</button>
+      <button type="button" className="mw-btn primary" onClick={() => leave()}>{t("Close")}</button>
     </>
   );
   return (

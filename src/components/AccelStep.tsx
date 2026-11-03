@@ -205,7 +205,6 @@ export function AccelStep() {
       {detect ? (
         <AccelOrient
           current={Math.round(pnum(params, "AHRS_ORIENTATION") ?? 0)}
-          onPick={(id) => draft.set("AHRS_ORIENTATION", id)}
           onClose={() => setDetect(false)}
         />
       ) : null}

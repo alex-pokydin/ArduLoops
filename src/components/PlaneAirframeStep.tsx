@@ -5,7 +5,7 @@ import { useT } from "../i18n/i18n";
 import { addLog } from "../log";
 import { motorFrame } from "../lib/motorFrames";
 import { LAYOUT_NAMES, OUTPUTS, classifyLayout, outputPlan, surfacesFor, type Layout, type LayoutKind } from "../lib/planeAirframe";
-import { noteUi, sameParam, writeParam } from "../mav/cmd";
+import { noteUi, sameParam, send as sendCmd, writeParam } from "../mav/cmd";
 import { getSetupSnapshot, getSnapshot, subscribe } from "../mav/store";
 import { useStorePicked } from "../mav/view";
 
@@ -161,7 +161,9 @@ export function PlaneAirframeStep() {
         noteUi([{ kind: "param", name, value, from: typeof from === "number" ? from : null }]);
       }
       setDone(needsReboot ? "reboot" : "saved");
-      addLog(t(needsReboot ? "Saved. Reboot the board to apply QuadPlane changes." : "Saved."), "ok");
+      addLog(t(needsReboot ? "Saved. Rebooting the board to apply QuadPlane changes." : "Saved."), "ok");
+      // QuadPlane changes apply at boot, so the write ends in a reboot.
+      if (needsReboot) sendCmd({ op: "reboot" });
     } finally {
       setBusy(false);
     }
@@ -278,7 +280,7 @@ export function PlaneAirframeStep() {
       </div>
       {plan?.missing.length ? <div className="frs-note err">{t("No free output for: {list}.", { list: plan.missing.map((m) => t(m.title)).join(", ") })}</div> : null}
       {plan ? <div className="frs-note info">{t("After Write, check each surface's direction on the Outputs step.")}</div> : null}
-      {done === "reboot" ? <div className="frs-note warn">{t("Saved. Reboot the board to apply QuadPlane changes; the reboot button is in the header.")}</div> : null}
+      {done === "reboot" ? <div className="frs-note warn">{t("Saved. The board is rebooting to apply QuadPlane changes.")}</div> : null}
       {done === "saved" ? <div className="frs-note ok">{t("Saved. Check each surface's direction on the Outputs step.")}</div> : null}
       {error ? <div className="frs-note err">{t(error)}</div> : null}
 
@@ -292,8 +294,8 @@ export function PlaneAirframeStep() {
               <button type="button" className="frs-btn text" onClick={discard}>{t("Discard")}</button>
             </>
           ) : null}
-          <button type="button" className="frs-btn primary" disabled={!canWrite} onClick={() => void write()}>
-            {busy ? t("Writing…") : writes.length ? t("Write") : t("Saved")}
+          <button type="button" className={`frs-btn ${writes.length && needsReboot ? "warn-solid" : "primary"}`} disabled={!canWrite} onClick={() => void write()}>
+            {busy ? t("Writing…") : !writes.length ? t("Saved") : needsReboot ? t("Save & reboot") : t("Write")}
           </button>
         </div>
       </div>
