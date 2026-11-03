@@ -134,6 +134,23 @@ jobs:
           tauriScript: node scripts/with-cargo.mjs tauri
           args: --target ${{ matrix.target }} --bundles dmg --no-sign
 
+  # The updater reads each signature from latest.json, so the .sig files tauri-action uploads are not used.
+  prune-signatures:
+    needs: [linux, windows]
+    if: always() && (needs.linux.result == 'success' || needs.windows.result == 'success')
+    runs-on: ubuntu-22.04
+    steps:
+      - name: Delete .sig assets
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          tag="${{ github.event.inputs.tag || github.ref_name }}"
+          names=$(gh release view "$tag" -R "${{ github.repository }}" --json assets -q '.assets[].name | select(endswith(".sig"))')
+          for name in $names; do
+            gh release delete-asset "$tag" "$name" -R "${{ github.repository }}" -y
+          done
+
   android:
     needs: github-release
     if: github.event_name != 'workflow_dispatch' || inputs.only == '' || inputs.only == 'android'
