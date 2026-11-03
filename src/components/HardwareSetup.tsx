@@ -123,7 +123,7 @@ const COPTER: Step[] = [
 ];
 
 const PLANE: Step[] = [
-  { id: "airframe", title: "Airframe type", body: "Pick the surface layout. Outputs are matched on the Outputs step.", kind: "airframe", group: "Airframe", params: ["Q_ENABLE", "Q_FRAME_CLASS", "Q_FRAME_TYPE", "Q_TILT_ENABLE", "Q_TAILSIT_ENABLE"] },
+  { id: "airframe", title: "Airframe type", body: "Which surfaces it has, and whether it lifts off like a copter.", kind: "airframe", group: "Airframe", params: ["Q_ENABLE", "Q_FRAME_CLASS", "Q_FRAME_TYPE", "Q_TILT_ENABLE", "Q_TAILSIT_ENABLE"] },
   LEVEL,
   COMPASS,
   { id: "airspeed", title: "Airspeed", body: "If there is no airspeed sensor, say so. The usual default expects a sensor that may not be fitted.", kind: "airspeed", group: "Sensors", params: ["ARSPD*"], wizard: "airspeed", needs: "ARSPD_TYPE" },

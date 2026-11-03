@@ -129,6 +129,7 @@ const WIZARDS: &[WizardSpec] = &[
     WizardSpec { name: "failsafe_test", copter: true, plane: true },
     WizardSpec { name: "servos", copter: false, plane: true },
     WizardSpec { name: "airspeed", copter: false, plane: true },
+    WizardSpec { name: "airframe", copter: false, plane: true },
 ];
 
 fn wizard_spec(name: &str) -> Option<&'static WizardSpec> {

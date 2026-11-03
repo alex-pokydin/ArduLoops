@@ -1066,6 +1066,17 @@ body.split-drag iframe, body.split-drag canvas { pointer-events: none; }
 .pas-body { fill: #2a3140; }
 .pas-sv { fill: rgba(79, 195, 247, 0.35); stroke: var(--cyan); stroke-width: 1.2; }
 .pas-sv.alt { fill: rgba(255, 183, 77, 0.35); stroke: var(--amber); }
+/* The saved airframe on the Airframe step and in its wizard: nose up, each surface tagged with its output. */
+.pas-art { width: 220px; height: 205px; }
+.sw-art .pas-art { width: 100%; max-width: 260px; height: auto; }
+.pas-nose { fill: var(--cyan); }
+.pas-tag circle { fill: #141a22; stroke: #3a4552; stroke-width: 1; }
+.pas-tag text { fill: var(--ink); font-size: 7.5px; font-weight: 700; text-anchor: middle; }
+.pas-tag.changed circle { stroke: var(--cyan); }
+.pas-tag.changed text { fill: var(--cyan); }
+.pas-tag.missing circle { stroke: var(--amber); }
+.pas-tag.missing text { fill: var(--amber); }
+.mw-body .pas-cards { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 .pas-plus { stroke: var(--dim); stroke-width: 3; stroke-linecap: round; }
 .pas-boom { stroke: #3a4552; stroke-width: 4; }
 .pas-rotor { fill: #0f2230; stroke: var(--cyan); stroke-width: 1.5; }

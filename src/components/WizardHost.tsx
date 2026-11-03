@@ -1,6 +1,7 @@
 import { useEffect, useRef, useSyncExternalStore, type ReactNode } from "react";
 import { ArmingChecksWindow } from "./ArmingChecks";
 import { FrameWizard } from "./FrameStep";
+import { AirframeWizard } from "./PlaneAirframeStep";
 import { createPortal } from "react-dom";
 import { AccelOrient } from "./AccelOrient";
 import { AccelWizard } from "./CalibrationPanel";
@@ -121,6 +122,7 @@ export function WizardHost({
   }
   if (ask.wizard === "motors") return <MotorSetup onClose={finish} scope={ask.scope} fromAssistant />;
   if (ask.wizard === "frame") return <FrameWizard start="class" onClose={finish} fromAssistant />;
+  if (ask.wizard === "airframe") return <AirframeWizard start="surfaces" onClose={finish} fromAssistant />;
   if (ask.wizard === "arming_checks") return <ArmingChecksWindow onClose={finish} fromAssistant />;
   return null;
 }
