@@ -1,3 +1,4 @@
+import { onWindowMsg, postWindowMsg } from "../lib/detach";
 import { send, waitHttp } from "./cmd";
 import { APP_HTTP, canonicalLink, loadLink } from "./link";
 import { EMPTY, type Sample } from "./types";
@@ -53,6 +54,12 @@ export function getPlotSpan(): PlotSpan {
 
 export function setPlotSpan(n: PlotSpan): void {
   if (plotSpan === n) return;
+  applyPlotSpan(n);
+  postWindowMsg({ type: "span", n });
+}
+
+function applyPlotSpan(n: PlotSpan): void {
+  if (plotSpan === n) return;
   plotSpan = n;
   try {
     localStorage.setItem(SPAN_KEY, String(n));
@@ -63,6 +70,23 @@ export function setPlotSpan(n: PlotSpan): void {
 }
 
 export function setPaused(on: boolean): void {
+  if (paused === on) return;
+  applyPaused(on);
+  postWindowMsg({ type: "paused", on });
+}
+
+// Detached windows follow pause and plot span from any other window of the app.
+onWindowMsg((msg) => {
+  if (msg.type === "paused") applyPaused(msg.on);
+  else if (msg.type === "span" && (PLOT_SPANS as readonly number[]).includes(msg.n)) applyPlotSpan(msg.n as PlotSpan);
+  else if (msg.type === "sync-req") {
+    postWindowMsg({ type: "paused", on: paused });
+    postWindowMsg({ type: "span", n: plotSpan });
+  }
+});
+
+function applyPaused(on: boolean): void {
+  if (paused === on) return;
   paused = on;
   if (on) frozenBuf = buf.slice();
   else frozenBuf = null;
@@ -198,7 +222,8 @@ function ingest(s: Sample): void {
   }
 }
 
-export function startStream(): () => void {
+/** `passive`: a detached window only listens; connecting the link stays with the main window. */
+export function startStream(opts: { passive?: boolean } = {}): () => void {
   const ac = new AbortController();
   let es: EventSource | undefined;
   let lastMsg = 0;
@@ -220,7 +245,7 @@ export function startStream(): () => void {
         const sample = JSON.parse(ev.data) as Sample;
         if (first) {
           first = false;
-          if (!sample.ok) {
+          if (!sample.ok && !opts.passive) {
             const url = canonicalLink(loadLink());
             const serial = /^serial:/i.test(url);
             // A COM port stays down until the link form is submitted again.

@@ -12,6 +12,8 @@ import { closeBoardWindow, openBoardWindow, raiseBoardWindow, refreshBoardDoc, s
 import { openImageIn } from "./ImageViewer";
 import { versionKnown } from "../lib/vehicleHeader";
 import { Icon } from "./MotorSetup";
+import { detachWindow } from "../lib/detach";
+import { DetachButton } from "./DetachButton";
 
 const REMARK = [remarkGfm];
 // A README image opens full screen with zoom; the others in the same README are a step away.
@@ -170,7 +172,8 @@ function saveGeom(g: Geom) {
  * The board window: README.md, hwdef.dat and defaults.parm as tabs. Not modal: dragged by its title bar, resized from the corner,
  * kept open across tabs and workspaces. While the link is down it keeps the last board it showed, marked.
  */
-export function BoardWindow() {
+/** `detached`: its own OS window; `onClose` closes that window. */
+export function BoardWindow({ detached = false, onClose }: { detached?: boolean; onClose?: () => void } = {}) {
   const t = useT();
   const win = useBoardWindow();
   const current = useLinkedBoardDoc();
@@ -179,7 +182,8 @@ export function BoardWindow() {
   const doc = current && (current.state === "saved" || current.state === "stale") ? current : lastDoc;
   const [geom, setGeom] = useState<Geom>(readGeom);
   const [front, setFront] = useState(true);
-  const [narrow, setNarrow] = useState(() => window.innerWidth < 768);
+  const [narrowView, setNarrow] = useState(() => window.innerWidth < 768);
+  const narrow = narrowView && !detached;
   const box = useRef<HTMLElement | null>(null);
   const md = useRef<HTMLDivElement | null>(null);
   const hold = useRef<{ kind: "move" | "size"; x: number; y: number; g: Geom } | null>(null);
@@ -238,8 +242,13 @@ export function BoardWindow() {
     if (hwdefFiles.some((f) => f.path === target)) setBoardWindow({ path: target });
   };
 
+  const close = onClose ?? closeBoardWindow;
+  const onDetach = async () => {
+    if (await detachWindow("board", { tab: win.tab, path: win.path, heading: win.heading, doc }, { title: board || t("Board doc") })) closeBoardWindow();
+  };
+
   const start = (kind: "move" | "size") => (ev: ReactPointerEvent<HTMLElement>) => {
-    if (narrow || ev.button !== 0) return;
+    if (narrow || detached || ev.button !== 0) return;
     if (kind === "move" && (ev.target as HTMLElement).closest("button, a")) return;
     hold.current = { kind, x: ev.clientX, y: ev.clientY, g: geom };
     ev.currentTarget.setPointerCapture(ev.pointerId);
@@ -265,11 +274,11 @@ export function BoardWindow() {
       : <span className="bd-age">{t("saved {when}", { when: saved })}</span>;
   const ghPath = tab === "readme" ? `${board}/README.md` : tab === "parm" ? `${board}/defaults.parm` : file?.path.startsWith("../") ? file.path.slice(3) : `${board}/${file?.path ?? "hwdef.dat"}`;
 
-  return createPortal(
+  const view = (
     <section
       ref={box}
-      className={`bwin${narrow ? " sheet" : ""}${front ? " front" : ""}`}
-      style={narrow ? undefined : { left: geom.x, top: geom.y, width: geom.w, height: geom.h }}
+      className={detached ? "bwin detached" : `bwin${narrow ? " sheet" : ""}${front ? " front" : ""}`}
+      style={narrow || detached ? undefined : { left: geom.x, top: geom.y, width: geom.w, height: geom.h }}
       role="dialog"
       aria-label={t("Board doc")}
     >
@@ -287,7 +296,8 @@ export function BoardWindow() {
           <svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true"><path d="M12.8 8a4.8 4.8 0 1 1-1.5-3.5M12 2.2v2.8H9.2" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" /></svg>
         </button>
         <a className="bd-ext" href={`${TREE}/${ghPath}`}>GitHub ↗</a>
-        <button type="button" className="mw-icon" onClick={closeBoardWindow} aria-label={t("Close")} title={t("Close")}>{Icon.x()}</button>
+        {detached || narrow ? null : <DetachButton className="mw-icon" onDetach={() => void onDetach()} />}
+        <button type="button" className="mw-icon" onClick={close} aria-label={t("Close")} title={t("Close")}>{Icon.x()}</button>
       </header>
       <div className="bwin-body">
         {tab === "readme" ? (
@@ -321,14 +331,14 @@ export function BoardWindow() {
           <CodeView key="parm" text={parm.text} parm />
         ) : null}
       </div>
-      {narrow ? null : (
+      {narrow || detached ? null : (
         <span className="bwin-grip" onPointerDown={start("size")} onPointerMove={move} onPointerUp={end} onPointerCancel={end} aria-hidden="true">
           <svg viewBox="0 0 12 12" width="12" height="12"><path d="M11 5L5 11M11 8.5L8.5 11" /></svg>
         </span>
       )}
-    </section>,
-    document.body,
+    </section>
   );
+  return detached ? view : createPortal(view, document.body);
 }
 
 /**

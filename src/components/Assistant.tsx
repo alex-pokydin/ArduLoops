@@ -14,6 +14,9 @@ import { ProfileCard } from "./ProfileForm";
 import { WizardHost, wizardScope, type WizardAsk } from "./WizardHost";
 import type { WizardClose } from "../wizards/close";
 import { ChartStrip, chartsFromTools } from "./FindingCharts";
+import { DetachButton } from "./DetachButton";
+import { closeSelf, detachWindow } from "../lib/detach";
+import { openOptionsInMain, useAssistantDetached, useAssistantRemote } from "../lib/assistantBridge";
 import { LiveHost, LiveView, liveSpecFromTools, type LiveSpec } from "./LivePlots";
 import { getLang, useT } from "../i18n/i18n";
 import { ASK_ASSISTANT, takeFocusRequest, type AskDetail } from "../lib/assistantAsk";
@@ -504,14 +507,22 @@ const MODELS = DEFAULT_MODELS;
 
 export function Assistant({
   home,
-  onOpenOptions,
+  onOpenOptions: onOpenOptionsProp,
   onOpenHome,
+  detached = false,
+  initialChatId = "",
 }: {
   home: boolean;
   onOpenOptions: () => void;
   onOpenHome: () => void;
+  /** Its own OS window (lib/detach.ts): always open, fills the window, Options open in the main window. */
+  detached?: boolean;
+  initialChatId?: string;
 }) {
   const t = useT();
+  const onOpenOptions = detached ? openOptionsInMain : onOpenOptionsProp;
+  const remote = useAssistantRemote(!detached, onOpenOptionsProp);
+  useAssistantDetached(detached);
   const vehicle = useLinkFace();
   const [status, setStatus] = useState<AiStatus | null>(null);
   const [dynamicModels, setDynamicModels] = useState<Record<string, string[]>>(() => loadCachedModels());
@@ -520,9 +531,9 @@ export function Assistant({
       if (updated) setDynamicModels(updated);
     });
   }, []);
-  const [open, setOpen] = useState(false);
+  const [open, setOpen] = useState(detached);
   const [chats, setChats] = useState<Chat[]>([]);
-  const [chatId, setChatId] = useState("");
+  const [chatId, setChatId] = useState(initialChatId);
   const [messages, setMessages] = useState<Msg[]>([]);
   const [proposals, setProposals] = useState<Proposal[]>([]);
   const [wizardAsk, setWizardAsk] = useState<WizardAsk | null>(null);
@@ -542,6 +553,8 @@ export function Assistant({
   configuredRef.current = !!status?.configured;
   const optionsRef = useRef(onOpenOptions);
   optionsRef.current = onOpenOptions;
+  const remoteRef = useRef(remote);
+  remoteRef.current = remote;
   const busyRef = useRef(false);
   busyRef.current = busy;
   /** An empty conversation, as the New chat button starts; the view chip is back on for it. */
@@ -570,6 +583,16 @@ export function Assistant({
         optionsRef.current();
         return;
       }
+      // The assistant is in its own window: the ask goes there, or here if that window is gone.
+      if (remoteRef.current.remoteUp()) {
+        void remoteRef.current.forwardAsk(detail).then((sent) => {
+          if (!sent) askHere(detail);
+        });
+        return;
+      }
+      askHere(detail);
+    };
+    const askHere = (detail: AskDetail) => {
       setOpen(true);
       if (detail.send) {
         if (detail.text) void sendRef.current?.(undefined, detail.text, true);
@@ -935,7 +958,7 @@ export function Assistant({
   }
 
   function onDragStart(ev: ReactPointerEvent) {
-    if (narrow) return;
+    if (narrow || detached) return;
     if ((ev.target as HTMLElement).closest("button")) return;
     const frame = panel.current?.getBoundingClientRect();
     if (!frame) return;
@@ -1005,7 +1028,11 @@ export function Assistant({
   const droneKey = vehicleKey(vehicle);
   const thinking = busy;
   const needs = proposals.some((p) => p.status === "pending");
-  const showFloat = open && !(home && configured);
+  const showFloat = detached || (open && !(home && configured));
+
+  async function onDetach() {
+    if (await detachWindow("assistant", { chatId }, { title: t("Assistant") })) setOpen(false);
+  }
   const source = status?.active?.storage === "hosted" ? t("Cloud") : (provider.toUpperCase() || "—");
   const linkLine = configured ? source : t("Not configured");
 
@@ -1106,13 +1133,16 @@ export function Assistant({
           />
         </main>
       ) : null}
-      {open || (home && configured) ? null : (
+      {detached || open || (home && configured) ? null : (
       <button
         type="button"
         className={`ai-fab${needs ? " needs" : ""}${thinking ? " busy" : ""}${status?.bench ? " bench" : ""}`}
         aria-label={t("Assistant")}
         title={t("Assistant")}
-        onClick={() => setOpen(true)}
+        onClick={() => {
+          if (!remote.remoteUp()) setOpen(true);
+          else void remote.focusRemote().then((raised) => raised || setOpen(true));
+        }}
         onPointerEnter={(event) => rampMoteSpeed(event.currentTarget, 1.85)}
         onPointerLeave={(event) => rampMoteSpeed(event.currentTarget, 1)}
       >
@@ -1130,8 +1160,8 @@ export function Assistant({
       {showFloat ? (
         <section
           ref={panel}
-          className={`ai-float${narrow ? " sheet" : ""}${configured ? "" : " setup"}`}
-          style={narrow ? undefined : { left: pos.x, top: pos.y }}
+          className={detached ? `ai-float detached${configured ? "" : " setup"}` : `ai-float${narrow ? " sheet" : ""}${configured ? "" : " setup"}`}
+          style={narrow || detached ? undefined : { left: pos.x, top: pos.y }}
           role="dialog"
           aria-label={t("Assistant")}
         >
@@ -1156,7 +1186,8 @@ export function Assistant({
             ) : null}
             <strong>{t("Assistant")}</strong>
             <span title={linkLine}>{linkLine}</span>
-            {configured ? (
+            {detached || narrow ? null : <DetachButton className="ai-x" onDetach={() => void onDetach()} />}
+            {configured && !detached ? (
               <button
                 type="button"
                 className="ai-x"
@@ -1173,7 +1204,7 @@ export function Assistant({
               className="ai-x"
               aria-label={t("Close")}
               onPointerDown={(ev) => ev.stopPropagation()}
-              onClick={() => setOpen(false)}
+              onClick={() => (detached ? void closeSelf() : setOpen(false))}
             >
               <svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true">
                 <path d="M3.2 3.2 12.8 12.8M12.8 3.2 3.2 12.8" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" />
@@ -1196,7 +1227,7 @@ export function Assistant({
               cloud={cloud}
               bench={status?.bench || null}
               quota={hostedQuota(status)}
-              compact
+              compact={!detached || narrow}
               onPick={(id) => { setViewOff(false); setAskStarters([]); setChatId(id); }}
               onDraft={setDraft}
               onModel={setModel}
@@ -2662,7 +2693,7 @@ function chartsUnder(blocks: ThreadBlock[], index: number) {
   return prev?.kind === "tools" ? chartsFromTools(prev.items) : [];
 }
 
-type SavedDoc = { id?: string; title: string; format: string; url: string };
+export type SavedDoc = { id?: string; title: string; format: string; url: string };
 
 let activeDocOpener: ((doc: SavedDoc) => void) | null = null;
 
@@ -2773,7 +2804,7 @@ function DocStrip({ docs }: { docs: SavedDoc[] }) {
   );
 }
 
-function DocWindow({ doc, onClose }: { doc: SavedDoc; onClose: () => void }) {
+export function DocWindow({ doc, onClose, detached = false }: { doc: SavedDoc; onClose: () => void; detached?: boolean }) {
   const t = useT();
   const frame = useRef<HTMLDivElement>(null);
   const drag = useRef<{ x: number; y: number; left: number; top: number } | null>(null);
@@ -2823,6 +2854,7 @@ function DocWindow({ doc, onClose }: { doc: SavedDoc; onClose: () => void }) {
   }
 
   useEffect(() => {
+    if (detached) return;
     const onKey = (ev: KeyboardEvent) => {
       if (ev.key !== "Escape") return;
       if (full) placeFull(false);
@@ -2830,10 +2862,14 @@ function DocWindow({ doc, onClose }: { doc: SavedDoc; onClose: () => void }) {
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [full, onClose]);
+  }, [full, onClose, detached]);
+
+  async function onDetach() {
+    if (await detachWindow("doc", doc, { title: doc.title || t("Document"), key: doc.id || doc.url || doc.title })) onClose();
+  }
 
   function onDrag(ev: ReactPointerEvent<HTMLElement>) {
-    if (full) return;
+    if (full || detached) return;
     if ((ev.target as HTMLElement).closest("button, a")) return;
     const node = frame.current;
     if (!node) return;
@@ -2887,10 +2923,9 @@ function DocWindow({ doc, onClose }: { doc: SavedDoc; onClose: () => void }) {
     }
   }
 
-  return createPortal(
-    <div className="ai-chart-back" onClick={onClose} role="presentation">
+  const view = (
       <div
-        className={full ? "ai-chart-window ai-doc-window full" : "ai-chart-window ai-doc-window"}
+        className={detached ? "ai-chart-window ai-doc-window detached" : full ? "ai-chart-window ai-doc-window full" : "ai-chart-window ai-doc-window"}
         ref={frame}
         role="dialog"
         aria-label={title}
@@ -2930,7 +2965,8 @@ function DocWindow({ doc, onClose }: { doc: SavedDoc; onClose: () => void }) {
               <OpenPageIcon />
             </a>
           ) : null}
-          <button
+          {detached ? null : <DetachButton onDetach={() => void onDetach()} />}
+          {detached ? null : <button
             type="button"
             aria-pressed={full}
             aria-label={full ? t("Exit full screen") : t("Full screen")}
@@ -2944,7 +2980,7 @@ function DocWindow({ doc, onClose }: { doc: SavedDoc; onClose: () => void }) {
                 <path d="M6 2H2v4M10 2h4v4M6 14H2v-4M10 14h4v-4" fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round" />
               )}
             </svg>
-          </button>
+          </button>}
           <button type="button" aria-label={t("Close")} title={t("Close")} onClick={onClose}>
             <svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true">
               <path d="M3.2 3.2 12.8 12.8M12.8 3.2 3.2 12.8" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" />
@@ -2972,7 +3008,10 @@ function DocWindow({ doc, onClose }: { doc: SavedDoc; onClose: () => void }) {
           )}
         </div>
       </div>
-    </div>,
+  );
+  if (detached) return view;
+  return createPortal(
+    <div className="ai-chart-back" onClick={onClose} role="presentation">{view}</div>,
     document.body,
   );
 }

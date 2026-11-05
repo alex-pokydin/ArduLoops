@@ -1,6 +1,8 @@
 import { useEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent } from "react";
 import { createPortal } from "react-dom";
 import { useT } from "../i18n/i18n";
+import { detachWindow } from "../lib/detach";
+import { DetachButton } from "./DetachButton";
 
 export type ChartLine = { name: string; x: number[]; y: number[]; hue?: number; dash?: string };
 export type ChartAxis = { label: string; lines: ChartLine[] };
@@ -304,7 +306,7 @@ function chartCaption(chart: ChartSpec): string {
   return [heat, axes.join(" · ")].filter(Boolean).join(" · ");
 }
 
-function ChartWindow({ chart, onClose }: { chart: ChartSpec; onClose: () => void }) {
+export function ChartWindow({ chart, onClose, detached = false }: { chart: ChartSpec; onClose: () => void; detached?: boolean }) {
   const t = useT();
   const frame = useRef<HTMLDivElement>(null);
   const plot = useRef<HTMLDivElement>(null);
@@ -333,6 +335,7 @@ function ChartWindow({ chart, onClose }: { chart: ChartSpec; onClose: () => void
     setFull(false);
   }
   useEffect(() => {
+    if (detached) return;
     const onKey = (ev: KeyboardEvent) => {
       if (ev.key !== "Escape") return;
       if (full) placeFull(false);
@@ -340,7 +343,7 @@ function ChartWindow({ chart, onClose }: { chart: ChartSpec; onClose: () => void
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [full, onClose]);
+  }, [full, onClose, detached]);
   const plotKey = chartIdentity(chart);
   useEffect(() => {
     const el = plot.current;
@@ -450,8 +453,11 @@ function ChartWindow({ chart, onClose }: { chart: ChartSpec; onClose: () => void
       if (lib) lib.purge(el);
     };
   }, [plotKey]);
+  async function onDetach() {
+    if (await detachWindow("chart", chart, { title: chart.title || chartCaption(chart), key: chart.slug || chart.title || chartCaption(chart) })) onClose();
+  }
   function onDrag(ev: ReactPointerEvent<HTMLElement>) {
-    if (full) return;
+    if (full || detached) return;
     if ((ev.target as HTMLElement).closest("button")) return;
     const node = frame.current;
     if (!node) return;
@@ -473,10 +479,9 @@ function ChartWindow({ chart, onClose }: { chart: ChartSpec; onClose: () => void
     node.style.left = `${Math.min(maxLeft, Math.max(8, start.left + ev.clientX - start.x))}px`;
     node.style.top = `${Math.min(maxTop, Math.max(topMin, start.top + ev.clientY - start.y))}px`;
   }
-  return createPortal(
-    <div className="ai-chart-back" onClick={onClose} role="presentation">
+  const view = (
       <div
-        className={full ? "ai-chart-window full" : "ai-chart-window"}
+        className={detached ? "ai-chart-window detached" : full ? "ai-chart-window full" : "ai-chart-window"}
         ref={frame}
         role="dialog"
         aria-label={chart.title || chartCaption(chart)}
@@ -490,7 +495,8 @@ function ChartWindow({ chart, onClose }: { chart: ChartSpec; onClose: () => void
           onLostPointerCapture={() => { drag.current = null; }}
         >
           <b>{chart.title || chartCaption(chart)}</b>
-          <button
+          {detached ? null : <DetachButton onDetach={() => void onDetach()} />}
+          {detached ? null : <button
             type="button"
             aria-pressed={full}
             aria-label={full ? t("Exit full screen") : t("Full screen")}
@@ -504,7 +510,7 @@ function ChartWindow({ chart, onClose }: { chart: ChartSpec; onClose: () => void
                 <path d="M6 2H2v4M10 2h4v4M6 14H2v-4M10 14h4v-4" fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round" />
               )}
             </svg>
-          </button>
+          </button>}
           <button type="button" aria-label={t("Close")} title={t("Close")} onClick={onClose}>
             <svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true">
               <path d="M3.2 3.2 12.8 12.8M12.8 3.2 3.2 12.8" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" />
@@ -513,7 +519,10 @@ function ChartWindow({ chart, onClose }: { chart: ChartSpec; onClose: () => void
         </header>
         <div className="ai-chart-plot"><div className="ai-chart-plot-inner" ref={plot} /></div>
       </div>
-    </div>,
+  );
+  if (detached) return view;
+  return createPortal(
+    <div className="ai-chart-back" onClick={onClose} role="presentation">{view}</div>,
     document.body,
   );
 }

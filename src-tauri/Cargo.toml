@@ -17,7 +17,7 @@ path = "src/bin/bridge.rs"
 
 [features]
 default = ["desktop"]
-desktop = ["dep:tauri", "dep:tauri-plugin-log", "dep:tauri-plugin-opener", "dep:tauri-plugin-deep-link", "dep:tauri-plugin-updater", "dep:tauri-build"]
+desktop = ["dep:tauri", "dep:tauri-plugin-log", "dep:tauri-plugin-opener", "dep:tauri-plugin-deep-link", "dep:tauri-plugin-updater", "dep:tauri-plugin-window-state", "dep:tauri-build"]
 
 [build-dependencies]
 tauri-build = { version = "2.6.3", optional = true , features = [] }
@@ -56,6 +56,8 @@ mavlink = { version = "0.13.1", default-features = false, features = ["direct-se
 serialport = "4.7.2"
 # Self-update from signed GitHub release artifacts. Android updates go through the APK.
 tauri-plugin-updater = { version = "2", optional = true }
+# Remembers each window's size, position and monitor (main and detached panels) across restarts.
+tauri-plugin-window-state = { version = "2", optional = true }
 
 [target.'cfg(windows)'.dependencies]
 windows-sys = { version = "0.59", features = ["Win32_Foundation", "Win32_Devices_DeviceAndDriverInstallation", "Win32_NetworkManagement_IpHelper", "Win32_System_Registry", "Win32_UI_Shell"] }

@@ -50,6 +50,13 @@ export function setSetupView(next: Pick<SetupView, "vehicle" | "step" | "title">
   emit();
 }
 
+/** A detached assistant window takes the main window's view as it is (lib/assistantBridge.ts). */
+export function replaceSetupView(next: SetupView | null): void {
+  if (JSON.stringify(view) === JSON.stringify(next)) return;
+  view = next;
+  emit();
+}
+
 export function setViewFocus(param: string | undefined): void {
   if (!view || view.focus === param) return;
   view = { ...view, focus: param };

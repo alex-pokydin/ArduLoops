@@ -57,6 +57,13 @@ export function useBoardDoc(identity: string): BoardDocReply | null {
   return useSyncExternalStore(subscribe, () => doc);
 }
 
+/** A detached board window starts with the doc the main window showed, so it is not empty while the link is down. */
+export function seedLastBoardDoc(value: BoardDocReply | null) {
+  if (!value || last) return;
+  last = value;
+  emit();
+}
+
 export function useLastBoardDoc(): BoardDocReply | null {
   return useSyncExternalStore(subscribe, () => last);
 }

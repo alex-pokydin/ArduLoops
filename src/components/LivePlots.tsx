@@ -4,6 +4,8 @@ import { useT } from "../i18n/i18n";
 import { customCatalog, customPane, liveFieldSig, resolveLine, type CatalogTrace, type Pane } from "../lib/traces";
 import { getLatest } from "../mav/store";
 import { useStorePicked } from "../mav/view";
+import { detachWindow } from "../lib/detach";
+import { DetachButton } from "./DetachButton";
 import { PlotStack } from "./TracePanes";
 
 export type LiveLine = { id: string; label: string };
@@ -140,7 +142,8 @@ export function LiveCard({
   );
 }
 
-export function LiveWindow({ spec, onClose }: { spec: LiveSpec; onClose: () => void }) {
+/** `detached`: the window is its own OS window; it fills it and the OS moves and sizes it. */
+export function LiveWindow({ spec, onClose, detached = false }: { spec: LiveSpec; onClose: () => void; detached?: boolean }) {
   const t = useT();
   const frame = useRef<HTMLDivElement>(null);
   const drag = useRef<{ x: number; y: number; left: number; top: number } | null>(null);
@@ -176,6 +179,7 @@ export function LiveWindow({ spec, onClose }: { spec: LiveSpec; onClose: () => v
   }
 
   useEffect(() => {
+    if (detached) return;
     const onKey = (ev: KeyboardEvent) => {
       if (ev.key !== "Escape") return;
       if (full) placeFull(false);
@@ -183,10 +187,14 @@ export function LiveWindow({ spec, onClose }: { spec: LiveSpec; onClose: () => v
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [full, onClose]);
+  }, [full, onClose, detached]);
+
+  async function onDetach() {
+    if (await detachWindow("live", spec, { title: t("Live lines") })) onClose();
+  }
 
   function onDrag(ev: ReactPointerEvent<HTMLElement>) {
-    if (full) return;
+    if (full || detached) return;
     if ((ev.target as HTMLElement).closest("button")) return;
     const node = frame.current;
     if (!node) return;
@@ -209,9 +217,9 @@ export function LiveWindow({ spec, onClose }: { spec: LiveSpec; onClose: () => v
     node.style.top = `${Math.min(maxTop, Math.max(topMin, start.top + ev.clientY - start.y))}px`;
   }
 
-  return createPortal(
+  const view = (
     <div
-      className={full ? "ai-chart-window live full" : "ai-chart-window live"}
+      className={detached ? "ai-chart-window live detached" : full ? "ai-chart-window live full" : "ai-chart-window live"}
       ref={frame}
       role="dialog"
       aria-label={t("Live lines")}
@@ -224,7 +232,8 @@ export function LiveWindow({ spec, onClose }: { spec: LiveSpec; onClose: () => v
           onLostPointerCapture={() => { drag.current = null; }}
         >
           <b>{t("Live lines")}</b>
-          <button
+          {detached ? null : <DetachButton onDetach={() => void onDetach()} />}
+          {detached ? null : <button
             type="button"
             aria-pressed={full}
             aria-label={full ? t("Exit full screen") : t("Full screen")}
@@ -238,7 +247,7 @@ export function LiveWindow({ spec, onClose }: { spec: LiveSpec; onClose: () => v
                 <path d="M6 2H2v4M10 2h4v4M6 14H2v-4M10 14h4v-4" fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round" />
               )}
             </svg>
-          </button>
+          </button>}
           <button type="button" aria-label={t("Close")} title={t("Close")} onClick={onClose}>
             <svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true">
               <path d="M3.2 3.2 12.8 12.8M12.8 3.2 3.2 12.8" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" />
@@ -252,9 +261,9 @@ export function LiveWindow({ spec, onClose }: { spec: LiveSpec; onClose: () => v
         ) : (
           <p className="ai-live-empty">{t("No live chart is on")}</p>
         )}
-    </div>,
-    document.body,
+    </div>
   );
+  return detached ? view : createPortal(view, document.body);
 }
 
 function panesFor(spec: LiveSpec, catalog: CatalogTrace[]): Pane[] {

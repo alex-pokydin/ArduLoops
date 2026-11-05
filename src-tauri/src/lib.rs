@@ -115,7 +115,25 @@ mod desktop {
             .plugin(tauri_plugin_deep_link::init());
         #[cfg(not(target_os = "android"))]
         let builder = builder.plugin(tauri_plugin_updater::Builder::new().build());
+        #[cfg(not(target_os = "android"))]
+        let builder = builder.plugin(tauri_plugin_window_state::Builder::default().build());
         builder
+            .on_window_event(|window, event| {
+                // Detached panels (lib/detach.ts) belong to the main window. Closing them from inside this event
+                // swallows main's own close on Windows, so the places of all windows are saved and the app exits.
+                if let tauri::WindowEvent::CloseRequested { api, .. } = event {
+                    if window.label() == "main" && window.app_handle().webview_windows().len() > 1 {
+                        api.prevent_close();
+                        let app = window.app_handle().clone();
+                        #[cfg(not(target_os = "android"))]
+                        {
+                            use tauri_plugin_window_state::{AppHandleExt, StateFlags};
+                            let _ = app.save_window_state(StateFlags::all());
+                        }
+                        app.exit(0);
+                    }
+                }
+            })
             .setup(move |app| {
                 if let Ok(path) = app.path().app_local_data_dir() {
                     crate::db::set_app_data_dir(path);

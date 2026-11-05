@@ -13,6 +13,11 @@ export function askAssistant(text: string): void {
 
 let focusWanted = false;
 
+/** The composer takes focus once it is ready (an Ask forwarded to the detached assistant). */
+export function requestComposerFocus(): void {
+  focusWanted = true;
+}
+
 /** True once after Ask: the composer takes focus when the chat pane is ready, even if it mounts after the event. */
 export function takeFocusRequest(): boolean {
   const wanted = focusWanted;

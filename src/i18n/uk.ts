@@ -294,6 +294,8 @@ export const uk: Record<string, string> = {
   "Confirm": "Підтвердити",
   "Close": "Закрити",
   "Full screen": "на весь екран",
+  "Open in separate window": "відкрити в окремому вікні",
+  "Nothing to show in this window": "У цьому вікні нічого показати",
   "Exit full screen": "згорнути вікно",
   "Waiting for approval in the assistant": "Чекає підтвердження в асистенті",
   "Restore the audited value": "Повернути значення з аудиту",
