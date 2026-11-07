@@ -6,8 +6,8 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use mavlink::ardupilotmega::{
-    MavAutopilot, MavCmd, MavFrame, MavMessage, MavMissionResult, MavModeFlag, MavParamType, MavResult,
-    MavType, PidTuningAxis, ATTITUDE_DATA, ATTITUDE_TARGET_DATA, COMMAND_ACK_DATA, COMMAND_LONG_DATA,
+    MavAutopilot, MavCmd, MavFrame, MavMessage, MavMissionResult, MavModeFlag, MavParamType, MavProtocolCapability,
+    MavResult, MavType, PidTuningAxis, ATTITUDE_DATA, ATTITUDE_TARGET_DATA, COMMAND_ACK_DATA, COMMAND_LONG_DATA,
     GLOBAL_POSITION_INT_DATA, GPS_RAW_INT_DATA, HEARTBEAT_DATA, HOME_POSITION_DATA, LOG_DATA_DATA,
     LOG_ENTRY_DATA, LOG_ERASE_DATA, LOG_REQUEST_DATA_DATA, LOG_REQUEST_END_DATA, LOG_REQUEST_LIST_DATA,
     MISSION_CLEAR_ALL_DATA, MISSION_COUNT_DATA, MISSION_CURRENT_DATA, MISSION_ITEM_INT_DATA,

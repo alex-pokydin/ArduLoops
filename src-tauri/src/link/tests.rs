@@ -633,6 +633,7 @@ mod param_file_live {
         if std::env::var("PCK_BUDGET_MS").is_ok() {
             // A cut download keeps its first values; the by-index path fills the rest on the same link.
             assert!(n > 0 && !complete(&st));
+            st.params_file_tried = true;
             let started = Instant::now();
             while !complete(&st) && started.elapsed() < Duration::from_secs(180) {
                 fill_missing_params(&*conn, &mut st, Instant::now(), true);
@@ -656,6 +657,7 @@ mod param_file_live {
         st.target_system = target_system;
         st.target_component = target_component;
         st.sample.heartbeat_at = wall_time();
+        st.params_file_tried = true;
         let started = Instant::now();
         while !complete(&st) && started.elapsed() < Duration::from_secs(180) {
             fill_missing_params(&*conn, &mut st, Instant::now(), true);

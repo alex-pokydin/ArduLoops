@@ -2625,7 +2625,7 @@ export const uk: Record<string, string> = {
   "Output of {name}": "Вихід для: {name}",
   "Also on {list}, listed under Other outputs.": "Також на {list}, див. «Інші виходи».",
   "Loaded as one file in {s} s": "Завантажено одним файлом за {s} с",
-  "Loading one by one: the parameter file was not available": "Завантаження по одному: файл параметрів недоступний",
+  "Loading as a list: this link has no parameter file": "Завантаження списком: цей канал не дає файл параметрів",
   "Ask the assistant to fix this. Changes still wait for your approval.": "Попросити асистента виправити. Зміни все одно чекають на ваше схвалення.",
   "Fix": "Виправити",
   "1 step is hidden: this firmware has no parameters for {list}.": "1 крок приховано: у цій прошивці немає параметрів для {list}.",

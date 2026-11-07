@@ -16,6 +16,7 @@ const ERR_EOF: u8 = 6;
 const ERR_FAIL_ERRNO: u8 = 2;
 const ERR_NOT_FOUND: u8 = 10;
 const DATA_MAX: usize = 239;
+const FTP_SILENT: &str = "The vehicle did not answer file transfer";
 const SCRIPT_MAX: usize = 96 * 1024;
 const ROOTS: &[&str] = &["scripts", "/APM/scripts", "APM/scripts"];
 
@@ -154,7 +155,7 @@ impl<'a> Ftp<'a> {
                 }
             }
         }
-        Err("The vehicle did not answer file transfer".into())
+        Err(FTP_SILENT.into())
     }
 
     /// One message off the link: a file-transfer payload for this session, or `None`.

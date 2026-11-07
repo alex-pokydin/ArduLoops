@@ -9,6 +9,12 @@ const PCK_MAGIC_DEFAULTS: u16 = 0x671c;
 /// A slow radio link still finishes well inside this; the ATTITUDE watchdog is 12 s.
 const PARAM_FILE_BUDGET: Duration = Duration::from_secs(10);
 const PARAM_FILE_MAX: usize = 256 * 1024;
+/// The first request: tries and the wait for each before the vehicle counts as silent.
+const PROBE_TRIES: usize = 2;
+const PROBE_WAIT: Duration = Duration::from_millis(1200);
+/// Later tries of the file after an unanswered start, and the pause before each.
+const PARAM_FILE_RETRIES: u8 = 2;
+const PARAM_FILE_RETRY_GAP: Duration = Duration::from_secs(4);
 
 #[derive(Debug, PartialEq)]
 struct ParamPack {
@@ -283,7 +289,18 @@ fn download_param_file(
             last_rc: Instant::now(),
             until: Some(deadline),
         };
-        let outcome = ftp.reset().and_then(|_| ftp.read_to_end(PARAM_FILE, deadline));
+        // A link without file transfer never answers. Short tries find that out quickly; a
+        // slow radio that does carry it still answers one small reply well inside each.
+        let mut probe = Err(String::new());
+        for _ in 0..PROBE_TRIES {
+            ftp.until = Some(deadline.min(Instant::now() + PROBE_WAIT));
+            probe = ftp.reset();
+            if probe.is_ok() {
+                break;
+            }
+        }
+        ftp.until = Some(deadline);
+        let outcome = probe.and_then(|_| ftp.read_to_end(PARAM_FILE, deadline));
         // Closing the session gets a short wait of its own after the budget.
         ftp.until = Some(Instant::now() + Duration::from_millis(500));
         let _ = ftp.exchange(OP_TERMINATE, &[], 0, 0);

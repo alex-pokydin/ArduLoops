@@ -165,7 +165,7 @@ fn store_received_param(st: &mut LinkState, name: &str, value: f64) {
     remember_vehicle_params(st);
 }
 
-/// Live-screen names first. Full `PARAM_REQUEST_LIST` is only for an explicit refresh.
+/// Read by name next to the list stream, so the live screens fill first.
 const PRIORITY_PARAMS: &[&str] = &[
     "SCR_ENABLE",
     "SCR_HEAP_SIZE",
@@ -191,6 +191,14 @@ const PRIORITY_PARAMS: &[&str] = &[
 const INDEX_BATCH: usize = 16;
 const INDEX_GAP: Duration = Duration::from_millis(200);
 
+/// The vehicle streams PARAM_REQUEST_LIST answers as fast as the link takes them; a pause this
+/// long means the stream is over and the gaps are asked for by index.
+const LIST_QUIET: Duration = Duration::from_millis(1000);
+/// More gaps than this after the stream goes quiet: ask for the whole list again.
+const LIST_AGAIN_ABOVE: usize = 100;
+
+/// Without the parameter file, the way Mission Planner does it: one PARAM_REQUEST_LIST, the
+/// vehicle streams the whole set, then whatever was lost is read by index.
 fn fill_missing_params(
     conn: &dyn MavConnection<MavMessage>,
     st: &mut LinkState,
@@ -200,14 +208,23 @@ fn fill_missing_params(
     if st.sample.heartbeat_at <= 0.0 || !streams_ok {
         return;
     }
+    // The file comes first; a log download keeps the link and the file waits.
+    if !st.params_file_tried && st.active_log_download.is_none() {
+        return;
+    }
     let full = st.sample.param_count > 0 && st.sample.param_indices.len() >= st.sample.param_count as usize;
     if full {
         return;
     }
-    if st.params_priority_tries < 8 {
-        if now.duration_since(st.params_fill_at) < Duration::from_millis(400) {
-            return;
-        }
+    let Some(list_at) = st.params_list_at else {
+        log::info!("params: PARAM_REQUEST_LIST, {} of {} known", st.sample.param_indices.len(), st.sample.param_count);
+        request_param_list(conn, st);
+        st.params_list_at = Some(now);
+        st.params_fill_at = now;
+        return;
+    };
+    // Live-screen names next to the stream, so those pages fill before it reaches them.
+    if st.params_priority_tries < 8 && now.duration_since(st.params_fill_at) >= Duration::from_millis(400) {
         st.params_fill_at = now;
         let names: Vec<&str> = PRIORITY_PARAMS
             .iter()
@@ -221,25 +238,36 @@ fn fill_missing_params(
             for name in names {
                 request_param_read(conn, st, name);
             }
-            if st.sample.param_count == 0 {
-                request_param_index(conn, st, 0);
-            }
             st.params_priority_tries = st.params_priority_tries.saturating_add(1);
-            return;
         }
+        return;
+    }
+    let heard = st.params_heard_at.max(list_at);
+    if now.duration_since(heard) < LIST_QUIET {
+        return;
     }
     if st.sample.param_count == 0 {
-        if now.duration_since(st.params_fill_at) < INDEX_GAP {
-            return;
+        // The list request or its first answers were lost: ask again.
+        if now.duration_since(list_at) >= Duration::from_secs(2) {
+            request_param_list(conn, st);
+            st.params_list_at = Some(now);
         }
-        st.params_fill_at = now;
-        request_param_index(conn, st, 0);
         return;
     }
     if now.duration_since(st.params_fill_at) < INDEX_GAP {
         return;
     }
     st.params_fill_at = now;
+    let total = st.sample.param_count as usize;
+    let missing_n = total.saturating_sub(st.sample.param_indices.len());
+    // A stream cut short (the link dropped out for a while) is cheaper to run again than
+    // to read hundreds of values one by one over a narrow uplink.
+    if missing_n > LIST_AGAIN_ABOVE && st.params_list_tries < 3 {
+        st.params_list_tries += 1;
+        request_param_list(conn, st);
+        st.params_list_at = Some(now);
+        return;
+    }
     let missing: Vec<u16> = (0..st.sample.param_count)
         .filter(|index| !st.sample.param_indices.contains(index))
         .take(INDEX_BATCH)
@@ -603,8 +631,28 @@ pub fn run_loop(
                 // ATTITUDE flows first; then the whole set in one file. Telemetry, the heartbeat
                 // and stick overrides keep going while it arrives.
                 let full = st.sample.param_count > 0 && st.sample.param_indices.len() >= st.sample.param_count as usize;
-                if streams_ok && !st.params_file_tried && !full && st.active_log_download.is_none() {
+                // With the FTP bit seen the file starts at once; otherwise AUTOPILOT_VERSION gets
+                // a short wait. A cleared bit is not trusted: some links clear it and still carry
+                // file transfer, so the short probe decides.
+                let version_wait = first_hb_at.is_some_and(|t| now.duration_since(t) < Duration::from_secs(2));
+                // The first request is sometimes lost while the streams start; the list then
+                // runs, and the file is tried again while most of the set is still missing.
+                let missing = (st.sample.param_count as usize).saturating_sub(st.sample.param_indices.len());
+                let retry_due = st.params_file_tried
+                    && st.params_file_retry_at.is_some_and(|at| now >= at)
+                    && (st.sample.param_count == 0 || missing * 10 > st.sample.param_count as usize * 3);
+                if streams_ok
+                    && (!st.params_file_tried || retry_due)
+                    && !full
+                    && st.active_log_download.is_none()
+                    && (st.ftp_capable == Some(true) || !version_wait)
+                {
+                    if st.params_file_tried {
+                        st.params_file_retries += 1;
+                    }
                     st.params_file_tried = true;
+                    st.params_file_retry_at = None;
+                    log::info!("params: file transfer, ftp={:?}", st.ftp_capable);
                     let started = Instant::now();
                     st.sample.param_file = match download_param_file(&*conn, &mut st, &on_sample, &latest, &sitl, PARAM_FILE_BUDGET) {
                         Ok((n, singles)) => {
@@ -613,7 +661,13 @@ pub fn run_loop(
                             let again = if singles > 0 { format!(", {singles} pieces read again") } else { String::new() };
                             format!("{got} in {} ms{again}", started.elapsed().as_millis())
                         }
-                        Err(why) => why,
+                        Err(why) => {
+                            // Only an unanswered start is worth another try; a refusal is final.
+                            if why == FTP_SILENT && st.params_file_retries < PARAM_FILE_RETRIES {
+                                st.params_file_retry_at = Some(Instant::now() + PARAM_FILE_RETRY_GAP);
+                            }
+                            why
+                        }
                     };
                     last_att = Some(Instant::now());
                     last_hb = Instant::now();

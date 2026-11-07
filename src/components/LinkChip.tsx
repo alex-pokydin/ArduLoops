@@ -131,7 +131,7 @@ export function LinkChip({
   const paramsHow = fileMs
     ? t("Loaded as one file in {s} s", { s: (Number(fileMs) / 1000).toFixed(1) })
     : tel.file
-      ? t("Loading one by one: the parameter file was not available")
+      ? t("Loading as a list: this link has no parameter file")
       : "";
   const source = sourceKnown ? (sitl ? t("SITL") : t("board")) : null;
 

@@ -630,6 +630,17 @@ struct LinkState {
     params_fill_at: Instant,
     params_priority_tries: u8,
     params_file_tried: bool,
+    /// FTP bit of AUTOPILOT_VERSION as this link delivers it; `None` until it arrives.
+    ftp_capable: Option<bool>,
+    /// The last PARAM_VALUE (or file value) stored.
+    params_heard_at: Instant,
+    /// When the one PARAM_REQUEST_LIST of the by-list fallback went out.
+    params_list_at: Option<Instant>,
+    /// Repeats of PARAM_REQUEST_LIST after a stream that left many gaps.
+    params_list_tries: u8,
+    /// When the parameter file is tried again after an unanswered start.
+    params_file_retry_at: Option<Instant>,
+    params_file_retries: u8,
 }
 
 impl LinkState {
@@ -668,6 +679,12 @@ impl LinkState {
             params_fill_at: Instant::now(),
             params_priority_tries: 0,
             params_file_tried: false,
+            ftp_capable: None,
+            params_heard_at: Instant::now(),
+            params_list_at: None,
+            params_list_tries: 0,
+            params_file_retry_at: None,
+            params_file_retries: 0,
         }
     }
 }

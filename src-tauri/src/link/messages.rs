@@ -962,6 +962,12 @@ fn handle_msg(st: &mut LinkState, header: &MavHeader, msg: MavMessage) {
         MavMessage::COMMAND_LONG(v) if v.command == MavCmd::MAV_CMD_ACCELCAL_VEHICLE_POS => {
             note_accel_pos(&mut st.sample, v.param1.round() as u32, wall_time());
         }
+        MavMessage::AUTOPILOT_VERSION(v) if header.component_id == st.target_component => {
+            // Set: the parameter file can start without waiting. Clear proves nothing; some
+            // links clear it and still carry file transfer.
+            st.ftp_capable = Some(v.capabilities.contains(MavProtocolCapability::MAV_PROTOCOL_CAPABILITY_FTP));
+            log::info!("params: AUTOPILOT_VERSION ftp={:?}", st.ftp_capable);
+        }
         MavMessage::MAG_CAL_PROGRESS(v) => note_mag_progress(
             &mut st.sample,
             v.compass_id,
@@ -1380,6 +1386,10 @@ fn handle_msg(st: &mut LinkState, header: &MavHeader, msg: MavMessage) {
 fn apply_param(st: &mut LinkState, name: &str, val: f64, index: u16, count: u16) {
     st.sample.params.insert(name.to_string(), val);
     st.sample.param_received.insert(name.to_string(), wall_time());
+    st.params_heard_at = Instant::now();
+    if st.sample.param_indices.len() + 1 == count as usize && !st.sample.param_indices.contains(&index) && index < count {
+        log::info!("params: set complete ({count})");
+    }
     st.sample.param_count = count;
     if index < count {
         st.sample.param_indices.insert(index);
